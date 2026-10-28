@@ -81,11 +81,15 @@ class SqlAlchemyTableModel(QAbstractTableModel):
         if role == Qt.BackgroundRole:
             # Выделение изменённых, но не экспортированных записей
             if hasattr(item, "change_id") and getattr(item, "change_id") is not None:
+                fff = getattr(item, "change_id")
                 from PyQt5.QtGui import QColor
+
                 return QColor(255, 230, 180)
         return None
 
-    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole) -> Any:
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole
+    ) -> Any:
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
             return self.columns[section].header
         return None
@@ -111,7 +115,9 @@ class SqlAlchemyTableModel(QAbstractTableModel):
         """Устанавливает структурированные условия фильтрации."""
         self._filters = list(filters)
         self._filter_types = {
-            condition.column_name: resolve_value_type(self.model_class, condition.column_name)
+            condition.column_name: resolve_value_type(
+                self.model_class, condition.column_name
+            )
             for condition in self._filters
         }
         self._page = 1
@@ -152,7 +158,11 @@ class SqlAlchemyTableModel(QAbstractTableModel):
 
         all_items = query.all()
         if self._filter_text:
-            all_items = [item for item in all_items if self._filter_text.lower() in self._row_text(item).lower()]
+            all_items = [
+                item
+                for item in all_items
+                if self._filter_text.lower() in self._row_text(item).lower()
+            ]
         if self._filters:
             all_items = [item for item in all_items if self._matches_filters(item)]
         if self._order_by and not db_order:
@@ -168,7 +178,7 @@ class SqlAlchemyTableModel(QAbstractTableModel):
 
         self._total = len(all_items)
         start = (self._page - 1) * self._page_size
-        self._items = all_items[start:start + self._page_size]
+        self._items = all_items[start : start + self._page_size]
         self.endResetModel()
 
     def _is_mapped_column(self, name: str) -> bool:

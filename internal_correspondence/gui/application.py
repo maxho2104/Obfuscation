@@ -44,6 +44,7 @@ from internal_correspondence.gui.reference_dialogs import (
 )
 from internal_correspondence.gui.reference_editor import ReferenceEditorDialog
 from internal_correspondence.gui.settings_dialog import SettingsDialog
+from internal_correspondence.gui.statistics_widget import StatisticsWidget
 from internal_correspondence.gui.table_model import ColumnDef
 from internal_correspondence.importexport.export_service import ExportService
 from internal_correspondence.importexport.import_service import ImportService
@@ -227,9 +228,14 @@ class MainWindow(QMainWindow):
             TELEGRAM_COLUMNS,
             self.settings.branch_id,
         )
+        self.statistics_tab = StatisticsWidget(
+            self.db_manager.get_session(),
+            self.settings.branch_id if self.settings.role == Role.BRANCH.value else None,
+        )
 
         self.tabs.addTab(self.materials_tab, "Научные материалы")
         self.tabs.addTab(self.telegram_tab, "Телеграммы")
+        self.tabs.addTab(self.statistics_tab, "Статистика")
         layout.addWidget(self.tabs)
         self.setCentralWidget(container)
 
@@ -354,24 +360,30 @@ class MainWindow(QMainWindow):
 
     def _export(self) -> None:
         """Формирует экспортный ZIP-архив."""
+        session = self.db_manager.get_session()
         try:
-            service = ExportService(self.db_manager.get_session(), self.settings.storage_path_obj())
+            service = ExportService(session, self.settings.storage_path_obj())
             output = service.export()
-            self.db_manager.get_session().commit()
+            session.commit()
+            self.materials_tab._refresh()
+            self.telegram_tab._refresh()
             QMessageBox.information(self, "Экспорт", f"Экспорт завершён:\n{output}")
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка экспорта")
+            session.rollback()
             QMessageBox.critical(self, "Ошибка", f"Не удалось выполнить экспорт:\n{exc}")
-            self.db_manager.get_session().rollback()
+        finally:
+            session.close()
 
     def _import(self) -> None:
         """Импортирует ZIP-архив."""
         path, _ = QFileDialog.getOpenFileName(self, "Выберите экспортный файл", "", "ZIP (*.zip)")
         if not path:
             return
+        session = self.db_manager.get_session()
         try:
             service = ImportService(
-                self.db_manager.get_session(),
+                session,
                 self.settings.storage_path_obj(),
                 self.settings.role,
                 self.settings.branch_id,
@@ -387,10 +399,13 @@ class MainWindow(QMainWindow):
             )
             self.materials_tab._refresh()
             self.telegram_tab._refresh()
+            self.statistics_tab.refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка импорта")
+            session.rollback()
             QMessageBox.critical(self, "Ошибка", f"Не удалось выполнить импорт:\n{exc}")
-            self.db_manager.get_session().rollback()
+        finally:
+            session.close()
 
     def _import_primary_data(self) -> None:
         """Импортирует первичные справочные данные из XLSX."""

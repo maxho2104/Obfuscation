@@ -1,5 +1,6 @@
 # GUI
 PyQt5>=5.15
+PyQtChart>=5.15
 
 # ORM and database
 SQLAlchemy[asyncio]>=2.0,<2.1

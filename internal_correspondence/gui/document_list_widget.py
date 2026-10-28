@@ -4,11 +4,13 @@ from pathlib import Path
 from typing import Callable, List, Optional, Type
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -20,13 +22,19 @@ from PyQt5.QtWidgets import (
 from internal_correspondence.core.constants import DEFAULT_PAGE_SIZE
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
-from internal_correspondence.gui.document_dialogs import MaterialEditDialog, TelegramEditDialog
+from internal_correspondence.gui.document_dialogs import (
+    MaterialEditDialog,
+    TelegramEditDialog,
+)
 from internal_correspondence.gui.evaluation_delegate import EvaluationItemDelegate
 from internal_correspondence.gui.filter_dialog import FilterDialog
 from internal_correspondence.gui.table_model import ColumnDef, SqlAlchemyTableModel
 from internal_correspondence.orm.base import Base
 from internal_correspondence.orm.models import ScientificMaterial, Telegram
-from internal_correspondence.services.document_service import ScientificMaterialService, TelegramService
+from internal_correspondence.services.document_service import (
+    ScientificMaterialService,
+    TelegramService,
+)
 
 logger = get_logger("document_list_widget")
 
@@ -102,18 +110,43 @@ class DocumentListWidget(QWidget):
 
         # Пагинация
         pagination = QHBoxLayout()
-        self.prev_btn = QPushButton("< Назад")
-        self.next_btn = QPushButton("Вперёд >")
-        self.page_label = QLabel("Страница 1 / 1")
-        self.prev_btn.clicked.connect(self._prev_page)
-        self.next_btn.clicked.connect(self._next_page)
+        self.first_btn = QPushButton("|<")
+        self.prev_btn = QPushButton("<")
+        self.page_edit = QLineEdit()
+        self.page_edit.setAlignment(Qt.AlignCenter)
+        self.page_edit.setMaximumWidth(60)
+        self.page_edit.setValidator(QIntValidator(1, 999999, self))
+        self.page_edit.setToolTip("Номер страницы (Enter — перейти)")
+        self.next_btn = QPushButton(">")
+        self.last_btn = QPushButton(">|")
+        self.page_total_label = QLabel("из 1")
+
+        self.first_btn.clicked.connect(lambda: self._go_to_page(1))
+        self.prev_btn.clicked.connect(
+            lambda: self._go_to_page(self.table_model.page() - 1)
+        )
+        self.next_btn.clicked.connect(
+            lambda: self._go_to_page(self.table_model.page() + 1)
+        )
+        self.last_btn.clicked.connect(
+            lambda: self._go_to_page(self.table_model.total_pages())
+        )
+        self.page_edit.editingFinished.connect(self._on_page_edit_finished)
+
+        pagination.addWidget(self.first_btn)
         pagination.addWidget(self.prev_btn)
-        pagination.addWidget(self.page_label)
+        pagination.addWidget(QLabel("страница"))
+        pagination.addWidget(self.page_edit)
+        pagination.addWidget(self.page_total_label)
         pagination.addWidget(self.next_btn)
+        pagination.addWidget(self.last_btn)
+
         pagination.addStretch()
         layout.addLayout(pagination)
 
-        self.table_model = SqlAlchemyTableModel(self.session, self.model_class, self.columns)
+        self.table_model = SqlAlchemyTableModel(
+            self.session, self.model_class, self.columns
+        )
         self.table.setModel(self.table_model)
         for idx, col in enumerate(self.columns):
             self.table.setColumnWidth(idx, col.width)
@@ -154,28 +187,43 @@ class DocumentListWidget(QWidget):
         count = len(self.table_model.filters())
         self.filter_btn.setText(f"Фильтр ({count})" if count else "Фильтр")
         self.filter_btn.setToolTip(
-            "Настроить фильтрацию записей" if not count else f"Применено фильтров: {count}"
+            "Настроить фильтрацию записей"
+            if not count
+            else f"Применено фильтров: {count}"
         )
 
     def _refresh(self) -> None:
+        self.session.expire_all()
         self.table_model.refresh()
         self._update_pagination()
         self._update_filter_button()
 
     def _update_pagination(self) -> None:
-        total_pages = self.table_model.total_pages()
+        total_pages = max(1, self.table_model.total_pages())
         current_page = self.table_model.page()
-        self.page_label.setText(f"Страница {current_page} / {total_pages}")
+        self.page_edit.setText(str(current_page))
+        self.page_total_label.setText(f"из {total_pages}")
+        self.first_btn.setEnabled(current_page > 1)
         self.prev_btn.setEnabled(current_page > 1)
         self.next_btn.setEnabled(current_page < total_pages)
+        self.last_btn.setEnabled(current_page < total_pages)
 
-    def _prev_page(self) -> None:
-        self.table_model.set_page(self.table_model.page() - 1)
+    def _go_to_page(self, page: int) -> None:
+        """Переходит на страницу с ограничением допустимого диапазона."""
+        total_pages = max(1, self.table_model.total_pages())
+        target = max(1, min(page, total_pages))
+        if target != self.table_model.page():
+            self.table_model.set_page(target)
         self._update_pagination()
 
-    def _next_page(self) -> None:
-        self.table_model.set_page(self.table_model.page() + 1)
-        self._update_pagination()
+    def _on_page_edit_finished(self) -> None:
+        """Обрабатывает ввод номера страницы в поле пагинации."""
+        try:
+            page = int(self.page_edit.text().strip())
+        except ValueError:
+            self._update_pagination()
+            return
+        self._go_to_page(page)
 
     def _selected_item(self) -> Optional[Base]:
         indexes = self.table.selectionModel().selectedRows()
@@ -192,9 +240,13 @@ class DocumentListWidget(QWidget):
 
     def _add(self) -> None:
         dialog = (
-            MaterialEditDialog(self.session, self.storage_root, branch_id=self.branch_id, parent=self)
+            MaterialEditDialog(
+                self.session, self.storage_root, branch_id=self.branch_id, parent=self
+            )
             if self.is_material
-            else TelegramEditDialog(self.session, self.storage_root, branch_id=self.branch_id, parent=self)
+            else TelegramEditDialog(
+                self.session, self.storage_root, branch_id=self.branch_id, parent=self
+            )
         )
         if dialog.exec_() != dialog.Accepted:
             return
@@ -214,9 +266,21 @@ class DocumentListWidget(QWidget):
         if item is None:
             return
         dialog = (
-            MaterialEditDialog(self.session, self.storage_root, material=item, branch_id=item.branch_id, parent=self)
+            MaterialEditDialog(
+                self.session,
+                self.storage_root,
+                material=item,
+                branch_id=item.branch_id,
+                parent=self,
+            )
             if self.is_material
-            else TelegramEditDialog(self.session, self.storage_root, telegram=item, branch_id=item.branch_id, parent=self)
+            else TelegramEditDialog(
+                self.session,
+                self.storage_root,
+                telegram=item,
+                branch_id=item.branch_id,
+                parent=self,
+            )
         )
         if dialog.exec_() != dialog.Accepted:
             return

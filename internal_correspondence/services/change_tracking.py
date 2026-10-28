@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 
 def _utc_now() -> datetime:
@@ -67,8 +67,29 @@ def _ensure_primary_key(instance: Base) -> None:
         setattr(instance, column.key, default.arg(None))
 
 
+def _canonical_relationships(mapper) -> List[Any]:
+    """Возвращает связи N-N, которыми владеет данная сущность.
+
+    Владельцем считается сторона, чей первичный ключ объявлен первым
+    в ассоциативной таблице. Это исключает двойное отслеживание одной
+    и той же связи с обеих сторон.
+    """
+    result: List[Any] = []
+    for relationship in mapper.relationships:
+        if relationship.secondary is None:
+            continue
+        secondary_columns = list(relationship.secondary.columns)
+        if not secondary_columns:
+            continue
+        for foreign_key in secondary_columns[0].foreign_keys:
+            if foreign_key.column.table is mapper.local_table:
+                result.append(relationship)
+                break
+    return result
+
+
 def _get_changed_fields(instance: Base) -> Set[str]:
-    """Возвращает множество имён изменённых колонок объекта."""
+    """Возвращает множество имён изменённых колонок и связей N-N объекта."""
     changed: Set[str] = set()
     state = inspect(instance)
     if not state:
@@ -80,6 +101,13 @@ def _get_changed_fields(instance: Base) -> Set[str]:
         hist = state.get_history(attr_name, attributes.PASSIVE_OFF)
         if hist.has_changes():
             changed.add(attr_name)
+
+    for relationship in _canonical_relationships(instance.__mapper__):
+        if relationship.key in _SERVICE_FIELDS:
+            continue
+        hist = state.get_history(relationship.key, attributes.PASSIVE_NO_INITIALIZE)
+        if hist.has_changes():
+            changed.add(relationship.key)
     return changed
 
 
@@ -168,7 +196,11 @@ def _on_before_flush(session: Session, _flush_context, _instances) -> None:
         if isinstance(instance, Base) and instance.__tablename__ in _TRACKED_TABLES:
             _ensure_primary_key(instance)
             columns = set(instance.__mapper__.columns.keys()) - _SERVICE_FIELDS
-            _mark_change(session, instance, columns)
+            relationships = {
+                relationship.key
+                for relationship in _canonical_relationships(instance.__mapper__)
+            }
+            _mark_change(session, instance, columns | relationships)
 
     for instance in session.dirty:
         if isinstance(instance, Base) and instance.__tablename__ in _TRACKED_TABLES:

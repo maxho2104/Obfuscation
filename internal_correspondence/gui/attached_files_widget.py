@@ -3,10 +3,12 @@
 from pathlib import Path
 from typing import List, Optional
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QFileInfo, Qt
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
+    QFileIconProvider,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -20,6 +22,9 @@ from internal_correspondence.orm.models import FileRecord
 
 logger = get_logger("attached_files_widget")
 
+# Цвет отображения файла, ссылка на который в БД «битая»
+BROKEN_FILE_COLOR = QColor(190, 40, 40)
+
 
 class AttachedFilesWidget(QWidget):
     """Виджет для отображения и управления прикреплёнными файлами."""
@@ -29,6 +34,7 @@ class AttachedFilesWidget(QWidget):
         self.storage_root = storage_root
         self.file_records: List[FileRecord] = []
         self.new_files: List[Path] = []
+        self._icon_provider = QFileIconProvider()
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -68,13 +74,31 @@ class AttachedFilesWidget(QWidget):
         self.list_widget.clear()
         for record in self.file_records:
             text = f"{record.name}.{record.extension}"
-            item = QListWidgetItem(text)
+            file_path = self.file_path(record)
+            item = QListWidgetItem(self._icon(file_path), text)
             item.setData(Qt.UserRole, record.id)
+            if not file_path.exists():
+                font = item.font()
+                font.setStrikeOut(True)
+                item.setFont(font)
+                item.setForeground(BROKEN_FILE_COLOR)
+                item.setToolTip(f"Файл отсутствует в хранилище: {file_path}")
             self.list_widget.addItem(item)
+
         for path in self.new_files:
-            item = QListWidgetItem(f"{path.name} (новый)")
+            item = QListWidgetItem(self._icon(path), f"{path.name} (новый)")
             item.setData(Qt.UserRole, str(path))
             self.list_widget.addItem(item)
+
+    def _icon(self, path: Path):
+        """Возвращает стандартный значок для файла."""
+        if path.exists():
+            return self._icon_provider.icon(QFileInfo(str(path)))
+        return self._icon_provider.icon(QFileIconProvider.File)
+
+    def file_path(self, record: FileRecord) -> Path:
+        """Возвращает путь к файлу записи в файловом хранилище."""
+        return self.storage_root / record.path / f"{record.name}.{record.extension}"
 
     def _add_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(self, "Выберите файлы")
