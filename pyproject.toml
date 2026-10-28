@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "internal-correspondence"
+version = "0.1.0"
+description = "Система автоматизации учёта и отправки/приёма внутренней корреспонденции территориально-распределённой сети научных организаций"
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "Proprietary" }
+authors = [
+    { name = "Organization" }
+]
+dependencies = [
+    "PyQt5>=5.15",
+    "SQLAlchemy[asyncio]>=2.0,<2.1",
+    "alembic>=1.13",
+    "psycopg2-binary>=2.9",
+    "openpyxl>=3.1",
+    "python-docx>=1.1",
+    "odfpy>=1.4",
+    "PyInstaller>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "faker>=25",
+]
+
+[project.scripts]
+ic-system = "internal_correspondence.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["internal_correspondence*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

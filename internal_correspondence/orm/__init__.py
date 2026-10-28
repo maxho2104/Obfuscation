@@ -1,0 +1,47 @@
+"""Публичный интерфейс ORM-моделей."""
+
+from internal_correspondence.orm.base import Base, TimestampMixin, VersionedMixin
+from internal_correspondence.orm.models import (
+    AcademicTitle,
+    Branch,
+    Change,
+    Consumer,
+    Country,
+    Department,
+    Employee,
+    Evaluation,
+    EvaluationList,
+    FileRecord,
+    Leader,
+    ReportAddress,
+    ScientificMaterial,
+    ScientificTask,
+    Source,
+    Telegram,
+    TerritorialUnit,
+    WorkingGroup,
+)
+
+__all__ = [
+    "Base",
+    "TimestampMixin",
+    "VersionedMixin",
+    "AcademicTitle",
+    "Branch",
+    "Change",
+    "Consumer",
+    "Country",
+    "Department",
+    "Employee",
+    "Evaluation",
+    "EvaluationList",
+    "FileRecord",
+    "Leader",
+    "ReportAddress",
+    "ScientificMaterial",
+    "ScientificTask",
+    "Source",
+    "Telegram",
+    "TerritorialUnit",
+    "WorkingGroup",
+]
