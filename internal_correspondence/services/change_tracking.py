@@ -4,11 +4,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
 
-
-def _utc_now() -> datetime:
-    """Возвращает текущее время в UTC в виде "наивного" datetime."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session, attributes
 
@@ -16,6 +11,11 @@ from internal_correspondence.core.constants import DELETION_MARKER
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.base import Base
 from internal_correspondence.orm.models import Change
+
+
+def _utc_now() -> datetime:
+    """Возвращает текущее время в UTC в виде "наивного" datetime."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 logger = get_logger("change_tracking")
 
@@ -43,7 +43,7 @@ _TRACKED_TABLES = {
 # Служебные поля, которые не попадают в changed_fields
 _SERVICE_FIELDS = {"change_id", "row_version", "created_at", "updated_at"}
 
-# Глард предотвращает множественную регистрацию слушателей в тестах
+# Гард предотвращает множественную регистрацию слушателей в тестах
 _CHANGE_TRACKING_REGISTERED = False
 
 

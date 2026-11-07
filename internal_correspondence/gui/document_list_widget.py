@@ -1,7 +1,7 @@
 """Виджет списка записей (материалы/телеграммы) с пагинацией и фильтрацией."""
 
 from pathlib import Path
-from typing import Callable, List, Optional, Type
+from typing import List, Optional, Type
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QIntValidator
@@ -30,6 +30,7 @@ from internal_correspondence.gui.evaluation_delegate import EvaluationItemDelega
 from internal_correspondence.gui.filter_dialog import FilterDialog
 from internal_correspondence.gui.table_model import ColumnDef, SqlAlchemyTableModel
 from internal_correspondence.orm.base import Base
+from internal_correspondence.orm.labels import deletion_confirmation_text
 from internal_correspondence.orm.models import ScientificMaterial, Telegram
 from internal_correspondence.services.document_service import (
     ScientificMaterialService,
@@ -78,7 +79,7 @@ class DocumentListWidget(QWidget):
         self.add_btn.clicked.connect(self._add)
         self.edit_btn.clicked.connect(self._edit)
         self.delete_btn.clicked.connect(self._delete)
-        self.refresh_btn.clicked.connect(self._refresh)
+        self.refresh_btn.clicked.connect(self.refresh)
 
         toolbar.addWidget(self.add_btn)
         toolbar.addWidget(self.edit_btn)
@@ -95,8 +96,9 @@ class DocumentListWidget(QWidget):
 
         self.table = QTableView()
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setSortingEnabled(True)
+        self.table.setAlternatingRowColors(True)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.doubleClicked.connect(self._edit)
         splitter.addWidget(self.table)
@@ -192,7 +194,7 @@ class DocumentListWidget(QWidget):
             else f"Применено фильтров: {count}"
         )
 
-    def _refresh(self) -> None:
+    def refresh(self) -> None:
         self.session.expire_all()
         self.table_model.refresh()
         self._update_pagination()
@@ -225,16 +227,29 @@ class DocumentListWidget(QWidget):
             return
         self._go_to_page(page)
 
-    def _selected_item(self) -> Optional[Base]:
-        indexes = self.table.selectionModel().selectedRows()
-        if not indexes:
-            return None
-        return self.table_model.item_at(indexes[0].row())
+    def _selected_items(self) -> List[Base]:
+        """Возвращает все выделенные строки таблицы."""
+        items = []
+        for index in self.table.selectionModel().selectedRows():
+            item = self.table_model.item_at(index.row())
+            if item is not None:
+                items.append(item)
+        return items
+
+    def _current_item(self) -> Optional[Base]:
+        """Возвращает строку под фокусом (для редактирования)."""
+        row = self.table.currentIndex().row()
+        if row >= 0:
+            item = self.table_model.item_at(row)
+            if item is not None:
+                return item
+        items = self._selected_items()
+        return items[-1] if items else None
 
     def _on_selection_changed(self) -> None:
-        item = self._selected_item()
-        if item and hasattr(item, "files"):
-            self.files_widget.set_files(list(item.files))
+        items = self._selected_items()
+        if len(items) == 1 and hasattr(items[0], "files"):
+            self.files_widget.set_files(list(items[0].files))
         else:
             self.files_widget.set_files([])
 
@@ -255,14 +270,14 @@ class DocumentListWidget(QWidget):
             files = dialog.get_new_files()
             self.service.create_with_files(data, files)
             self.session.commit()
-            self._refresh()
+            self.refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка создания документа")
             QMessageBox.critical(self, "Ошибка", f"Не удалось создать запись:\n{exc}")
             self.session.rollback()
 
     def _edit(self) -> None:
-        item = self._selected_item()
+        item = self._current_item()
         if item is None:
             return
         dialog = (
@@ -287,33 +302,34 @@ class DocumentListWidget(QWidget):
         try:
             data = dialog.get_data()
             files = dialog.get_new_files()
-            if self.is_material:
-                self.service.update_with_files(item, data, files)
-            else:
-                self.service.update_with_files(item, data, files)
+            self.service.update_with_files(item, data, files)
             self.session.commit()
-            self._refresh()
+            self.refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка обновления документа")
             QMessageBox.critical(self, "Ошибка", f"Не удалось обновить запись:\n{exc}")
             self.session.rollback()
 
     def _delete(self) -> None:
-        item = self._selected_item()
-        if item is None:
+        """Удаляет все выделенные записи после подтверждения."""
+        items = self._selected_items()
+        if not items:
             return
-        reply = QMessageBox.question(
+        reply = QMessageBox.warning(
             self,
-            "Подтверждение удаления",
-            "Вы действительно хотите удалить выбранную запись?",
+            "Внимание",
+            deletion_confirmation_text(self.model_class, len(items)),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
         try:
-            self.service.delete(item)
+            for item in items:
+                self.service.delete(item)
             self.session.commit()
-            self._refresh()
+            self.refresh()
         except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("Ошибка удаления документа")
-            QMessageBox.critical(self, "Ошибка", f"Не удалось удалить запись:\n{exc}")
+            logger.exception("Ошибка удаления документов")
+            QMessageBox.critical(self, "Ошибка", f"Не удалось удалить записи:\n{exc}")
             self.session.rollback()

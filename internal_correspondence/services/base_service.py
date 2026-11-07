@@ -68,7 +68,8 @@ class BaseService(Generic[T]):
 
     def count(self) -> int:
         """Возвращает общее количество записей."""
-        return self.session.query(func.count(self.model_class.id)).scalar()  # type: ignore[attr-defined]
+        pk_column = inspect(self.model_class).primary_key[0]
+        return self.session.query(func.count(pk_column)).scalar() or 0
 
     def create(self, data: Dict[str, Any]) -> T:
         """Создаёт новую запись."""

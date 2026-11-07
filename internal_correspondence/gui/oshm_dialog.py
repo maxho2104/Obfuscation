@@ -24,6 +24,11 @@ from PyQt5.QtWidgets import (
 )
 
 from internal_correspondence.core.logging_config import get_logger
+from internal_correspondence.orm.labels import (
+    entity_label,
+    field_form_label,
+    field_label,
+)
 from internal_correspondence.orm.models import Branch, Department, Employee, WorkingGroup
 from internal_correspondence.services.reference_service import (
     DepartmentService,
@@ -67,7 +72,7 @@ class OSHMDialog(QDialog):
         if branch is None:
             return
 
-        branch_item = QTreeWidgetItem(self.tree, [branch.name, "Филиал"])
+        branch_item = QTreeWidgetItem(self.tree, [branch.name, entity_label(Branch)])
         branch_item.setData(0, Qt.UserRole, ("branch", branch.id))
         branch_item.setExpanded(True)
 
@@ -78,7 +83,10 @@ class OSHMDialog(QDialog):
             .all()
         )
         for dept in departments:
-            dept_item = QTreeWidgetItem(branch_item, [dept.name, "Действующий" if dept.active else "Сокращён"])
+            dept_item = QTreeWidgetItem(
+                branch_item,
+                [dept.name, "Действующий" if dept.active else "Сокращён"],
+            )
             dept_item.setData(0, Qt.UserRole, ("department", str(dept.id)))
             dept_item.setExpanded(True)
 
@@ -125,12 +133,12 @@ class OSHMDialog(QDialog):
 
         menu = QMenu()
         if node_type == "branch":
-            add_dept = menu.addAction("Добавить отдел")
+            add_dept = menu.addAction(f"Добавить {entity_label(Department).lower()}")
             add_dept.triggered.connect(self._add_department)
         elif node_type == "department":
-            add_wg = menu.addAction("Добавить рабочую группу")
+            add_wg = menu.addAction(f"Добавить {entity_label(WorkingGroup).lower()}")
             add_wg.triggered.connect(self._add_workgroup)
-            add_emp = menu.addAction("Добавить сотрудника")
+            add_emp = menu.addAction(f"Добавить {entity_label(Employee).lower()}")
             add_emp.triggered.connect(self._add_employee)
             menu.addSeparator()
             edit_dept = menu.addAction("Изменить")
@@ -292,7 +300,8 @@ class DepartmentEditDialog(QDialog):
         self.session = session
         self.item = item
         self.branch_id = branch_id or (item.branch_id if item else None)
-        self.setWindowTitle("Отдел" if item else "Новый отдел")
+        title = entity_label(Department)
+        self.setWindowTitle(title if item else f"Новый {title.lower()}")
         self._setup_ui()
         if item:
             self.name_edit.setText(item.name)
@@ -304,10 +313,10 @@ class DepartmentEditDialog(QDialog):
         form = QFormLayout()
         self.name_edit = QLineEdit()
         self.short_edit = QLineEdit()
-        self.active_check = QCheckBox("Действительный")
+        self.active_check = QCheckBox(field_label(Department, "active"))
         self.active_check.setChecked(True)
-        form.addRow("Наименование *:", self.name_edit)
-        form.addRow("Сокращенное наименование:", self.short_edit)
+        form.addRow(field_form_label(Department, "name"), self.name_edit)
+        form.addRow(field_form_label(Department, "short_name"), self.short_edit)
         form.addRow("", self.active_check)
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -332,7 +341,8 @@ class WorkingGroupEditDialog(QDialog):
         self.session = session
         self.item = item
         self.department_id = department_id or (item.department_id if item else None)
-        self.setWindowTitle("Рабочая группа" if item else "Новая рабочая группа")
+        title = entity_label(WorkingGroup)
+        self.setWindowTitle(title if item else f"Новая {title.lower()}")
         self._setup_ui()
         if item:
             self.name_edit.setText(item.name)
@@ -345,10 +355,10 @@ class WorkingGroupEditDialog(QDialog):
         self.name_edit = QLineEdit()
         self.comment_edit = QPlainTextEdit()
         self.comment_edit.setMaximumHeight(80)
-        self.active_check = QCheckBox("Действительная")
+        self.active_check = QCheckBox(field_label(WorkingGroup, "active"))
         self.active_check.setChecked(True)
-        form.addRow("Наименование *:", self.name_edit)
-        form.addRow("Комментарий:", self.comment_edit)
+        form.addRow(field_form_label(WorkingGroup, "name"), self.name_edit)
+        form.addRow(field_form_label(WorkingGroup, "comment"), self.comment_edit)
         form.addRow("", self.active_check)
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
@@ -373,7 +383,8 @@ class EmployeeEditDialog(QDialog):
         self.session = session
         self.item = item
         self.department_id = department_id or (item.department_id if item else None)
-        self.setWindowTitle("Сотрудник" if item else "Новый сотрудник")
+        title = entity_label(Employee)
+        self.setWindowTitle(title if item else f"Новый {title.lower()}")
         self._setup_ui()
         if item:
             self.last_name.setText(item.last_name)
@@ -418,16 +429,16 @@ class EmployeeEditDialog(QDialog):
         self.clear_dates_btn = QPushButton("Очистить даты")
         self.clear_dates_btn.clicked.connect(self._clear_workgroup_dates)
 
-        self.active_check = QCheckBox("Действующий")
+        self.active_check = QCheckBox(field_label(Employee, "active"))
         self.active_check.setChecked(True)
-        form.addRow("Фамилия *:", self.last_name)
-        form.addRow("Имя *:", self.first_name)
-        form.addRow("Отчество:", self.middle_name)
-        form.addRow("Должность:", self.position)
-        form.addRow("Научное звание:", self.title_combo)
-        form.addRow("Рабочая группа:", self.workgroup_combo)
-        form.addRow("Начало работы в группе:", self.workgroup_start_date)
-        form.addRow("Окончание работы в группе:", self.workgroup_end_date)
+        form.addRow(field_form_label(Employee, "last_name"), self.last_name)
+        form.addRow(field_form_label(Employee, "first_name"), self.first_name)
+        form.addRow(field_form_label(Employee, "middle_name"), self.middle_name)
+        form.addRow(field_form_label(Employee, "position"), self.position)
+        form.addRow(field_form_label(Employee, "academic_title_id"), self.title_combo)
+        form.addRow(field_form_label(Employee, "working_group_id"), self.workgroup_combo)
+        form.addRow(field_form_label(Employee, "workgroup_start_date"), self.workgroup_start_date)
+        form.addRow(field_form_label(Employee, "workgroup_end_date"), self.workgroup_end_date)
         form.addRow("", self.clear_dates_btn)
         form.addRow("", self.active_check)
         layout.addLayout(form)

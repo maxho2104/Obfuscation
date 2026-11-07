@@ -29,6 +29,7 @@ from internal_correspondence.gui.filter_model import (
     resolve_value_type,
 )
 from internal_correspondence.gui.table_model import ColumnDef
+from internal_correspondence.orm.labels import field_short_label
 
 _VALUE_PAGES = {
     "text": 0,
@@ -58,7 +59,8 @@ class AddFilterDialog(QDialog):
 
         self.column_combo = QComboBox()
         for column in self.columns:
-            self.column_combo.addItem(column.header, column.name)
+            header = column.header or field_short_label(self.model_class, column.name)
+            self.column_combo.addItem(header, column.name)
         layout.addRow("Поле:", self.column_combo)
 
         self.operator_combo = QComboBox()

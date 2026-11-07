@@ -20,7 +20,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
 
 from internal_correspondence.orm.base import Base, TimestampMixin, VersionedMixin
 
@@ -149,35 +149,61 @@ evaluation_telegram_association = Table(
 
 class Change(Base, TimestampMixin):
     """Запись об изменении сущности для механизма delta-tracking."""
+    __entity_label__ = "Изменение"
+    __entity_label_plural__ = "Изменения"
+    __field_labels__ = {"id": "Идентификатор"}
+
 
     __tablename__ = "changes"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    entity_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    entity_pk: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    entity_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True, info={"label": "Сущность"})
+    entity_pk: Mapped[str] = mapped_column(String(255), nullable=False, index=True, info={"label": "Ключ сущности"})
     changed_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        info={"label": "Дата и время изменения"},
     )
-    changed_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    changed_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list, info={"label": "Изменённые переменные"})
 
     def __repr__(self) -> str:
         return f"<Change {self.entity_name} pk={self.entity_pk} fields={self.changed_fields}>"
+
+
+class ChangeTrackedMixin:
+    """Миксин ссылки на запись Change для механизма delta-tracking.
+
+    Каждая редактируемая сущность хранит ссылку на запись ``Change``,
+    описывающую последние неэкспортированные изменения объекта.
+    """
+
+    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("changes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    @declared_attr
+    def change(cls) -> Mapped[Optional["Change"]]:
+        return relationship("Change")
 
 
 # -----------------------------------------------------------------------------
 # Справочники
 # -----------------------------------------------------------------------------
 
-class TerritorialUnit(Base, VersionedMixin):
+class TerritorialUnit(Base, ChangeTrackedMixin, VersionedMixin):
     """Территориальная единица (область, край, город и т.д.)."""
+    __entity_label__ = "Территориальная единица"
+    __entity_label_plural__ = "Территориальные единицы"
+
 
     __tablename__ = "territorial_units"
 
-    id: Mapped[str] = mapped_column(String(50), primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    id: Mapped[str] = mapped_column(String(50), primary_key=True, info={"label": "Сокращенное наименование"})
+    name: Mapped[str] = mapped_column(String(255), nullable=False, info={"label": "Наименование"})
 
     branches: Mapped[List["Branch"]] = relationship(
         "Branch",
@@ -185,30 +211,28 @@ class TerritorialUnit(Base, VersionedMixin):
         cascade="all, delete-orphan",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
-
-class Branch(Base, VersionedMixin):
+class Branch(Base, ChangeTrackedMixin, VersionedMixin):
     """Филиал научной организации."""
+    __entity_label__ = "Филиал"
+    __entity_label_plural__ = "Филиалы"
+
 
     __tablename__ = "branches"
 
-    id: Mapped[str] = mapped_column(String(50), primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    short_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    id: Mapped[str] = mapped_column(String(50), primary_key=True, info={"label": "Индекс"})
+    name: Mapped[str] = mapped_column(String(255), nullable=False, info={"label": "Наименование"})
+    short_name: Mapped[str] = mapped_column(String(100), nullable=False, info={"label": "Сокращенное наименование", "short": "Сокращение"})
 
     territorial_unit_id: Mapped[str] = mapped_column(
         ForeignKey("territorial_units.id", ondelete="RESTRICT"),
         nullable=False,
+        info={"label": "Территориальная единица"},
     )
     territorial_unit: Mapped["TerritorialUnit"] = relationship(
         "TerritorialUnit",
         back_populates="branches",
+        info={"label": "Территориальная единица"},
     )
 
     departments: Mapped[List["Department"]] = relationship(
@@ -225,21 +249,17 @@ class Branch(Base, VersionedMixin):
         back_populates="branch",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
-
-class Country(Base, VersionedMixin):
+class Country(Base, ChangeTrackedMixin, VersionedMixin):
     """Страна происхождения данных."""
+    __entity_label__ = "Страна"
+    __entity_label_plural__ = "Страны"
+
 
     __tablename__ = "countries"
 
-    id: Mapped[str] = mapped_column(String(10), primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    id: Mapped[str] = mapped_column(String(10), primary_key=True, info={"label": "Сокращенное наименование"})
+    name: Mapped[str] = mapped_column(String(255), nullable=False, info={"label": "Наименование"})
 
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
@@ -250,68 +270,56 @@ class Country(Base, VersionedMixin):
         back_populates="country",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
-
-class AcademicTitle(Base, VersionedMixin):
+class AcademicTitle(Base, ChangeTrackedMixin, VersionedMixin):
     """Научное звание сотрудника."""
+    __entity_label__ = "Научное звание"
+    __entity_label_plural__ = "Научные звания"
+
 
     __tablename__ = "academic_titles"
 
-    id: Mapped[str] = mapped_column(String(50), primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    genitive: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    dative: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    id: Mapped[str] = mapped_column(String(50), primary_key=True, info={"label": "Сокращенное наименование"})
+    name: Mapped[str] = mapped_column(String(255), nullable=False, info={"label": "Наименование"})
+    genitive: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, info={"label": "Род. падеж"})
+    dative: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, info={"label": "Дат. падеж"})
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, info={"label": "Порядок"})
 
     employees: Mapped[List["Employee"]] = relationship(
         "Employee",
         back_populates="academic_title",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
-
-class Consumer(Base, VersionedMixin):
+class Consumer(Base, ChangeTrackedMixin, VersionedMixin):
     """Подразделение головного офиса или сторонняя организация, выставляющая оценки."""
+    __entity_label__ = "Потребитель"
+    __entity_label_plural__ = "Потребители"
+
 
     __tablename__ = "consumers"
 
-    id: Mapped[str] = mapped_column(String(50), primary_key=True)
-    short_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    id: Mapped[str] = mapped_column(String(50), primary_key=True, info={"label": "Индекс"})
+    short_name: Mapped[str] = mapped_column(String(100), nullable=False, info={"label": "Сокращенное наименование", "short": "Сокращение"})
+    name: Mapped[str] = mapped_column(String(255), nullable=False, info={"label": "Наименование"})
 
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
         back_populates="consumer",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
-
-class Source(Base, VersionedMixin):
+class Source(Base, ChangeTrackedMixin, VersionedMixin):
     """Источник данных, положенных в основу научного материала."""
+    __entity_label__ = "Источник"
+    __entity_label_plural__ = "Источники"
+
 
     __tablename__ = "sources"
 
-    id: Mapped[str] = mapped_column(String(50), primary_key=True)
-    type: Mapped[str] = mapped_column(String(50), nullable=False)
-    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    id: Mapped[str] = mapped_column(String(50), primary_key=True, info={"label": "Индекс"})
+    type: Mapped[str] = mapped_column(String(50), nullable=False, info={"label": "Тип"})
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
 
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
@@ -324,21 +332,17 @@ class Source(Base, VersionedMixin):
         back_populates="sources",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
-
-class Leader(Base, VersionedMixin):
+class Leader(Base, ChangeTrackedMixin, VersionedMixin):
     """Должность руководителя, которому докладываются телеграммы."""
+    __entity_label__ = "Руководитель"
+    __entity_label_plural__ = "Руководители"
+
 
     __tablename__ = "leaders"
 
-    id: Mapped[str] = mapped_column(String(50), primary_key=True)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    id: Mapped[str] = mapped_column(String(50), primary_key=True, info={"label": "Сокращенное наименование"})
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, info={"label": "Действительный"})
 
     report_addresses: Mapped[List["ReportAddress"]] = relationship(
         "ReportAddress",
@@ -346,31 +350,29 @@ class Leader(Base, VersionedMixin):
         cascade="all, delete-orphan",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
-
 
 # -----------------------------------------------------------------------------
 # Организационно-штатная структура (ОШС)
 # -----------------------------------------------------------------------------
 
-class Department(Base, VersionedMixin):
+class Department(Base, ChangeTrackedMixin, VersionedMixin):
     """Отдел филиала."""
+    __entity_label__ = "Отдел"
+    __entity_label_plural__ = "Отделы"
+    __field_labels__ = {"id": "Идентификатор"}
+
 
     __tablename__ = "departments"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    short_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, info={"label": "Наименование"})
+    short_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Сокращенное наименование", "short": "Сокращение"})
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, info={"label": "Действительный"})
 
     branch_id: Mapped[str] = mapped_column(
         ForeignKey("branches.id", ondelete="CASCADE"),
         nullable=False,
+        info={"label": "Филиал"},
     )
     branch: Mapped["Branch"] = relationship("Branch", back_populates="departments")
 
@@ -396,27 +398,25 @@ class Department(Base, VersionedMixin):
         back_populates="departments",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
-
-class WorkingGroup(Base, VersionedMixin):
+class WorkingGroup(Base, ChangeTrackedMixin, VersionedMixin):
     """Рабочая группа, к работе в которой привлекаются сотрудники."""
+    __entity_label__ = "Рабочая группа"
+    __entity_label_plural__ = "Рабочие группы"
+    __field_labels__ = {"id": "Идентификатор"}
+
 
     __tablename__ = "working_groups"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, info={"label": "Наименование"})
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, info={"label": "Действительная"})
 
     department_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("departments.id", ondelete="CASCADE"),
         nullable=False,
+        info={"label": "Отдел"},
     )
     department: Mapped["Department"] = relationship(
         "Department",
@@ -439,29 +439,27 @@ class WorkingGroup(Base, VersionedMixin):
         back_populates="workgroups",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
-
-class Employee(Base, VersionedMixin):
+class Employee(Base, ChangeTrackedMixin, VersionedMixin):
     """Сотрудник филиала."""
+    __entity_label__ = "Сотрудник"
+    __entity_label_plural__ = "Сотрудники"
+    __field_labels__ = {"id": "Идентификатор"}
+
 
     __tablename__ = "employees"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    last_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    first_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    middle_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    position: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_name: Mapped[str] = mapped_column(String(100), nullable=False, info={"label": "Фамилия"})
+    first_name: Mapped[str] = mapped_column(String(100), nullable=False, info={"label": "Имя"})
+    middle_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Отчество"})
+    position: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, info={"label": "Должность"})
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, info={"label": "Действительный"})
 
     academic_title_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("academic_titles.id", ondelete="SET NULL"),
         nullable=True,
+        info={"label": "Научное звание"},
     )
     academic_title: Mapped[Optional["AcademicTitle"]] = relationship(
         "AcademicTitle",
@@ -471,6 +469,7 @@ class Employee(Base, VersionedMixin):
     department_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("departments.id", ondelete="CASCADE"),
         nullable=False,
+        info={"label": "Отдел"},
     )
     department: Mapped["Department"] = relationship(
         "Department",
@@ -480,14 +479,15 @@ class Employee(Base, VersionedMixin):
     working_group_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("working_groups.id", ondelete="SET NULL"),
         nullable=True,
+        info={"label": "Рабочая группа"},
     )
     working_group: Mapped[Optional["WorkingGroup"]] = relationship(
         "WorkingGroup",
         back_populates="employees",
     )
 
-    workgroup_start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    workgroup_end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    workgroup_start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Начало работы в рабочей группе", "short": "Начало в группе"})
+    workgroup_end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Конец работы в рабочей группе", "short": "Конец в группе"})
 
     tasks: Mapped[List["ScientificTask"]] = relationship(
         "ScientificTask",
@@ -505,12 +505,6 @@ class Employee(Base, VersionedMixin):
         back_populates="employees",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
     def display_name(self) -> str:
         """Возвращает сокращённое ФИО сотрудника."""
@@ -535,19 +529,22 @@ class Employee(Base, VersionedMixin):
 # Научная задача
 # -----------------------------------------------------------------------------
 
-class ScientificTask(Base, VersionedMixin):
+class ScientificTask(Base, ChangeTrackedMixin, VersionedMixin):
     """Научная задача, формулируемая руководством."""
+    __entity_label__ = "Научная задача"
+    __entity_label_plural__ = "Научные задачи"
+
 
     __tablename__ = "scientific_tasks"
 
-    id: Mapped[str] = mapped_column(String(50), primary_key=True)
-    name: Mapped[str] = mapped_column(String(500), nullable=False)
-    type: Mapped[str] = mapped_column(String(50), nullable=False)
-    start_date: Mapped[date] = mapped_column(Date, nullable=False)
-    end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    partial_threshold: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True)
-    full_threshold: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True)
+    id: Mapped[str] = mapped_column(String(50), primary_key=True, info={"label": "Код"})
+    name: Mapped[str] = mapped_column(String(500), nullable=False, info={"label": "Наименование"})
+    type: Mapped[str] = mapped_column(String(50), nullable=False, info={"label": "Тип"})
+    start_date: Mapped[date] = mapped_column(Date, nullable=False, info={"label": "Начало действия", "short": "Начало"})
+    end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Конец действия", "short": "Окончание"})
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
+    partial_threshold: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True, info={"label": "Частичное решение"})
+    full_threshold: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True, info={"label": "Полное решение"})
 
     employees: Mapped[List["Employee"]] = relationship(
         "Employee",
@@ -563,27 +560,24 @@ class ScientificTask(Base, VersionedMixin):
         back_populates="task",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
-
 
 # -----------------------------------------------------------------------------
 # Файл
 # -----------------------------------------------------------------------------
 
-class FileRecord(Base, VersionedMixin):
+class FileRecord(Base, ChangeTrackedMixin, VersionedMixin):
     """Прикреплённый файл."""
+    __entity_label__ = "Файл"
+    __entity_label_plural__ = "Файлы"
+    __field_labels__ = {"id": "Идентификатор"}
+
 
     __tablename__ = "file_records"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    extension: Mapped[str] = mapped_column(String(20), nullable=False)
-    path: Mapped[str] = mapped_column(String(500), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, info={"label": "Имя"})
+    extension: Mapped[str] = mapped_column(String(20), nullable=False, info={"label": "Расширение"})
+    path: Mapped[str] = mapped_column(String(500), nullable=False, info={"label": "Путь"})
 
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
@@ -595,13 +589,6 @@ class FileRecord(Base, VersionedMixin):
         secondary=telegram_file_association,
         back_populates="files",
     )
-
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
 
 # -----------------------------------------------------------------------------
@@ -705,27 +692,34 @@ class EvaluationMixin:
 # Научный материал
 # -----------------------------------------------------------------------------
 
-class ScientificMaterial(Base, VersionedMixin, ParticipantMixin, EvaluationMixin):
+class ScientificMaterial(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMixin, EvaluationMixin):
     """Передаваемый/принимаемый научный материал."""
+    __entity_label__ = "Научный материал"
+    __entity_label_plural__ = "Научные материалы"
+    __entity_label_prepositional__ = "научном материале"
+    __entity_label_prepositional_plural__ = "научных материалах"
+    __field_labels__ = {"id": "Идентификатор", "participating_employees": "Сотрудники", "participating_departments": "Отделы", "participating_workgroups": "Рабочие группы", "evaluation_display": "Оценка"}
+
 
     __tablename__ = "scientific_materials"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    type: Mapped[str] = mapped_column(String(50), nullable=False)
-    outgoing_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    outgoing_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    name: Mapped[str] = mapped_column(String(500), nullable=False)
-    incoming_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    incoming_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    serial_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    release_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    permit_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    cost: Mapped[Optional[float]] = mapped_column(Numeric(15, 2), nullable=True)
-    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    type: Mapped[str] = mapped_column(String(50), nullable=False, info={"label": "Тип"})
+    outgoing_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, info={"label": "Исходящий номер", "short": "Исх. номер", "required": True})
+    outgoing_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата исходящего номера", "short": "Дата исх.", "required": True})
+    name: Mapped[str] = mapped_column(String(500), nullable=False, info={"label": "Наименование"})
+    incoming_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, info={"label": "Входящий номер", "short": "Вх. номер"})
+    incoming_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата входящего номера", "short": "Дата вх."})
+    serial_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Серийный номер"})
+    release_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, info={"label": "Год выпуска"})
+    permit_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Номер разрешительного документа"})
+    cost: Mapped[Optional[float]] = mapped_column(Numeric(15, 2), nullable=True, info={"label": "Стоимость"})
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
 
     country_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("countries.id", ondelete="SET NULL"),
         nullable=True,
+        info={"label": "Страна"},
     )
     country: Mapped[Optional["Country"]] = relationship(
         "Country",
@@ -735,21 +729,25 @@ class ScientificMaterial(Base, VersionedMixin, ParticipantMixin, EvaluationMixin
     consumer_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("consumers.id", ondelete="SET NULL"),
         nullable=True,
+        info={"label": "Потребитель"},
     )
     consumer: Mapped[Optional["Consumer"]] = relationship(
         "Consumer",
         back_populates="materials",
+        info={"label": "Потребитель"},
     )
 
     branch_id: Mapped[str] = mapped_column(
         ForeignKey("branches.id", ondelete="RESTRICT"),
         nullable=False,
+        info={"label": "Филиал"},
     )
-    branch: Mapped["Branch"] = relationship("Branch", back_populates="materials")
+    branch: Mapped["Branch"] = relationship("Branch", back_populates="materials", info={"label": "Филиал"})
 
     task_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("scientific_tasks.id", ondelete="SET NULL"),
         nullable=True,
+        info={"label": "Задача"},
     )
     task: Mapped[Optional["ScientificTask"]] = relationship(
         "ScientificTask",
@@ -787,12 +785,6 @@ class ScientificMaterial(Base, VersionedMixin, ParticipantMixin, EvaluationMixin
         back_populates="materials",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
     __table_args__ = (
         UniqueConstraint("outgoing_number", "outgoing_date", name="uix_material_outgoing"),
@@ -803,24 +795,31 @@ class ScientificMaterial(Base, VersionedMixin, ParticipantMixin, EvaluationMixin
 # Телеграмма
 # -----------------------------------------------------------------------------
 
-class Telegram(Base, VersionedMixin, ParticipantMixin, EvaluationMixin):
+class Telegram(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMixin, EvaluationMixin):
     """Передаваемая/принимаемая телеграмма."""
+    __entity_label__ = "Телеграмма"
+    __entity_label_plural__ = "Телеграммы"
+    __entity_label_prepositional__ = "телеграмме"
+    __entity_label_prepositional_plural__ = "телеграммах"
+    __field_labels__ = {"id": "Идентификатор", "participating_employees": "Сотрудники", "participating_departments": "Отделы", "participating_workgroups": "Рабочие группы", "evaluation_display": "Оценка"}
+
 
     __tablename__ = "telegrams"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    type: Mapped[str] = mapped_column(String(50), nullable=False)
-    outgoing_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    outgoing_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    name: Mapped[str] = mapped_column(String(500), nullable=False)
-    incoming_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    incoming_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    report_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    type: Mapped[str] = mapped_column(String(50), nullable=False, info={"label": "Тип"})
+    outgoing_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, info={"label": "Исходящий номер", "short": "Исх. номер", "required": True})
+    outgoing_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата исходящего номера", "short": "Дата исх.", "required": True})
+    name: Mapped[str] = mapped_column(String(500), nullable=False, info={"label": "Наименование (тема)", "short": "Наименование"})
+    incoming_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, info={"label": "Входящий номер", "short": "Вх. номер"})
+    incoming_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата входящего номера", "short": "Дата вх."})
+    report_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, info={"label": "Тип доклада"})
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
 
     country_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("countries.id", ondelete="SET NULL"),
         nullable=True,
+        info={"label": "Страна"},
     )
     country: Mapped[Optional["Country"]] = relationship(
         "Country",
@@ -830,12 +829,16 @@ class Telegram(Base, VersionedMixin, ParticipantMixin, EvaluationMixin):
     branch_id: Mapped[str] = mapped_column(
         ForeignKey("branches.id", ondelete="RESTRICT"),
         nullable=False,
+        info={"label": "Филиал"},
     )
-    branch: Mapped["Branch"] = relationship("Branch", back_populates="telegrams")
+    branch: Mapped["Branch"] = relationship(
+        "Branch", back_populates="telegrams", info={"label": "Филиал"}
+    )
 
     task_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("scientific_tasks.id", ondelete="SET NULL"),
         nullable=True,
+        info={"label": "Задача"},
     )
     task: Mapped[Optional["ScientificTask"]] = relationship(
         "ScientificTask",
@@ -873,12 +876,6 @@ class Telegram(Base, VersionedMixin, ParticipantMixin, EvaluationMixin):
         back_populates="telegrams",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
     __table_args__ = (
         UniqueConstraint("outgoing_number", "outgoing_date", name="uix_telegram_outgoing"),
@@ -889,46 +886,49 @@ class Telegram(Base, VersionedMixin, ParticipantMixin, EvaluationMixin):
 # Адресация доклада телеграмм
 # -----------------------------------------------------------------------------
 
-class ReportAddress(Base, VersionedMixin):
+class ReportAddress(Base, ChangeTrackedMixin, VersionedMixin):
     """Промежуточная таблица между телеграммой и адресатом доклада с датой доклада."""
+    __entity_label__ = "Адресация доклада"
+    __entity_label_plural__ = "Адресации доклада"
+    __field_labels__ = {"id": "Идентификатор"}
+
 
     __tablename__ = "report_addresses"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    report_date: Mapped[date] = mapped_column(Date, nullable=False)
+    report_date: Mapped[date] = mapped_column(Date, nullable=False, info={"label": "Дата доклада"})
 
     telegram_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("telegrams.id", ondelete="CASCADE"),
         nullable=False,
+        info={"label": "Телеграмма"},
     )
     telegram: Mapped["Telegram"] = relationship("Telegram")
 
     leader_id: Mapped[str] = mapped_column(
         ForeignKey("leaders.id", ondelete="RESTRICT"),
         nullable=False,
+        info={"label": "Руководитель"},
     )
     leader: Mapped["Leader"] = relationship("Leader", back_populates="report_addresses")
-
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
 
 # -----------------------------------------------------------------------------
 # Список оценок и оценка
 # -----------------------------------------------------------------------------
 
-class EvaluationList(Base, VersionedMixin):
+class EvaluationList(Base, ChangeTrackedMixin, VersionedMixin):
     """Документ, определяющий выставление оценок материалам/телеграммам."""
+    __entity_label__ = "Список оценок"
+    __entity_label_plural__ = "Списки оценок"
+    __field_labels__ = {"id": "Идентификатор"}
+
 
     __tablename__ = "evaluation_lists"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    number: Mapped[str] = mapped_column(String(50), nullable=False)
-    date: Mapped[date] = mapped_column(Date, nullable=False)
+    number: Mapped[str] = mapped_column(String(50), nullable=False, info={"label": "Номер"})
+    date: Mapped[date] = mapped_column(Date, nullable=False, info={"label": "Дата"})
 
     evaluations: Mapped[List["Evaluation"]] = relationship(
         "Evaluation",
@@ -936,25 +936,23 @@ class EvaluationList(Base, VersionedMixin):
         cascade="all, delete-orphan",
     )
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")
 
-
-class Evaluation(Base, VersionedMixin):
+class Evaluation(Base, ChangeTrackedMixin, VersionedMixin):
     """Оценка материалов/телеграмм потребителем."""
+    __entity_label__ = "Оценка"
+    __entity_label_plural__ = "Оценки"
+    __field_labels__ = {"id": "Идентификатор"}
+
 
     __tablename__ = "evaluations"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    value: Mapped[str] = mapped_column(String(50), nullable=False)
+    value: Mapped[str] = mapped_column(String(50), nullable=False, info={"label": "Значение оценки"})
 
     evaluation_list_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("evaluation_lists.id", ondelete="CASCADE"),
         nullable=False,
+        info={"label": "Список оценок"},
     )
     evaluation_list: Mapped["EvaluationList"] = relationship(
         "EvaluationList",
@@ -971,10 +969,3 @@ class Evaluation(Base, VersionedMixin):
         secondary=evaluation_telegram_association,
         back_populates="evaluations",
     )
-
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("changes.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    change: Mapped[Optional["Change"]] = relationship("Change")

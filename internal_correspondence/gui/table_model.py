@@ -3,25 +3,30 @@
 from typing import Any, Callable, Dict, List, Optional, Type
 
 from PyQt5.QtCore import QAbstractTableModel, QModelIndex, Qt
-from sqlalchemy import asc, desc
+from sqlalchemy import asc, desc, func
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
 from internal_correspondence.core.constants import DEFAULT_PAGE_SIZE
 from internal_correspondence.gui.filter_model import FilterCondition, resolve_value_type
 from internal_correspondence.orm.base import Base
+from internal_correspondence.gui.theme import current_theme
+from internal_correspondence.orm.labels import field_short_label
 
 # Роль для передачи значения оценки в делегат отображения
 EVALUATION_VALUE_ROLE = Qt.UserRole + 1
 
-
 class ColumnDef:
-    """Описание столбца таблицы."""
+    """Описание столбца таблицы.
+
+    Если заголовок не указан, он подставляется из русскоязычных меток
+    поля ORM-модели (краткая метка, при отсутствии — полная).
+    """
 
     def __init__(
         self,
         name: str,
-        header: str,
+        header: Optional[str] = None,
         width: int = 120,
         formatter: Optional[Callable[[Any], str]] = None,
     ) -> None:
@@ -32,7 +37,12 @@ class ColumnDef:
 
 
 class SqlAlchemyTableModel(QAbstractTableModel):
-    """Модель таблицы для отображения ORM-объектов."""
+    """Модель таблицы для отображения ORM-объектов.
+
+    Пагинация и сортировка по колонкам БД выполняются запросами;
+    фильтры и сортировка по вычисляемым колонкам требуют загрузки
+    записей в память.
+    """
 
     def __init__(
         self,
@@ -45,6 +55,12 @@ class SqlAlchemyTableModel(QAbstractTableModel):
         self.session = session
         self.model_class = model_class
         self.columns = columns
+        # Заголовки без явного значения подставляются из метаданных модели
+        self._headers = [
+            column.header if column.header is not None
+            else field_short_label(model_class, column.name)
+            for column in self.columns
+        ]
         self._items: List[Base] = []
         self._page = 1
         self._page_size = DEFAULT_PAGE_SIZE
@@ -81,17 +97,14 @@ class SqlAlchemyTableModel(QAbstractTableModel):
         if role == Qt.BackgroundRole:
             # Выделение изменённых, но не экспортированных записей
             if hasattr(item, "change_id") and getattr(item, "change_id") is not None:
-                fff = getattr(item, "change_id")
-                from PyQt5.QtGui import QColor
-
-                return QColor(255, 230, 180)
+                return current_theme().modified_row
         return None
 
     def headerData(
         self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole
     ) -> Any:
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
-            return self.columns[section].header
+            return self._headers[section]
         return None
 
     def sort(self, column_index: int, order: Qt.SortOrder = Qt.AscendingOrder) -> None:
@@ -150,6 +163,33 @@ class SqlAlchemyTableModel(QAbstractTableModel):
     def refresh(self) -> None:
         """Обновляет данные модели из БД."""
         self.beginResetModel()
+        try:
+            if self._can_use_db_pagination():
+                self._refresh_from_db()
+            else:
+                self._refresh_in_memory()
+        finally:
+            self.endResetModel()
+
+    def _can_use_db_pagination(self) -> bool:
+        """Проверяет, что все условия можно вычислить средствами БД."""
+        if self._filter_text or self._filters:
+            return False
+        return not self._order_by or self._is_mapped_column(self._order_by)
+
+    def _refresh_from_db(self) -> None:
+        """Загружает одну страницу записей запросом с LIMIT/OFFSET."""
+        query = self.session.query(self.model_class)
+        if self._order_by:
+            column = getattr(self.model_class, self._order_by)
+            query = query.order_by(desc(column) if self._order_desc else asc(column))
+        count_query = self.session.query(func.count()).select_from(self.model_class)
+        self._total = count_query.scalar() or 0
+        offset = (self._page - 1) * self._page_size
+        self._items = query.limit(self._page_size).offset(offset).all()
+
+    def _refresh_in_memory(self) -> None:
+        """Загружает записи в память для фильтров по вычисляемым значениям."""
         query = self.session.query(self.model_class)
         db_order = bool(self._order_by) and self._is_mapped_column(self._order_by)
         if db_order:
@@ -179,7 +219,6 @@ class SqlAlchemyTableModel(QAbstractTableModel):
         self._total = len(all_items)
         start = (self._page - 1) * self._page_size
         self._items = all_items[start : start + self._page_size]
-        self.endResetModel()
 
     def _is_mapped_column(self, name: str) -> bool:
         """Проверяет, является ли атрибут (включая вложенные) колонкой ORM."""

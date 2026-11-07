@@ -2,6 +2,7 @@
 
 import configparser
 import os
+import sys
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Optional
@@ -28,6 +29,9 @@ class AppSettings:
     # Язык интерфейса
     language: str = "ru"
 
+    # Тема оформления (light/dark)
+    theme: str = "light"
+
     def storage_path_obj(self) -> Path:
         """Возвращает путь к файловому хранилищу."""
         if self.storage_path:
@@ -48,7 +52,9 @@ class SettingsManager:
     def __init__(self, app_dir: Optional[Path] = None) -> None:
         self.app_dir = app_dir or Path(os.path.dirname(os.path.abspath(__file__))).parent.parent
         self.config_path = self.app_dir / CONFIG_FILE_NAME
-        self._config = configparser.ConfigParser()
+        # strict=False: ручная правка INI с продублированными ключами
+        # не должна ронять запуск приложения (побеждает последнее значение)
+        self._config = configparser.ConfigParser(strict=False)
 
     @property
     def exists(self) -> bool:
@@ -85,6 +91,3 @@ class SettingsManager:
         with open(self.config_path, "w", encoding="utf-8") as f:
             self._config.write(f)
 
-
-# Импорт sys необходим для default_storage_root
-import sys  # noqa: E402

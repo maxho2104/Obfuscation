@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from internal_correspondence.core.constants import DELETION_MARKER, EXPORT_DIR
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.models import Change, FileRecord
+from internal_correspondence.orm.utils import parse_primary_key, resolve_entity_class
 
 logger = get_logger("export_service")
 
@@ -64,7 +65,7 @@ class ExportService:
             if (change.entity_name, change.entity_pk) in deleted_keys:
                 continue
 
-            entity_class = self._resolve_entity_class(change.entity_name)
+            entity_class = resolve_entity_class(change.entity_name)
             if entity_class is None:
                 logger.warning("Неизвестная сущность: %s", change.entity_name)
                 continue
@@ -81,7 +82,7 @@ class ExportService:
 
             instance = self.session.get(
                 entity_class,
-                self._parse_pk(change.entity_pk, entity_class),
+                parse_primary_key(change.entity_pk, entity_class),
             )
             if instance is None:
                 logger.warning(
@@ -124,29 +125,6 @@ class ExportService:
         """Возвращает строковое представление первичного ключа объекта."""
         pk = instance.__mapper__.primary_key_from_instance(instance)
         return "_".join(str(value) for value in pk)
-
-    def _resolve_entity_class(self, entity_name: str) -> Optional[type]:
-        """Возвращает класс ORM-модели по имени сущности."""
-        from internal_correspondence.orm import models
-        return getattr(models, entity_name, None)
-
-    def _parse_pk(self, pk_str: str, entity_class: type) -> Any:
-        """Преобразует строковое представление PK в тип первичного ключа."""
-        pk_columns = entity_class.__mapper__.primary_key
-        if len(pk_columns) == 1:
-            col_type = pk_columns[0].type
-            # UUID
-            if "UUID" in str(type(col_type)).upper():
-                return uuid.UUID(pk_str)
-            # Integer
-            if "INTEGER" in str(type(col_type)).upper():
-                try:
-                    return int(pk_str)
-                except ValueError:
-                    return pk_str
-            return pk_str
-        # Составной ключ (не используется в проекте)
-        return pk_str.split("_")
 
     def _collect_files(self, export_data: Dict[str, Dict[str, Any]]) -> List[FileRecord]:
         """Собирает прикреплённые файлы для включения в архив.
@@ -211,10 +189,10 @@ class ExportService:
     def _clear_changes(self, changes: List[Change]) -> None:
         """Сбрасывает change_id у экспортированных сущностей и удаляет записи Change."""
         for change in changes:
-            entity_class = self._resolve_entity_class(change.entity_name)
+            entity_class = resolve_entity_class(change.entity_name)
             if entity_class is not None:
                 try:
-                    pk = self._parse_pk(change.entity_pk, entity_class)
+                    pk = parse_primary_key(change.entity_pk, entity_class)
                 except (TypeError, ValueError):
                     pk = None
                 if pk is not None:

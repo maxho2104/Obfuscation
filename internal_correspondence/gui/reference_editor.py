@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.gui.table_model import ColumnDef, SqlAlchemyTableModel
 from internal_correspondence.orm.base import Base
+from internal_correspondence.orm.labels import entity_label
 from internal_correspondence.services.base_service import BaseService
 
 logger = get_logger("reference_editor")
@@ -78,6 +79,7 @@ class ReferenceEditorWidget(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setSortingEnabled(True)
+        self.table.setAlternatingRowColors(True)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.doubleClicked.connect(self._edit)
         layout.addWidget(self.table)
@@ -191,7 +193,6 @@ class ReferenceEditorDialog(QDialog):
 
     def __init__(
         self,
-        title: str,
         session,
         model_class: Type[Base],
         service_class: Type[BaseService],
@@ -201,7 +202,7 @@ class ReferenceEditorDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(title)
+        self.setWindowTitle(entity_label(model_class, plural=True))
         self.setMinimumSize(800, 500)
         layout = QVBoxLayout(self)
         self.editor = ReferenceEditorWidget(

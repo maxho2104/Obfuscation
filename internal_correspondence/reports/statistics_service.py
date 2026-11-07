@@ -13,7 +13,7 @@ from internal_correspondence.core.constants import (
     EvaluationValue,
 )
 from internal_correspondence.orm.base import Base
-from internal_correspondence.orm.models import ScientificMaterial, Telegram
+from internal_correspondence.orm.labels import entity_label
 
 # Типы периодов
 PERIOD_YEAR = "year"
@@ -45,11 +45,6 @@ CRITERION_LABELS = {
     CRITERION_TASK: "Научные задачи",
     CRITERION_SOURCE: "Источники",
     CRITERION_EVALUATION: "Полученные оценки",
-}
-
-DOCUMENT_LABELS = {
-    ScientificMaterial: "Научные материалы",
-    Telegram: "Телеграммы",
 }
 
 _MONTH_NAMES = (
@@ -327,7 +322,7 @@ class StatisticsService:
         month_columns = [columns[index].label for index in month_indices]
 
         return StatisticsResult(
-            title=f"{DOCUMENT_LABELS.get(query.model_class, query.model_class.__name__)}"
+            title=f"{entity_label(query.model_class, plural=True)}"
             f" — {CRITERION_LABELS.get(query.criterion, query.criterion)}",
             period_label=self._period_label(reporting, search_period),
             columns=[column.label for column in columns],

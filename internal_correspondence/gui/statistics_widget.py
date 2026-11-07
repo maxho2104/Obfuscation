@@ -29,6 +29,8 @@ from PyQt5.QtWidgets import (
 )
 
 from internal_correspondence.core.logging_config import get_logger
+from internal_correspondence.gui.theme import current_theme
+from internal_correspondence.orm.labels import entity_label
 from internal_correspondence.orm.models import ScientificMaterial, Telegram
 from internal_correspondence.reports.statistics_service import (
     CRITERION_LABELS,
@@ -100,8 +102,8 @@ class StatisticsWidget(QWidget):
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Объект:"))
         self.object_combo = QComboBox()
-        self.object_combo.addItem("Научные материалы", ScientificMaterial)
-        self.object_combo.addItem("Телеграммы", Telegram)
+        self.object_combo.addItem(entity_label(ScientificMaterial, plural=True), ScientificMaterial)
+        self.object_combo.addItem(entity_label(Telegram, plural=True), Telegram)
         controls.addWidget(self.object_combo)
 
         controls.addWidget(QLabel("Критерий:"))
@@ -249,6 +251,7 @@ class StatisticsWidget(QWidget):
 
     def _display(self, result: StatisticsResult) -> None:
         """Отображает результат подсчёта в таблице."""
+        self._last_result = result
         self.title_label.setText(result.title)
         self.period_label.setText(f"Период: {result.period_label}")
 
@@ -290,6 +293,11 @@ class StatisticsWidget(QWidget):
     def _update_chart(self, result: StatisticsResult) -> None:
         """Строит столбчатую диаграмму по месяцам с цветами параметров."""
         chart = QChart()
+        chart.setTheme(
+            QChart.ChartThemeDark
+            if current_theme().key == "dark"
+            else QChart.ChartThemeLight
+        )
         chart.setTitle(f"{result.title}: по месяцам")
 
         month_indices = result.month_indices
@@ -333,6 +341,12 @@ class StatisticsWidget(QWidget):
 
         self._chart = chart
         self.chart_view.setChart(chart)
+
+    def apply_theme(self) -> None:
+        """Перестраивает график с учётом текущей темы оформления."""
+        last_result = getattr(self, "_last_result", None)
+        if last_result is not None:
+            self._update_chart(last_result)
 
     @staticmethod
     def _text_item(text: str, bold: bool = False) -> QTableWidgetItem:

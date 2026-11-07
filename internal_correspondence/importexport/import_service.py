@@ -15,6 +15,7 @@ from internal_correspondence.core.constants import Role
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.base import Base
 from internal_correspondence.orm.models import Change, FileRecord
+from internal_correspondence.orm.utils import parse_primary_key, resolve_entity_class
 from internal_correspondence.services.change_tracking import clear_change
 
 logger = get_logger("import_service")
@@ -88,7 +89,7 @@ class ImportService:
             if not isinstance(entries, dict):
                 logger.warning("Пропущена служебная секция: %s", entity_name)
                 continue
-            if self._resolve_entity_class(entity_name) is None:
+            if resolve_entity_class(entity_name) is None:
                 logger.warning("Неизвестная сущность: %s", entity_name)
                 continue
             self._payload[entity_name] = {
@@ -125,7 +126,7 @@ class ImportService:
         if cached is not None:
             return cached
 
-        entity_class = self._resolve_entity_class(entity_name)
+        entity_class = resolve_entity_class(entity_name)
         if entity_class is None:
             self._status[key] = "skipped"
             return "skipped"
@@ -163,7 +164,7 @@ class ImportService:
         column_data = {name: value for name, value in data.items() if name not in relationship_specs}
         relation_data = {name: value for name, value in data.items() if name in relationship_specs}
 
-        pk_values = self._parse_pk(pk_key, entity_class)
+        pk_values = parse_primary_key(pk_key, entity_class)
         instance = self.session.get(entity_class, pk_values)
 
         if instance is not None:
@@ -234,7 +235,7 @@ class ImportService:
         stack: Set[Tuple[str, str]],
     ) -> Base:
         """Возвращает зависимость из БД, создавая её при наличии в JSON."""
-        target_pk = self._parse_pk(target_pk_key, target_class)
+        target_pk = parse_primary_key(target_pk_key, target_class)
         existing = self.session.get(target_class, target_pk)
         if existing is not None:
             return existing
@@ -290,12 +291,12 @@ class ImportService:
 
     def _delete_entry(self, entity_name: str, pk_key: str) -> str:
         """Удаляет сущность по экспортной записи об удалении."""
-        entity_class = self._resolve_entity_class(entity_name)
+        entity_class = resolve_entity_class(entity_name)
         if entity_class is None:
             return "skipped"
 
         try:
-            pk = self._parse_pk(pk_key, entity_class)
+            pk = parse_primary_key(pk_key, entity_class)
         except (TypeError, ValueError):
             logger.warning("Некорректный первичный ключ: %s pk=%s", entity_name, pk_key)
             return "skipped"
@@ -333,11 +334,9 @@ class ImportService:
     def _allowed_fields_for_update(self, entity_name: str, changed_fields: List[str]) -> List[str]:
         """Возвращает список полей, которые разрешено обновлять согласно роли."""
         if self.role == Role.HEAD_OFFICE.value:
-            # Головной офис авторитете для справочников и научных задач.
-            # Для ОШС — только чтение, изменения принимаются только от филиала-владельца.
-            if entity_name in ("Department", "WorkingGroup", "Employee"):
-                # В реальном сценарии нужно проверить branch_id сущности.
-                return changed_fields
+            # Головной офис авторитетен для справочников и научных задач.
+            # TODO: для ОШС (Department, WorkingGroup, Employee) проверять
+            # принадлежность сущности филиалу-владельцу.
             return changed_fields
 
         # Роль филиала: не редактирует входящие номера и оценки материалов/телеграмм.
@@ -420,32 +419,12 @@ class ImportService:
             self._model_classes_cache = mapping
         return self._model_classes_cache
 
-    def _resolve_entity_class(self, entity_name: str) -> Optional[type]:
-        """Возвращает класс ORM-модели по имени сущности."""
-        from internal_correspondence.orm import models
-        return getattr(models, entity_name, None)
-
     @staticmethod
     def _pk_key(value: Any) -> str:
         """Приводит значение первичного ключа к строковому виду экспорта."""
         if isinstance(value, (tuple, list)):
             return "_".join(str(item) for item in value)
         return str(value)
-
-    def _parse_pk(self, pk_str: str, entity_class: type) -> Any:
-        """Преобразует строковое представление PK в тип первичного ключа."""
-        pk_columns = entity_class.__mapper__.primary_key
-        if len(pk_columns) == 1:
-            col_type = pk_columns[0].type
-            if "UUID" in str(type(col_type)).upper():
-                return uuid.UUID(pk_str)
-            if "INTEGER" in str(type(col_type)).upper():
-                try:
-                    return int(pk_str)
-                except ValueError:
-                    return pk_str
-            return pk_str
-        return pk_str.split("_")
 
     def _extract_files(self, extract_dir: Path) -> None:
         """Восстанавливает прикреплённые файлы в файловом хранилище.

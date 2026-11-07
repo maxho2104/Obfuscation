@@ -1,6 +1,6 @@
 """Диалоги редактирования справочников."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from PyQt5.QtWidgets import (
     QCheckBox,
@@ -20,6 +20,11 @@ from internal_correspondence.core.constants import (
     SOURCE_TYPE_LABELS,
     TASK_TYPE_LABELS,
 )
+from internal_correspondence.orm.labels import (
+    entity_label,
+    field_form_label,
+    field_label,
+)
 from internal_correspondence.orm.models import (
     AcademicTitle,
     Branch,
@@ -27,17 +32,27 @@ from internal_correspondence.orm.models import (
     Country,
     Leader,
     ScientificTask,
+    Source,
     TerritorialUnit,
 )
 
 
 class BaseReferenceDialog(QDialog):
-    """Базовый диалог справочника."""
+    """Базовый диалог справочника.
+
+    Подписи полей форм и заголовок окна берутся из метаданных
+    ORM-модели (см. ``orm/labels.py``).
+    """
+
+    model_class = None
 
     def __init__(self, session, item=None, parent=None) -> None:
         super().__init__(parent)
         self.session = session
         self.item = item
+        model = type(item) if item is not None else self.model_class
+        if model is not None:
+            self.setWindowTitle(entity_label(model))
         self._setup_ui()
         if item:
             self._load_data()
@@ -61,13 +76,15 @@ class BaseReferenceDialog(QDialog):
 class TerritorialUnitDialog(BaseReferenceDialog):
     """Диалог территориальной единицы."""
 
+    model_class = TerritorialUnit
+
     def _setup_ui(self) -> None:
         super()._setup_ui()
         self.id_edit = QLineEdit()
         self.id_edit.setEnabled(self.item is None)
         self.name_edit = QLineEdit()
-        self.form.addRow("Сокращенное наименование *:", self.id_edit)
-        self.form.addRow("Наименование *:", self.name_edit)
+        self.form.addRow(field_form_label(TerritorialUnit, "id"), self.id_edit)
+        self.form.addRow(field_form_label(TerritorialUnit, "name"), self.name_edit)
 
     def _load_data(self) -> None:
         self.id_edit.setText(self.item.id)
@@ -80,6 +97,8 @@ class TerritorialUnitDialog(BaseReferenceDialog):
 class BranchDialog(BaseReferenceDialog):
     """Диалог филиала."""
 
+    model_class = Branch
+
     def _setup_ui(self) -> None:
         super()._setup_ui()
         self.id_edit = QLineEdit()
@@ -90,10 +109,10 @@ class BranchDialog(BaseReferenceDialog):
         self.unit_combo.addItem("—", None)
         for unit in self.session.query(TerritorialUnit).order_by(TerritorialUnit.name).all():
             self.unit_combo.addItem(unit.name, unit.id)
-        self.form.addRow("Индекс *:", self.id_edit)
-        self.form.addRow("Наименование *:", self.name_edit)
-        self.form.addRow("Сокращенное наименование:", self.short_name_edit)
-        self.form.addRow("Территориальная единица *:", self.unit_combo)
+        self.form.addRow(field_form_label(Branch, "id"), self.id_edit)
+        self.form.addRow(field_form_label(Branch, "name"), self.name_edit)
+        self.form.addRow(field_form_label(Branch, "short_name"), self.short_name_edit)
+        self.form.addRow(field_form_label(Branch, "territorial_unit_id"), self.unit_combo)
 
     def _load_data(self) -> None:
         self.id_edit.setText(self.item.id)
@@ -115,13 +134,15 @@ class BranchDialog(BaseReferenceDialog):
 class CountryDialog(BaseReferenceDialog):
     """Диалог страны."""
 
+    model_class = Country
+
     def _setup_ui(self) -> None:
         super()._setup_ui()
         self.id_edit = QLineEdit()
         self.id_edit.setEnabled(self.item is None)
         self.name_edit = QLineEdit()
-        self.form.addRow("Сокращенное наименование *:", self.id_edit)
-        self.form.addRow("Наименование *:", self.name_edit)
+        self.form.addRow(field_form_label(Country, "id"), self.id_edit)
+        self.form.addRow(field_form_label(Country, "name"), self.name_edit)
 
     def _load_data(self) -> None:
         self.id_edit.setText(self.item.id)
@@ -134,6 +155,8 @@ class CountryDialog(BaseReferenceDialog):
 class AcademicTitleDialog(BaseReferenceDialog):
     """Диалог научного звания."""
 
+    model_class = AcademicTitle
+
     def _setup_ui(self) -> None:
         super()._setup_ui()
         self.id_edit = QLineEdit()
@@ -144,11 +167,11 @@ class AcademicTitleDialog(BaseReferenceDialog):
         self.order_spin = QSpinBox()
         self.order_spin.setMinimum(0)
         self.order_spin.setMaximum(9999)
-        self.form.addRow("Сокращенное наименование *:", self.id_edit)
-        self.form.addRow("Наименование *:", self.name_edit)
-        self.form.addRow("Род. падеж:", self.genitive_edit)
-        self.form.addRow("Дат. падеж:", self.dative_edit)
-        self.form.addRow("Порядок:", self.order_spin)
+        self.form.addRow(field_form_label(AcademicTitle, "id"), self.id_edit)
+        self.form.addRow(field_form_label(AcademicTitle, "name"), self.name_edit)
+        self.form.addRow(field_form_label(AcademicTitle, "genitive"), self.genitive_edit)
+        self.form.addRow(field_form_label(AcademicTitle, "dative"), self.dative_edit)
+        self.form.addRow(field_form_label(AcademicTitle, "sort_order"), self.order_spin)
 
     def _load_data(self) -> None:
         self.id_edit.setText(self.item.id)
@@ -170,6 +193,8 @@ class AcademicTitleDialog(BaseReferenceDialog):
 class ScientificTaskDialog(BaseReferenceDialog):
     """Диалог научной задачи."""
 
+    model_class = ScientificTask
+
     def _setup_ui(self) -> None:
         super()._setup_ui()
         self.id_edit = QLineEdit()
@@ -187,14 +212,14 @@ class ScientificTaskDialog(BaseReferenceDialog):
         self.full_edit = QLineEdit()
         self.comment_edit = QPlainTextEdit()
         self.comment_edit.setMaximumHeight(80)
-        self.form.addRow("Код *:", self.id_edit)
-        self.form.addRow("Наименование *:", self.name_edit)
-        self.form.addRow("Тип *:", self.type_combo)
-        self.form.addRow("Начало действия *:", self.start_date)
-        self.form.addRow("Конец действия:", self.end_date)
-        self.form.addRow("Частичное решение:", self.partial_edit)
-        self.form.addRow("Полное решение:", self.full_edit)
-        self.form.addRow("Комментарий:", self.comment_edit)
+        self.form.addRow(field_form_label(ScientificTask, "id"), self.id_edit)
+        self.form.addRow(field_form_label(ScientificTask, "name"), self.name_edit)
+        self.form.addRow(field_form_label(ScientificTask, "type"), self.type_combo)
+        self.form.addRow(field_form_label(ScientificTask, "start_date"), self.start_date)
+        self.form.addRow(field_form_label(ScientificTask, "end_date"), self.end_date)
+        self.form.addRow(field_form_label(ScientificTask, "partial_threshold"), self.partial_edit)
+        self.form.addRow(field_form_label(ScientificTask, "full_threshold"), self.full_edit)
+        self.form.addRow(field_form_label(ScientificTask, "comment"), self.comment_edit)
 
     def _load_data(self) -> None:
         self.id_edit.setText(self.item.id)
@@ -226,15 +251,17 @@ class ScientificTaskDialog(BaseReferenceDialog):
 class ConsumerDialog(BaseReferenceDialog):
     """Диалог потребителя."""
 
+    model_class = Consumer
+
     def _setup_ui(self) -> None:
         super()._setup_ui()
         self.id_edit = QLineEdit()
         self.id_edit.setEnabled(self.item is None)
         self.short_name_edit = QLineEdit()
         self.name_edit = QLineEdit()
-        self.form.addRow("Индекс *:", self.id_edit)
-        self.form.addRow("Сокращенное наименование *:", self.short_name_edit)
-        self.form.addRow("Наименование *:", self.name_edit)
+        self.form.addRow(field_form_label(Consumer, "id"), self.id_edit)
+        self.form.addRow(field_form_label(Consumer, "short_name"), self.short_name_edit)
+        self.form.addRow(field_form_label(Consumer, "name"), self.name_edit)
 
     def _load_data(self) -> None:
         self.id_edit.setText(self.item.id)
@@ -252,13 +279,15 @@ class ConsumerDialog(BaseReferenceDialog):
 class LeaderDialog(BaseReferenceDialog):
     """Диалог руководителя."""
 
+    model_class = Leader
+
     def _setup_ui(self) -> None:
         super()._setup_ui()
         self.id_edit = QLineEdit()
         self.id_edit.setEnabled(self.item is None)
-        self.active_check = QCheckBox("Действительный")
+        self.active_check = QCheckBox(field_label(Leader, "active"))
         self.active_check.setChecked(True)
-        self.form.addRow("Сокращенное наименование *:", self.id_edit)
+        self.form.addRow(field_form_label(Leader, "id"), self.id_edit)
         self.form.addRow("", self.active_check)
 
     def _load_data(self) -> None:
@@ -272,6 +301,8 @@ class LeaderDialog(BaseReferenceDialog):
 class SourceDialog(BaseReferenceDialog):
     """Диалог источника."""
 
+    model_class = Source
+
     def _setup_ui(self) -> None:
         super()._setup_ui()
         self.id_edit = QLineEdit()
@@ -281,9 +312,9 @@ class SourceDialog(BaseReferenceDialog):
             self.type_combo.addItem(f"{label} ({key})", key)
         self.comment_edit = QPlainTextEdit()
         self.comment_edit.setMaximumHeight(80)
-        self.form.addRow("Индекс *:", self.id_edit)
-        self.form.addRow("Тип *:", self.type_combo)
-        self.form.addRow("Комментарий:", self.comment_edit)
+        self.form.addRow(field_form_label(Source, "id"), self.id_edit)
+        self.form.addRow(field_form_label(Source, "type"), self.type_combo)
+        self.form.addRow(field_form_label(Source, "comment"), self.comment_edit)
 
     def _load_data(self) -> None:
         self.id_edit.setText(self.item.id)
@@ -298,3 +329,17 @@ class SourceDialog(BaseReferenceDialog):
             "type": self.type_combo.currentData(),
             "comment": self.comment_edit.toPlainText().strip() or None,
         }
+
+
+# Перечисление REPORT_TYPE_LABELS используется диалогами документов;
+# импорт сохранён для совместимости публичного интерфейса модуля.
+__all__ = [
+    "AcademicTitleDialog",
+    "BranchDialog",
+    "ConsumerDialog",
+    "CountryDialog",
+    "LeaderDialog",
+    "ScientificTaskDialog",
+    "SourceDialog",
+    "TerritorialUnitDialog",
+]

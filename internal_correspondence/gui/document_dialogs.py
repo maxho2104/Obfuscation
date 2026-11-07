@@ -2,7 +2,7 @@
 
 from datetime import date
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
@@ -28,6 +28,13 @@ from internal_correspondence.core.constants import (
     REPORT_TYPE_LABELS,
     TELEGRAM_TYPE_LABELS,
 )
+from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
+from internal_correspondence.gui.employee_picker import ParticipatingEmployeesWidget
+from internal_correspondence.orm.labels import (
+    entity_label,
+    field_form_label,
+    field_label,
+)
 from internal_correspondence.orm.models import (
     Country,
     Consumer,
@@ -35,8 +42,6 @@ from internal_correspondence.orm.models import (
     ScientificTask,
     Telegram,
 )
-from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
-from internal_correspondence.gui.employee_picker import ParticipatingEmployeesWidget
 from internal_correspondence.utils.string_resources import STRINGS
 
 
@@ -56,7 +61,8 @@ class MaterialEditDialog(QDialog):
         self.storage_root = storage_root
         self.material = material
         self.branch_id = branch_id or (material.branch_id if material else None)
-        self.setWindowTitle("Научный материал" if material else "Новый научный материал")
+        title = entity_label(ScientificMaterial)
+        self.setWindowTitle(title if material else f"Новый {title.lower()}")
         self.setMinimumWidth(700)
         self.setMinimumHeight(500)
         self._setup_ui()
@@ -74,65 +80,79 @@ class MaterialEditDialog(QDialog):
         self.type_combo = QComboBox()
         for key, label in MATERIAL_TYPE_LABELS.items():
             self.type_combo.addItem(f"{label} ({key})", key)
-        self.form.addRow("Тип *:", self.type_combo)
+        self.form.addRow(field_form_label(ScientificMaterial, "type"), self.type_combo)
 
         self.outgoing_number = QLineEdit()
-        self.form.addRow("Исходящий номер *:", self.outgoing_number)
+        self.form.addRow(
+            field_form_label(ScientificMaterial, "outgoing_number"), self.outgoing_number
+        )
 
         self.outgoing_date = QDateEdit()
         self.outgoing_date.setCalendarPopup(True)
         self.outgoing_date.setDate(date.today())
-        self.form.addRow("Дата исходящего номера *:", self.outgoing_date)
+        self.form.addRow(
+            field_form_label(ScientificMaterial, "outgoing_date"), self.outgoing_date
+        )
 
         self.name_edit = QLineEdit()
-        self.form.addRow("Наименование *:", self.name_edit)
+        self.form.addRow(field_form_label(ScientificMaterial, "name"), self.name_edit)
 
         self.incoming_number = QLineEdit()
-        self.form.addRow("Входящий номер:", self.incoming_number)
+        self.form.addRow(
+            field_form_label(ScientificMaterial, "incoming_number"), self.incoming_number
+        )
 
         self.incoming_date = QDateEdit()
         self.incoming_date.setCalendarPopup(True)
         self.incoming_date.setSpecialValueText("")
         self.incoming_date.setDate(date(1900, 1, 1))
         self.incoming_date.setEnabled(False)
-        self.form.addRow("Дата входящего номера:", self.incoming_date)
+        self.form.addRow(
+            field_form_label(ScientificMaterial, "incoming_date"), self.incoming_date
+        )
 
         self.serial_number = QLineEdit()
-        self.form.addRow("Серийный номер:", self.serial_number)
+        self.form.addRow(
+            field_form_label(ScientificMaterial, "serial_number"), self.serial_number
+        )
 
         self.release_year = QLineEdit()
-        self.form.addRow("Год выпуска:", self.release_year)
+        self.form.addRow(
+            field_form_label(ScientificMaterial, "release_year"), self.release_year
+        )
 
         self.permit_number = QLineEdit()
-        self.form.addRow("Номер разрешительного документа:", self.permit_number)
+        self.form.addRow(
+            field_form_label(ScientificMaterial, "permit_number"), self.permit_number
+        )
 
         self.cost = QLineEdit()
-        self.form.addRow("Стоимость:", self.cost)
+        self.form.addRow(field_form_label(ScientificMaterial, "cost"), self.cost)
 
         self.country_combo = QComboBox()
         self.country_combo.addItem("—", None)
         for country in self.session.query(Country).order_by(Country.name).all():
             self.country_combo.addItem(country.name, country.id)
-        self.form.addRow("Страна:", self.country_combo)
+        self.form.addRow(field_form_label(ScientificMaterial, "country_id"), self.country_combo)
 
         self.consumer_combo = QComboBox()
         self.consumer_combo.addItem("—", None)
         for consumer in self.session.query(Consumer).order_by(Consumer.name).all():
             self.consumer_combo.addItem(consumer.name, consumer.id)
-        self.form.addRow("Потребитель:", self.consumer_combo)
+        self.form.addRow(field_form_label(ScientificMaterial, "consumer_id"), self.consumer_combo)
 
         self.task_combo = QComboBox()
         self.task_combo.addItem("—", None)
         for task in self.session.query(ScientificTask).order_by(ScientificTask.id).all():
             self.task_combo.addItem(f"{task.id} — {task.name}", task.id)
-        self.form.addRow("Задача:", self.task_combo)
+        self.form.addRow(field_form_label(ScientificMaterial, "task_id"), self.task_combo)
 
         self.employees_widget = ParticipatingEmployeesWidget(self.session, self.branch_id)
         self.form.addRow(self.employees_widget)
 
         self.comment = QPlainTextEdit()
         self.comment.setMaximumHeight(80)
-        self.form.addRow("Комментарий:", self.comment)
+        self.form.addRow(field_form_label(ScientificMaterial, "comment"), self.comment)
 
         splitter.addWidget(form_widget)
 
@@ -190,17 +210,23 @@ class MaterialEditDialog(QDialog):
 
     def _validate(self) -> bool:
         if not self.outgoing_number.text().strip():
-            QMessageBox.warning(self, "Ошибка", "Исходящий номер обязателен для заполнения.")
+            label = field_label(ScientificMaterial, "outgoing_number")
+            QMessageBox.warning(self, "Ошибка", f"Не заполнено обязательное поле «{label}».")
             return False
         if not self.name_edit.text().strip():
-            QMessageBox.warning(self, "Ошибка", "Наименование обязательно для заполнения.")
+            label = field_label(ScientificMaterial, "name")
+            QMessageBox.warning(self, "Ошибка", f"Не заполнено обязательное поле «{label}».")
             return False
         if not self.branch_id:
-            QMessageBox.warning(self, "Ошибка", "Не выбран филиал для материала.")
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                f"Не выбран филиал для {entity_label(ScientificMaterial).lower()}.",
+            )
             return False
         return True
 
-    def get_data(self) -> Dict[str, any]:
+    def get_data(self) -> Dict[str, Any]:
         """Возвращает данные формы для создания/обновления модели."""
         return {
             "type": self.type_combo.currentData(),
@@ -241,7 +267,8 @@ class TelegramEditDialog(QDialog):
         self.storage_root = storage_root
         self.telegram = telegram
         self.branch_id = branch_id or (telegram.branch_id if telegram else None)
-        self.setWindowTitle("Телеграмма" if telegram else "Новая телеграмма")
+        title = entity_label(Telegram)
+        self.setWindowTitle(title if telegram else f"Новая {title.lower()}")
         self.setMinimumWidth(700)
         self.setMinimumHeight(500)
         self._setup_ui()
@@ -258,53 +285,53 @@ class TelegramEditDialog(QDialog):
         self.type_combo = QComboBox()
         for key, label in TELEGRAM_TYPE_LABELS.items():
             self.type_combo.addItem(f"{label} ({key})", key)
-        self.form.addRow("Тип *:", self.type_combo)
+        self.form.addRow(field_form_label(Telegram, "type"), self.type_combo)
 
         self.outgoing_number = QLineEdit()
-        self.form.addRow("Исходящий номер *:", self.outgoing_number)
+        self.form.addRow(field_form_label(Telegram, "outgoing_number"), self.outgoing_number)
 
         self.outgoing_date = QDateEdit()
         self.outgoing_date.setCalendarPopup(True)
         self.outgoing_date.setDate(date.today())
-        self.form.addRow("Дата исходящего номера *:", self.outgoing_date)
+        self.form.addRow(field_form_label(Telegram, "outgoing_date"), self.outgoing_date)
 
         self.name_edit = QLineEdit()
-        self.form.addRow("Наименование (тема) *:", self.name_edit)
+        self.form.addRow(field_form_label(Telegram, "name"), self.name_edit)
 
         self.incoming_number = QLineEdit()
-        self.form.addRow("Входящий номер:", self.incoming_number)
+        self.form.addRow(field_form_label(Telegram, "incoming_number"), self.incoming_number)
 
         self.incoming_date = QDateEdit()
         self.incoming_date.setCalendarPopup(True)
         self.incoming_date.setSpecialValueText("")
         self.incoming_date.setDate(date(1900, 1, 1))
         self.incoming_date.setEnabled(False)
-        self.form.addRow("Дата входящего номера:", self.incoming_date)
+        self.form.addRow(field_form_label(Telegram, "incoming_date"), self.incoming_date)
 
         self.report_type_combo = QComboBox()
         self.report_type_combo.addItem("—", None)
         for key, label in REPORT_TYPE_LABELS.items():
             self.report_type_combo.addItem(f"{label} ({key})", key)
-        self.form.addRow("Тип доклада:", self.report_type_combo)
+        self.form.addRow(field_form_label(Telegram, "report_type"), self.report_type_combo)
 
         self.country_combo = QComboBox()
         self.country_combo.addItem("—", None)
         for country in self.session.query(Country).order_by(Country.name).all():
             self.country_combo.addItem(country.name, country.id)
-        self.form.addRow("Страна:", self.country_combo)
+        self.form.addRow(field_form_label(Telegram, "country_id"), self.country_combo)
 
         self.task_combo = QComboBox()
         self.task_combo.addItem("—", None)
         for task in self.session.query(ScientificTask).order_by(ScientificTask.id).all():
             self.task_combo.addItem(f"{task.id} — {task.name}", task.id)
-        self.form.addRow("Задача:", self.task_combo)
+        self.form.addRow(field_form_label(Telegram, "task_id"), self.task_combo)
 
         self.employees_widget = ParticipatingEmployeesWidget(self.session, self.branch_id)
         self.form.addRow(self.employees_widget)
 
         self.comment = QPlainTextEdit()
         self.comment.setMaximumHeight(80)
-        self.form.addRow("Комментарий:", self.comment)
+        self.form.addRow(field_form_label(Telegram, "comment"), self.comment)
 
         splitter.addWidget(form_widget)
 
@@ -354,17 +381,23 @@ class TelegramEditDialog(QDialog):
 
     def _validate(self) -> bool:
         if not self.outgoing_number.text().strip():
-            QMessageBox.warning(self, "Ошибка", "Исходящий номер обязателен для заполнения.")
+            label = field_label(Telegram, "outgoing_number")
+            QMessageBox.warning(self, "Ошибка", f"Не заполнено обязательное поле «{label}».")
             return False
         if not self.name_edit.text().strip():
-            QMessageBox.warning(self, "Ошибка", "Наименование обязательно для заполнения.")
+            label = field_label(Telegram, "name")
+            QMessageBox.warning(self, "Ошибка", f"Не заполнено обязательное поле «{label}».")
             return False
         if not self.branch_id:
-            QMessageBox.warning(self, "Ошибка", "Не выбран филиал для телеграммы.")
+            QMessageBox.warning(
+                self,
+                "Ошибка",
+                f"Не выбран филиал для {entity_label(Telegram).lower()}.",
+            )
             return False
         return True
 
-    def get_data(self) -> Dict[str, any]:
+    def get_data(self) -> Dict[str, Any]:
         return {
             "type": self.type_combo.currentData(),
             "outgoing_number": self.outgoing_number.text().strip(),

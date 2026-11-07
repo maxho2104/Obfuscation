@@ -7,6 +7,7 @@ from typing import List
 
 from PyQt5.QtWidgets import (
     QAction,
+    QActionGroup,
     QApplication,
     QFileDialog,
     QMainWindow,
@@ -46,12 +47,14 @@ from internal_correspondence.gui.reference_editor import ReferenceEditorDialog
 from internal_correspondence.gui.settings_dialog import SettingsDialog
 from internal_correspondence.gui.statistics_widget import StatisticsWidget
 from internal_correspondence.gui.table_model import ColumnDef
+from internal_correspondence.gui.theme import THEMES, apply_theme, current_theme
 from internal_correspondence.importexport.export_service import ExportService
 from internal_correspondence.importexport.import_service import ImportService
 from internal_correspondence.importexport.reference_import import (
     import_actual_data,
     import_primary_data,
 )
+from internal_correspondence.orm.labels import entity_label
 from internal_correspondence.orm.models import (
     AcademicTitle,
     Branch,
@@ -99,85 +102,85 @@ def _format_workgroups(workgroups) -> str:
 
 # Описания столбцов для таблицы научных материалов
 MATERIAL_COLUMNS = [
-    ColumnDef("type", "Тип", 80),
-    ColumnDef("outgoing_number", "Исх. номер", 100),
-    ColumnDef("outgoing_date", "Дата исх.", 100),
-    ColumnDef("name", "Наименование", 250),
-    ColumnDef("evaluation_display", "Оценка", 90),
-    ColumnDef("incoming_number", "Вх. номер", 100),
-    ColumnDef("incoming_date", "Дата вх.", 100),
-    ColumnDef("participating_employees", "Сотрудники", 220, formatter=_format_employees),
-    ColumnDef("participating_departments", "Отделы", 180, formatter=_format_departments),
-    ColumnDef("participating_workgroups", "Рабочие группы", 200, formatter=_format_workgroups),
-    ColumnDef("branch.short_name", "Филиал", 100),
-    ColumnDef("consumer.short_name", "Потребитель", 120),
+    ColumnDef("type", width=80),
+    ColumnDef("outgoing_number", width=100),
+    ColumnDef("outgoing_date", width=100),
+    ColumnDef("name", width=250),
+    ColumnDef("evaluation_display", width=90),
+    ColumnDef("incoming_number", width=100),
+    ColumnDef("incoming_date", width=100),
+    ColumnDef("participating_employees", width=220, formatter=_format_employees),
+    ColumnDef("participating_departments", width=180, formatter=_format_departments),
+    ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
+    ColumnDef("branch.short_name", width=100),
+    ColumnDef("consumer.short_name", width=120),
 ]
 
 # Описания столбцов для таблицы телеграмм
 TELEGRAM_COLUMNS = [
-    ColumnDef("type", "Тип", 80),
-    ColumnDef("outgoing_number", "Исх. номер", 100),
-    ColumnDef("outgoing_date", "Дата исх.", 100),
-    ColumnDef("name", "Наименование", 300),
-    ColumnDef("evaluation_display", "Оценка", 90),
-    ColumnDef("incoming_number", "Вх. номер", 100),
-    ColumnDef("incoming_date", "Дата вх.", 100),
-    ColumnDef("participating_employees", "Сотрудники", 220, formatter=_format_employees),
-    ColumnDef("participating_departments", "Отделы", 180, formatter=_format_departments),
-    ColumnDef("participating_workgroups", "Рабочие группы", 200, formatter=_format_workgroups),
-    ColumnDef("report_type", "Тип доклада", 100),
-    ColumnDef("branch.short_name", "Филиал", 100),
+    ColumnDef("type", width=80),
+    ColumnDef("outgoing_number", width=100),
+    ColumnDef("outgoing_date", width=100),
+    ColumnDef("name", width=300),
+    ColumnDef("evaluation_display", width=90),
+    ColumnDef("incoming_number", width=100),
+    ColumnDef("incoming_date", width=100),
+    ColumnDef("participating_employees", width=220, formatter=_format_employees),
+    ColumnDef("participating_departments", width=180, formatter=_format_departments),
+    ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
+    ColumnDef("report_type", width=100),
+    ColumnDef("branch.short_name", width=100),
 ]
 
 # Описания столбцов справочников
 TERRITORIAL_UNIT_COLUMNS = [
-    ColumnDef("id", "Сокращение", 120),
-    ColumnDef("name", "Наименование", 300),
+    ColumnDef("id", width=120),
+    ColumnDef("name", width=300),
 ]
 
 BRANCH_COLUMNS = [
-    ColumnDef("id", "Индекс", 100),
-    ColumnDef("name", "Наименование", 250),
-    ColumnDef("short_name", "Сокращение", 100),
-    ColumnDef("territorial_unit.name", "Территориальная единица", 150),
+    ColumnDef("id", width=100),
+    ColumnDef("name", width=250),
+    ColumnDef("short_name", width=100),
+    ColumnDef("territorial_unit.name", width=150),
 ]
 
 COUNTRY_COLUMNS = [
-    ColumnDef("id", "Сокращение", 80),
-    ColumnDef("name", "Наименование", 300),
+    ColumnDef("id", width=80),
+    ColumnDef("name", width=300),
 ]
 
 ACADEMIC_TITLE_COLUMNS = [
-    ColumnDef("id", "Сокращение", 80),
-    ColumnDef("name", "Наименование", 200),
-    ColumnDef("genitive", "Род. падеж", 200),
-    ColumnDef("dative", "Дат. падеж", 200),
-    ColumnDef("sort_order", "Порядок", 80),
+    ColumnDef("id", width=80),
+    ColumnDef("name", width=200),
+    ColumnDef("genitive", width=200),
+    ColumnDef("dative", width=200),
+    ColumnDef("sort_order", width=80),
 ]
 
 SCIENTIFIC_TASK_COLUMNS = [
-    ColumnDef("id", "Код", 100),
-    ColumnDef("name", "Наименование", 300),
-    ColumnDef("type", "Тип", 80),
-    ColumnDef("start_date", "Начало", 100),
-    ColumnDef("end_date", "Окончание", 100),
+    ColumnDef("id", width=100),
+    ColumnDef("name", width=300),
+    ColumnDef("type", width=80),
+    ColumnDef("start_date", width=100),
+    ColumnDef("end_date", width=100),
 ]
 
 CONSUMER_COLUMNS = [
-    ColumnDef("id", "Индекс", 100),
-    ColumnDef("short_name", "Сокращение", 150),
-    ColumnDef("name", "Наименование", 300),
+    ColumnDef("id", width=100),
+    ColumnDef("short_name", width=150),
+    ColumnDef("name", width=300),
 ]
 
 LEADER_COLUMNS = [
-    ColumnDef("id", "Сокращение", 150),
-    ColumnDef("active", "Действительный", 100),
+    ColumnDef("id", width=150),
+    ColumnDef("active", width=100),
 ]
 
 SOURCE_COLUMNS = [
-    ColumnDef("id", "Индекс", 100),
-    ColumnDef("type", "Тип", 100),
-    ColumnDef("comment", "Комментарий", 300),
+    ColumnDef("id", width=100),
+    ColumnDef("type", width=100),
+    ColumnDef("comment", width=300),
 ]
 
 
@@ -233,8 +236,8 @@ class MainWindow(QMainWindow):
             self.settings.branch_id if self.settings.role == Role.BRANCH.value else None,
         )
 
-        self.tabs.addTab(self.materials_tab, "Научные материалы")
-        self.tabs.addTab(self.telegram_tab, "Телеграммы")
+        self.tabs.addTab(self.materials_tab, entity_label(ScientificMaterial, plural=True))
+        self.tabs.addTab(self.telegram_tab, entity_label(Telegram, plural=True))
         self.tabs.addTab(self.statistics_tab, "Статистика")
         layout.addWidget(self.tabs)
         self.setCentralWidget(container)
@@ -268,42 +271,42 @@ class MainWindow(QMainWindow):
         # Меню "Данные" — справочники
         data_menu = menubar.addMenu(STRINGS.menu_data)
         self._add_reference_action(
-            data_menu, "Территориальные единицы",
+            data_menu,
             TerritorialUnit, TerritorialUnitService, TERRITORIAL_UNIT_COLUMNS,
             TerritorialUnitDialog, is_head_office,
         )
         self._add_reference_action(
-            data_menu, "Филиалы",
+            data_menu,
             Branch, BranchService, BRANCH_COLUMNS,
             BranchDialog, is_head_office,
         )
         self._add_reference_action(
-            data_menu, "Страны",
+            data_menu,
             Country, CountryService, COUNTRY_COLUMNS,
             CountryDialog, is_head_office,
         )
         self._add_reference_action(
-            data_menu, "Научные звания",
+            data_menu,
             AcademicTitle, AcademicTitleService, ACADEMIC_TITLE_COLUMNS,
             AcademicTitleDialog, is_head_office,
         )
         self._add_reference_action(
-            data_menu, "Научные задачи",
+            data_menu,
             ScientificTask, ScientificTaskService, SCIENTIFIC_TASK_COLUMNS,
             ScientificTaskDialog, is_head_office,
         )
         self._add_reference_action(
-            data_menu, "Потребители",
+            data_menu,
             Consumer, ConsumerService, CONSUMER_COLUMNS,
             ConsumerDialog, is_head_office,
         )
         self._add_reference_action(
-            data_menu, "Руководители",
+            data_menu,
             Leader, LeaderService, LEADER_COLUMNS,
             LeaderDialog, is_head_office,
         )
         self._add_reference_action(
-            data_menu, "Источники",
+            data_menu,
             Source, SourceService, SOURCE_COLUMNS,
             SourceDialog, is_head_office,
         )
@@ -320,10 +323,24 @@ class MainWindow(QMainWindow):
         oshm_action.triggered.connect(self._open_oshm)
         data_menu.addAction(oshm_action)
 
+        # Меню "Вид" — оформление
+        view_menu = menubar.addMenu("Вид")
+        theme_menu = view_menu.addMenu("Оформление")
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        for theme_key, theme in THEMES.items():
+            action = QAction(theme.label, self)
+            action.setCheckable(True)
+            action.setChecked(theme_key == current_theme().key)
+            action.triggered.connect(
+                lambda _checked=False, key=theme_key: self._set_theme(key)
+            )
+            theme_group.addAction(action)
+            theme_menu.addAction(action)
+
     def _add_reference_action(
         self,
         menu: QMenu,
-        title: str,
         model_class,
         service_class,
         columns,
@@ -331,10 +348,9 @@ class MainWindow(QMainWindow):
         editable: bool,
     ) -> None:
         """Добавляет пункт меню для редактора справочника."""
-        action = QAction(title, self)
+        action = QAction(entity_label(model_class, plural=True), self)
         action.triggered.connect(
             lambda: ReferenceEditorDialog(
-                title,
                 self.db_manager.get_session(),
                 model_class,
                 service_class,
@@ -358,6 +374,18 @@ class MainWindow(QMainWindow):
                 STRINGS.msg_settings_saved,
             )
 
+    def _set_theme(self, theme_key: str) -> None:
+        """Применяет тему оформления и сохраняет выбор в настройках."""
+        if self.settings.theme == theme_key:
+            return
+        self.settings.theme = theme_key
+        apply_theme(QApplication.instance(), theme_key)
+        SettingsManager().save(self.settings)
+        # Перекрашиваем строки таблиц и графики
+        self.materials_tab.refresh()
+        self.telegram_tab.refresh()
+        self.statistics_tab.apply_theme()
+
     def _export(self) -> None:
         """Формирует экспортный ZIP-архив."""
         session = self.db_manager.get_session()
@@ -365,8 +393,8 @@ class MainWindow(QMainWindow):
             service = ExportService(session, self.settings.storage_path_obj())
             output = service.export()
             session.commit()
-            self.materials_tab._refresh()
-            self.telegram_tab._refresh()
+            self.materials_tab.refresh()
+            self.telegram_tab.refresh()
             QMessageBox.information(self, "Экспорт", f"Экспорт завершён:\n{output}")
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка экспорта")
@@ -397,8 +425,8 @@ class MainWindow(QMainWindow):
                 f"Пропущено: {result['skipped']}\n"
                 f"Конфликтов: {len(result['conflicts'])}",
             )
-            self.materials_tab._refresh()
-            self.telegram_tab._refresh()
+            self.materials_tab.refresh()
+            self.telegram_tab.refresh()
             self.statistics_tab.refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка импорта")
@@ -412,28 +440,30 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "Файл первичных данных", "", "Excel (*.xlsx)")
         if not path:
             return
-        try:
-            results = import_primary_data(self.db_manager.get_session(), Path(path))
-            self.db_manager.get_session().commit()
-            QMessageBox.information(self, "Импорт", f"Импорт завершён:\n{self._format_import_results(results)}")
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("Ошибка импорта первичных данных")
-            QMessageBox.critical(self, "Ошибка", str(exc))
-            self.db_manager.get_session().rollback()
+        self._import_reference_file(Path(path), import_primary_data, "первичных данных")
 
     def _import_actual_data(self) -> None:
         """Импортирует актуальные справочные данные из XLSX."""
         path, _ = QFileDialog.getOpenFileName(self, "Файл актуальных данных", "", "Excel (*.xlsx)")
         if not path:
             return
+        self._import_reference_file(Path(path), import_actual_data, "актуальных данных")
+
+    def _import_reference_file(self, path: Path, importer, subject: str) -> None:
+        """Импортирует справочный файл одной сессией с закрытием в любом случае."""
+        session = self.db_manager.get_session()
         try:
-            results = import_actual_data(self.db_manager.get_session(), Path(path))
-            self.db_manager.get_session().commit()
-            QMessageBox.information(self, "Импорт", f"Импорт завершён:\n{self._format_import_results(results)}")
+            results = importer(session, path)
+            session.commit()
+            QMessageBox.information(
+                self, "Импорт", f"Импорт завершён:\n{self._format_import_results(results)}"
+            )
         except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("Ошибка импорта актуальных данных")
+            session.rollback()
+            logger.exception("Ошибка импорта %s", subject)
             QMessageBox.critical(self, "Ошибка", str(exc))
-            self.db_manager.get_session().rollback()
+        finally:
+            session.close()
 
     def _format_import_results(self, results: dict) -> str:
         """Форматирует результаты импорта для сообщения."""
@@ -498,6 +528,7 @@ def run_application(argv: List[str]) -> int:
 
     settings = _load_or_create_settings(app_dir)
     _ensure_storage_dirs(settings.storage_path_obj())
+    apply_theme(app, settings.theme)
 
     register_change_tracking()
 
