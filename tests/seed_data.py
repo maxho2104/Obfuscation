@@ -499,9 +499,11 @@ def _create_materials(
             if fake.boolean(chance_of_getting_true=60)
             else None,
             branch_id=branch.id,
-            task_id=fake.random_element(tasks).id
+            tasks=random.sample(
+                list(tasks), k=fake.random_int(1, min(2, len(tasks)))
+            )
             if fake.boolean(chance_of_getting_true=70)
-            else None,
+            else [],
             departments=relations["departments"],
             employees=relations["employees"],
             workgroups=relations["workgroups"],
@@ -561,9 +563,11 @@ def _create_telegrams(
             if fake.boolean(chance_of_getting_true=40)
             else None,
             branch_id=branch.id,
-            task_id=fake.random_element(tasks).id
+            tasks=random.sample(
+                list(tasks), k=fake.random_int(1, min(2, len(tasks)))
+            )
             if fake.boolean(chance_of_getting_true=70)
-            else None,
+            else [],
             departments=relations["departments"],
             employees=relations["employees"],
             workgroups=relations["workgroups"],

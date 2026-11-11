@@ -15,11 +15,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
-from internal_correspondence.core.constants import (
-    REPORT_TYPE_LABELS,
-    SOURCE_TYPE_LABELS,
-    TASK_TYPE_LABELS,
-)
+from internal_correspondence.core.domain_pack import enum_labels
 from internal_correspondence.orm.labels import (
     entity_label,
     field_form_label,
@@ -201,7 +197,7 @@ class ScientificTaskDialog(BaseReferenceDialog):
         self.id_edit.setEnabled(self.item is None)
         self.name_edit = QLineEdit()
         self.type_combo = QComboBox()
-        for key, label in TASK_TYPE_LABELS.items():
+        for key, label in enum_labels("scientific_task_type").items():
             self.type_combo.addItem(f"{label} ({key})", key)
         self.start_date = QDateEdit()
         self.start_date.setCalendarPopup(True)
@@ -308,7 +304,7 @@ class SourceDialog(BaseReferenceDialog):
         self.id_edit = QLineEdit()
         self.id_edit.setEnabled(self.item is None)
         self.type_combo = QComboBox()
-        for key, label in SOURCE_TYPE_LABELS.items():
+        for key, label in enum_labels("source_type").items():
             self.type_combo.addItem(f"{label} ({key})", key)
         self.comment_edit = QPlainTextEdit()
         self.comment_edit.setMaximumHeight(80)
@@ -331,8 +327,6 @@ class SourceDialog(BaseReferenceDialog):
         }
 
 
-# Перечисление REPORT_TYPE_LABELS используется диалогами документов;
-# импорт сохранён для совместимости публичного интерфейса модуля.
 __all__ = [
     "AcademicTitleDialog",
     "BranchDialog",

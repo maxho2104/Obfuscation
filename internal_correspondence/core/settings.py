@@ -32,6 +32,9 @@ class AppSettings:
     # Тема оформления (light/dark)
     theme: str = "light"
 
+    # Путь к внешнему пакету предметной области (пусто — встроенный)
+    domain_pack: str = ""
+
     def storage_path_obj(self) -> Path:
         """Возвращает путь к файловому хранилищу."""
         if self.storage_path:

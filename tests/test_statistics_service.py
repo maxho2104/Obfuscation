@@ -87,14 +87,13 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
     )
     session.add_all([employee1, employee2])
     session.add(Consumer(id="C1", short_name="П1", name="Потребитель 1"))
-    session.add(
-        ScientificTask(
-            id="T1",
-            name="Задача 1",
-            type="ОЗ",
-            start_date=date(2026, 1, 1),
-        )
+    task = ScientificTask(
+        id="T1",
+        name="Задача 1",
+        type="ОЗ",
+        start_date=date(2026, 1, 1),
     )
+    session.add(task)
     session.add(Source(id="S1", type="НТ", comment="Первый"))
     session.add(Source(id="S2", type="ЭО", comment=None))
     session.flush()
@@ -105,14 +104,14 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
         branch_id="F1",
         outgoing_date=date(2026, 2, 10),
         consumer_id="C1",
-        task_id="T1",
+        tasks=[task],
     )
     material2 = ScientificMaterial(
         type="С",
         name="Материал 2",
         branch_id="F1",
         outgoing_date=date(2026, 5, 10),
-        task_id="T1",
+        tasks=[task],
     )
     material3 = ScientificMaterial(
         type="С",

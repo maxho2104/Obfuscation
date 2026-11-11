@@ -126,6 +126,22 @@ task_employee_association = Table(
     Column("employee_id", PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), primary_key=True),
 )
 
+# Связь "Научный материал - Научная задача" (N-N)
+material_task_association = Table(
+    "material_tasks",
+    Base.metadata,
+    Column("material_id", PGUUID(as_uuid=True), ForeignKey("scientific_materials.id", ondelete="CASCADE"), primary_key=True),
+    Column("task_id", String(50), ForeignKey("scientific_tasks.id", ondelete="CASCADE"), primary_key=True),
+)
+
+# Связь "Телеграмма - Научная задача" (N-N)
+telegram_task_association = Table(
+    "telegram_tasks",
+    Base.metadata,
+    Column("telegram_id", PGUUID(as_uuid=True), ForeignKey("telegrams.id", ondelete="CASCADE"), primary_key=True),
+    Column("task_id", String(50), ForeignKey("scientific_tasks.id", ondelete="CASCADE"), primary_key=True),
+)
+
 # Связь "Оценка - Научный материал" (N-N)
 evaluation_material_association = Table(
     "evaluation_materials",
@@ -156,7 +172,12 @@ class Change(Base, TimestampMixin):
 
     __tablename__ = "changes"
 
-    id: Mapped[uuid.UUID] = _uuid_pk()
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+        info={"label": "Идентификатор"},
+    )
     entity_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True, info={"label": "Сущность"})
     entity_pk: Mapped[str] = mapped_column(String(255), nullable=False, index=True, info={"label": "Ключ сущности"})
     changed_at: Mapped[datetime] = mapped_column(
@@ -179,8 +200,8 @@ class ChangeTrackedMixin:
     описывающую последние неэкспортированные изменения объекта.
     """
 
-    change_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        PGUUID(as_uuid=True),
+    change_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
         ForeignKey("changes.id", ondelete="SET NULL"),
         nullable=True,
     )
@@ -553,11 +574,13 @@ class ScientificTask(Base, ChangeTrackedMixin, VersionedMixin):
     )
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
-        back_populates="task",
+        secondary=material_task_association,
+        back_populates="tasks",
     )
     telegrams: Mapped[List["Telegram"]] = relationship(
         "Telegram",
-        back_populates="task",
+        secondary=telegram_task_association,
+        back_populates="tasks",
     )
 
 
@@ -744,14 +767,11 @@ class ScientificMaterial(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMi
     )
     branch: Mapped["Branch"] = relationship("Branch", back_populates="materials", info={"label": "Филиал"})
 
-    task_id: Mapped[Optional[str]] = mapped_column(
-        ForeignKey("scientific_tasks.id", ondelete="SET NULL"),
-        nullable=True,
-        info={"label": "Задача"},
-    )
-    task: Mapped[Optional["ScientificTask"]] = relationship(
+    tasks: Mapped[List["ScientificTask"]] = relationship(
         "ScientificTask",
+        secondary=material_task_association,
         back_populates="materials",
+        info={"label": "Задачи"},
     )
 
     departments: Mapped[List["Department"]] = relationship(
@@ -835,14 +855,18 @@ class Telegram(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMixin, Evalu
         "Branch", back_populates="telegrams", info={"label": "Филиал"}
     )
 
-    task_id: Mapped[Optional[str]] = mapped_column(
-        ForeignKey("scientific_tasks.id", ondelete="SET NULL"),
-        nullable=True,
-        info={"label": "Задача"},
-    )
-    task: Mapped[Optional["ScientificTask"]] = relationship(
+    tasks: Mapped[List["ScientificTask"]] = relationship(
         "ScientificTask",
+        secondary=telegram_task_association,
         back_populates="telegrams",
+        info={"label": "Задачи"},
+    )
+
+    report_addresses: Mapped[List["ReportAddress"]] = relationship(
+        "ReportAddress",
+        back_populates="telegram",
+        cascade="all, delete-orphan",
+        info={"label": "Адресация доклада"},
     )
 
     departments: Mapped[List["Department"]] = relationship(
@@ -903,7 +927,7 @@ class ReportAddress(Base, ChangeTrackedMixin, VersionedMixin):
         nullable=False,
         info={"label": "Телеграмма"},
     )
-    telegram: Mapped["Telegram"] = relationship("Telegram")
+    telegram: Mapped["Telegram"] = relationship("Telegram", back_populates="report_addresses")
 
     leader_id: Mapped[str] = mapped_column(
         ForeignKey("leaders.id", ondelete="RESTRICT"),

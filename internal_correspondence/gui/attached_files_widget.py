@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.models import FileRecord
+from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("attached_files_widget")
 
@@ -45,11 +46,11 @@ class AttachedFilesWidget(QWidget):
         layout.addWidget(self.list_widget)
 
         self.add_btn = QPushButton("+")
-        self.add_btn.setToolTip("Добавить файлы")
+        self.add_btn.setToolTip(STRINGS.tooltip_add_files)
         self.add_btn.clicked.connect(self._add_files)
 
         self.remove_btn = QPushButton("-")
-        self.remove_btn.setToolTip("Открепить выбранные файлы")
+        self.remove_btn.setToolTip(STRINGS.tooltip_remove_files)
         self.remove_btn.clicked.connect(self._remove_files)
 
         layout.addWidget(self.add_btn)
@@ -82,11 +83,13 @@ class AttachedFilesWidget(QWidget):
                 font.setStrikeOut(True)
                 item.setFont(font)
                 item.setForeground(BROKEN_FILE_COLOR)
-                item.setToolTip(f"Файл отсутствует в хранилище: {file_path}")
+                item.setToolTip(STRINGS.tooltip_file_missing.format(path=file_path))
             self.list_widget.addItem(item)
 
         for path in self.new_files:
-            item = QListWidgetItem(self._icon(path), f"{path.name} (новый)")
+            item = QListWidgetItem(
+                self._icon(path), f"{path.name} {STRINGS.file_new_suffix}"
+            )
             item.setData(Qt.UserRole, str(path))
             self.list_widget.addItem(item)
 
@@ -101,7 +104,7 @@ class AttachedFilesWidget(QWidget):
         return self.storage_root / record.path / f"{record.name}.{record.extension}"
 
     def _add_files(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(self, "Выберите файлы")
+        paths, _ = QFileDialog.getOpenFileNames(self, STRINGS.dialog_select_files)
         for path in paths:
             self.new_files.append(Path(path))
         self._refresh_list()
@@ -112,8 +115,8 @@ class AttachedFilesWidget(QWidget):
             return
         reply = QMessageBox.question(
             self,
-            "Подтверждение",
-            f"Открепить выбранные файлы ({len(selected)})?",
+            STRINGS.title_confirm,
+            STRINGS.msg_detach_confirm.format(count=len(selected)),
         )
         if reply != QMessageBox.Yes:
             return

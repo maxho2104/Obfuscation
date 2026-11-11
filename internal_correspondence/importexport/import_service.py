@@ -12,6 +12,7 @@ from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric, Uuid
 from sqlalchemy.orm import Session
 
 from internal_correspondence.core.constants import Role
+from internal_correspondence.core.domain_pack import dir_name, get_domain_pack
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.base import Base
 from internal_correspondence.orm.models import Change, FileRecord
@@ -66,6 +67,8 @@ class ImportService:
             if not isinstance(export_data, dict):
                 raise ImportError("Некорректный формат export.json")
 
+            warnings = self._check_pack_compatibility(extract_dir)
+
             stats = self._apply_payload(export_data)
             self._extract_files(extract_dir)
             self.session.commit()
@@ -75,9 +78,46 @@ class ImportService:
                 "deleted": stats["deleted"],
                 "skipped": stats["skipped"],
                 "conflicts": self.conflicts,
+                "warnings": warnings,
             }
         finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
+
+    @staticmethod
+    def _check_pack_compatibility(extract_dir: Path) -> List[str]:
+        """Сверяет пакет предметной области архива с активным.
+
+        Возвращает список предупреждений; архивы без meta.json
+        (старый формат) импортируются без замечаний.
+        """
+        meta_path = extract_dir / "meta.json"
+        if not meta_path.exists():
+            return []
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            logger.warning("Повреждён meta.json в архиве %s", extract_dir)
+            return ["Файл meta.json повреждён — совместимость пакетов не проверена"]
+
+        pack = get_domain_pack()
+        warnings: List[str] = []
+        source_id = meta.get("pack_id")
+        source_version = meta.get("pack_version")
+        if source_id and source_id != pack.id:
+            warnings.append(
+                f"Архив создан с другим пакетом предметной области: "
+                f"'{source_id}' v{source_version} (активен '{pack.id}' v{pack.version}). "
+                f"Значения перечислений могут трактоваться иначе."
+            )
+        elif source_version and source_version != pack.version:
+            warnings.append(
+                f"Версия пакета предметной области в архиве (v{source_version}) "
+                f"отличается от активной (v{pack.version})."
+            )
+        for warning in warnings:
+            logger.warning(warning)
+        return warnings
 
     def _apply_payload(self, payload: Dict[str, Any]) -> Dict[str, int]:
         """Применяет данные экспорта к локальной БД."""
@@ -457,7 +497,7 @@ class ImportService:
                         target_dir = candidate
                         target_name = f"{file_record.name}.{file_record.extension}"
                 if target_dir is None:
-                    target_dir = storage_root / "Файлы" / "Импорт" / file_dir.name
+                    target_dir = storage_root / dir_name("files") / "Импорт" / file_dir.name
 
                 target_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_file, target_dir / target_name)

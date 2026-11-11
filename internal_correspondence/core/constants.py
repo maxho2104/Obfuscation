@@ -37,14 +37,6 @@ class EvaluationValue(str, Enum):
     IMPORTANT = "В"
 
 
-EVALUATION_WEIGHTS = {
-    EvaluationValue.USELESS: 0,
-    EvaluationValue.INTERESTING: 1,
-    EvaluationValue.USEFUL: 2,
-    EvaluationValue.IMPORTANT: 3,
-}
-
-
 class ScientificTaskType(str, Enum):
     """Тип научной задачи."""
 
@@ -98,41 +90,3 @@ DEFAULT_LANGUAGE = "ru"
 
 # Пагинация
 DEFAULT_PAGE_SIZE = 50
-
-# Словари отображения перечислений
-MATERIAL_TYPE_LABELS = {
-    "С": "Сообщение",
-    "ДОК": "Документ",
-    "СПР": "Справка",
-    "ОП": "Образец продукции",
-    "ТДОК": "Технический документ",
-    "Д": "Доклад",
-}
-
-TELEGRAM_TYPE_LABELS = {
-    "Т": "Тематическая",
-    "ОХР": "О ходе работ",
-    "ОДР": "О достигнутых результатах",
-}
-
-EVALUATION_VALUE_LABELS = {
-    "Б": "Бесполезно",
-    "И": "Интересно",
-    "П": "Полезно",
-    "В": "Важно",
-}
-
-TASK_TYPE_LABELS = {
-    "ОЗ": "Основная задача",
-    "ДЗ": "Дополнительная задача",
-}
-
-REPORT_TYPE_LABELS = {
-    "ДР": "Доложено руководителю",
-    "СДР": "Срочно доложено руководителю",
-}
-
-SOURCE_TYPE_LABELS = {
-    "ЭО": "Экспериментальное оборудование",
-    "НТ": "Научный труд",
-}
