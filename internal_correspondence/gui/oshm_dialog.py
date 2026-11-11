@@ -35,6 +35,7 @@ from internal_correspondence.services.reference_service import (
     EmployeeService,
     WorkingGroupService,
 )
+from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("oshm_dialog")
 
@@ -47,7 +48,7 @@ class OSHMDialog(QDialog):
         self.session = session
         self.branch_id = branch_id
         self.read_only = read_only
-        self.setWindowTitle(f"ОШС филиала {branch_id}")
+        self.setWindowTitle(STRINGS.oshm_window_title.format(branch_id=branch_id))
         self.setMinimumSize(700, 500)
         self._setup_ui()
         self._load_data()
@@ -56,7 +57,7 @@ class OSHMDialog(QDialog):
         layout = QVBoxLayout(self)
 
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Элемент", "Статус"])
+        self.tree.setHeaderLabels([STRINGS.oshm_col_element, STRINGS.oshm_col_status])
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.itemDoubleClicked.connect(self._edit_item)
@@ -85,7 +86,7 @@ class OSHMDialog(QDialog):
         for dept in departments:
             dept_item = QTreeWidgetItem(
                 branch_item,
-                [dept.name, "Действующий" if dept.active else "Сокращён"],
+                [dept.name, STRINGS.status_active_m if dept.active else STRINGS.status_inactive_dept],
             )
             dept_item.setData(0, Qt.UserRole, ("department", str(dept.id)))
             dept_item.setExpanded(True)
@@ -99,7 +100,7 @@ class OSHMDialog(QDialog):
             for wg in workgroups:
                 wg_item = QTreeWidgetItem(
                     dept_item,
-                    [wg.name, "Действующая" if wg.active else "Упразднена"],
+                    [wg.name, STRINGS.status_active_f if wg.active else STRINGS.status_inactive_wg],
                 )
                 wg_item.setData(0, Qt.UserRole, ("workgroup", str(wg.id)))
 
@@ -112,7 +113,7 @@ class OSHMDialog(QDialog):
             for emp in employees:
                 emp_item = QTreeWidgetItem(
                     dept_item,
-                    [emp.display_name(), "Действующий" if emp.active else "Неактивный"],
+                    [emp.display_name(), STRINGS.status_active_m if emp.active else STRINGS.status_inactive_emp],
                 )
                 emp_item.setData(0, Qt.UserRole, ("employee", str(emp.id)))
 
@@ -133,33 +134,39 @@ class OSHMDialog(QDialog):
 
         menu = QMenu()
         if node_type == "branch":
-            add_dept = menu.addAction(f"Добавить {entity_label(Department).lower()}")
+            add_dept = menu.addAction(
+                STRINGS.action_add_entity.format(entity=entity_label(Department).lower())
+            )
             add_dept.triggered.connect(self._add_department)
         elif node_type == "department":
-            add_wg = menu.addAction(f"Добавить {entity_label(WorkingGroup).lower()}")
+            add_wg = menu.addAction(
+                STRINGS.action_add_entity.format(entity=entity_label(WorkingGroup).lower())
+            )
             add_wg.triggered.connect(self._add_workgroup)
-            add_emp = menu.addAction(f"Добавить {entity_label(Employee).lower()}")
+            add_emp = menu.addAction(
+                STRINGS.action_add_entity.format(entity=entity_label(Employee).lower())
+            )
             add_emp.triggered.connect(self._add_employee)
             menu.addSeparator()
-            edit_dept = menu.addAction("Изменить")
+            edit_dept = menu.addAction(STRINGS.button_edit)
             edit_dept.triggered.connect(self._edit_item)
-            hide_dept = menu.addAction("Скрыть/показать")
+            hide_dept = menu.addAction(STRINGS.action_toggle_hide)
             hide_dept.triggered.connect(self._toggle_department)
-            delete_dept = menu.addAction("Удалить")
+            delete_dept = menu.addAction(STRINGS.button_delete)
             delete_dept.triggered.connect(self._delete_item)
         elif node_type == "workgroup":
-            edit_wg = menu.addAction("Изменить")
+            edit_wg = menu.addAction(STRINGS.button_edit)
             edit_wg.triggered.connect(self._edit_item)
-            toggle_wg = menu.addAction("Скрыть/показать")
+            toggle_wg = menu.addAction(STRINGS.action_toggle_hide)
             toggle_wg.triggered.connect(self._toggle_workgroup)
-            delete_wg = menu.addAction("Удалить")
+            delete_wg = menu.addAction(STRINGS.button_delete)
             delete_wg.triggered.connect(self._delete_item)
         elif node_type == "employee":
-            edit_emp = menu.addAction("Изменить")
+            edit_emp = menu.addAction(STRINGS.button_edit)
             edit_emp.triggered.connect(self._edit_item)
-            toggle_emp = menu.addAction("Скрыть/показать")
+            toggle_emp = menu.addAction(STRINGS.action_toggle_hide)
             toggle_emp.triggered.connect(self._toggle_employee)
-            delete_emp = menu.addAction("Удалить")
+            delete_emp = menu.addAction(STRINGS.button_delete)
             delete_emp.triggered.connect(self._delete_item)
         menu.exec_(self.tree.viewport().mapToGlobal(position))
 
@@ -173,7 +180,7 @@ class OSHMDialog(QDialog):
                 self._load_data()
             except Exception as exc:  # pylint: disable=broad-except
                 logger.exception("Ошибка добавления отдела")
-                QMessageBox.critical(self, "Ошибка", str(exc))
+                QMessageBox.critical(self, STRINGS.title_error, str(exc))
                 self.session.rollback()
 
     def _add_workgroup(self) -> None:
@@ -189,7 +196,7 @@ class OSHMDialog(QDialog):
                 self._load_data()
             except Exception as exc:  # pylint: disable=broad-except
                 logger.exception("Ошибка добавления рабочей группы")
-                QMessageBox.critical(self, "Ошибка", str(exc))
+                QMessageBox.critical(self, STRINGS.title_error, str(exc))
                 self.session.rollback()
 
     def _add_employee(self) -> None:
@@ -205,7 +212,7 @@ class OSHMDialog(QDialog):
                 self._load_data()
             except Exception as exc:  # pylint: disable=broad-except
                 logger.exception("Ошибка добавления сотрудника")
-                QMessageBox.critical(self, "Ошибка", str(exc))
+                QMessageBox.critical(self, STRINGS.title_error, str(exc))
                 self.session.rollback()
 
     def _edit_item(self) -> None:
@@ -236,7 +243,7 @@ class OSHMDialog(QDialog):
                 self._load_data()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка редактирования элемента ОШС")
-            QMessageBox.critical(self, "Ошибка", str(exc))
+            QMessageBox.critical(self, STRINGS.title_error, str(exc))
             self.session.rollback()
 
     def _toggle_department(self) -> None:
@@ -271,7 +278,9 @@ class OSHMDialog(QDialog):
         if node is None:
             return
         node_type, node_id = node
-        reply = QMessageBox.question(self, "Подтверждение", "Удалить выбранный элемент?")
+        reply = QMessageBox.question(
+            self, STRINGS.title_confirm, STRINGS.msg_delete_element_confirm
+        )
         if reply != QMessageBox.Yes:
             return
         try:
@@ -288,7 +297,7 @@ class OSHMDialog(QDialog):
             self._load_data()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка удаления элемента ОШС")
-            QMessageBox.critical(self, "Ошибка", str(exc))
+            QMessageBox.critical(self, STRINGS.title_error, str(exc))
             self.session.rollback()
 
 
@@ -301,7 +310,7 @@ class DepartmentEditDialog(QDialog):
         self.item = item
         self.branch_id = branch_id or (item.branch_id if item else None)
         title = entity_label(Department)
-        self.setWindowTitle(title if item else f"Новый {title.lower()}")
+        self.setWindowTitle(title if item else STRINGS.oshm_new_m.format(title=title.lower()))
         self._setup_ui()
         if item:
             self.name_edit.setText(item.name)
@@ -342,7 +351,7 @@ class WorkingGroupEditDialog(QDialog):
         self.item = item
         self.department_id = department_id or (item.department_id if item else None)
         title = entity_label(WorkingGroup)
-        self.setWindowTitle(title if item else f"Новая {title.lower()}")
+        self.setWindowTitle(title if item else STRINGS.oshm_new_f.format(title=title.lower()))
         self._setup_ui()
         if item:
             self.name_edit.setText(item.name)
@@ -384,7 +393,7 @@ class EmployeeEditDialog(QDialog):
         self.item = item
         self.department_id = department_id or (item.department_id if item else None)
         title = entity_label(Employee)
-        self.setWindowTitle(title if item else f"Новый {title.lower()}")
+        self.setWindowTitle(title if item else STRINGS.oshm_new_m.format(title=title.lower()))
         self._setup_ui()
         if item:
             self.last_name.setText(item.last_name)
@@ -426,7 +435,7 @@ class EmployeeEditDialog(QDialog):
 
         self.workgroup_start_date = self._create_date_edit()
         self.workgroup_end_date = self._create_date_edit()
-        self.clear_dates_btn = QPushButton("Очистить даты")
+        self.clear_dates_btn = QPushButton(STRINGS.button_clear_dates)
         self.clear_dates_btn.clicked.connect(self._clear_workgroup_dates)
 
         self.active_check = QCheckBox(field_label(Employee, "active"))
@@ -452,7 +461,7 @@ class EmployeeEditDialog(QDialog):
         edit = QDateEdit()
         edit.setCalendarPopup(True)
         edit.setMinimumDate(QDate(1900, 1, 1))
-        edit.setSpecialValueText("не задано")
+        edit.setSpecialValueText(STRINGS.date_not_set)
         edit.setDate(QDate(1900, 1, 1))
         return edit
 

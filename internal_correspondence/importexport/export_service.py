@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
-from internal_correspondence.core.constants import DELETION_MARKER, EXPORT_DIR
+from internal_correspondence.core.constants import DELETION_MARKER
+from internal_correspondence.core.domain_pack import dir_name, get_domain_pack
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.models import Change, FileRecord
 from internal_correspondence.orm.utils import parse_primary_key, resolve_entity_class
@@ -23,7 +24,7 @@ class ExportService:
     def __init__(self, session: Session, storage_root: Path) -> None:
         self.session = session
         self.storage_root = storage_root
-        self.export_dir = storage_root / EXPORT_DIR
+        self.export_dir = storage_root / dir_name("export")
         self.export_dir.mkdir(parents=True, exist_ok=True)
 
     def export(self, output_path: Optional[Path] = None) -> Path:
@@ -168,7 +169,15 @@ class ExportService:
         file_records: List[FileRecord],
     ) -> None:
         """Упаковывает JSON и файлы в ZIP-архив."""
+        pack = get_domain_pack()
+        meta = {
+            "app": "internal-correspondence",
+            "pack_id": pack.id,
+            "pack_version": pack.version,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+        }
         with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
             zf.writestr("export.json", json.dumps(export_data, ensure_ascii=False, indent=2))
             storage_root = self.storage_root.resolve()
             for file_record in file_records:

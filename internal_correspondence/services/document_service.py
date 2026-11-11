@@ -6,10 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy.orm import Session
 
-from internal_correspondence.core.constants import (
-    MATERIAL_FILES_DIR,
-    TELEGRAM_FILES_DIR,
-)
+from internal_correspondence.core.domain_pack import dir_name
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.models import FileRecord, ScientificMaterial, Telegram
 from internal_correspondence.services.base_service import BaseService
@@ -30,11 +27,12 @@ class DocumentFilesMixin:
     """Общая логика прикрепления файлов к документам.
 
     Ожидает от наследника атрибут ``storage_root`` и классовый атрибут
-    ``_files_subdir`` — поддиректорию хранилища для типа документа.
+    ``_files_dir_key`` — ключ поддиректории хранилища для типа документа
+    в пакете предметной области.
     """
 
     storage_root: Path
-    _files_subdir: str
+    _files_dir_key: str
 
     def _attach_file(self, document: Document, source_path: Path) -> FileRecord:
         """Прикрепляет файл к документу, копируя его в хранилище."""
@@ -77,13 +75,13 @@ class DocumentFilesMixin:
         else:
             date_str = "unknown"
         number = document.outgoing_number or str(document.id)
-        return Path("Файлы") / self._files_subdir / date_str / number
+        return Path(dir_name("files")) / dir_name(self._files_dir_key) / date_str / number
 
 
 class ScientificMaterialService(DocumentFilesMixin, BaseService[ScientificMaterial]):
     """Сервис научных материалов с прикреплением файлов."""
 
-    _files_subdir = MATERIAL_FILES_DIR
+    _files_dir_key = "material_files"
 
     def __init__(self, session: Session, storage_root: Path) -> None:
         super().__init__(session, ScientificMaterial)
@@ -119,7 +117,7 @@ class ScientificMaterialService(DocumentFilesMixin, BaseService[ScientificMateri
 class TelegramService(DocumentFilesMixin, BaseService[Telegram]):
     """Сервис телеграмм с прикреплением файлов."""
 
-    _files_subdir = TELEGRAM_FILES_DIR
+    _files_dir_key = "telegram_files"
 
     def __init__(self, session: Session, storage_root: Path) -> None:
         super().__init__(session, Telegram)
