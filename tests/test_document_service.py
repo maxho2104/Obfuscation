@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from internal_correspondence.core.constants import (
+    MaterialType,
+    TelegramType,
+)
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.orm.models import Branch, Country, ScientificMaterial, Telegram, TerritorialUnit
 from internal_correspondence.services.change_tracking import register_change_tracking
@@ -35,7 +39,7 @@ def test_create_material(db_manager: DatabaseManager, tmp_path: Path) -> None:
         _setup_refs(session)
         service = ScientificMaterialService(session, storage)
         material = service.create_with_files({
-            "type": "С",
+            "type": MaterialType.MESSAGE,
             "outgoing_number": "123",
             "outgoing_date": date(2024, 1, 15),
             "name": "Материал 1",
@@ -57,7 +61,7 @@ def test_attach_file_copies_to_storage(db_manager: DatabaseManager, tmp_path: Pa
         _setup_refs(session)
         service = ScientificMaterialService(session, storage)
         material = service.create_with_files({
-            "type": "С",
+            "type": MaterialType.MESSAGE,
             "outgoing_number": "123",
             "outgoing_date": date(2024, 1, 15),
             "name": "Материал 1",
@@ -80,7 +84,7 @@ def test_create_telegram(db_manager: DatabaseManager, tmp_path: Path) -> None:
         _setup_refs(session)
         service = TelegramService(session, storage)
         telegram = service.create_with_files({
-            "type": "Т",
+            "type": TelegramType.THEMATIC,
             "outgoing_number": "TG-1",
             "outgoing_date": date(2024, 2, 1),
             "name": "Телеграмма 1",
@@ -89,7 +93,7 @@ def test_create_telegram(db_manager: DatabaseManager, tmp_path: Path) -> None:
         session.commit()
 
         assert telegram.name == "Телеграмма 1"
-        assert telegram.type == "Т"
+        assert telegram.type == TelegramType.THEMATIC
 
 
 def test_update_material(db_manager: DatabaseManager, tmp_path: Path) -> None:
@@ -100,7 +104,7 @@ def test_update_material(db_manager: DatabaseManager, tmp_path: Path) -> None:
         _setup_refs(session)
         service = ScientificMaterialService(session, storage)
         material = service.create_with_files({
-            "type": "С",
+            "type": MaterialType.MESSAGE,
             "outgoing_number": "123",
             "outgoing_date": date(2024, 1, 15),
             "name": "Материал 1",
@@ -123,7 +127,7 @@ def test_delete_material(db_manager: DatabaseManager, tmp_path: Path) -> None:
         _setup_refs(session)
         service = ScientificMaterialService(session, storage)
         material = service.create_with_files({
-            "type": "С",
+            "type": MaterialType.MESSAGE,
             "outgoing_number": "123",
             "outgoing_date": date(2024, 1, 15),
             "name": "Материал 1",

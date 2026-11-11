@@ -52,7 +52,7 @@ def main() -> None:
         conn.execute(
             "INSERT INTO telegrams "
             "(id, type, name, branch_id, task_id, change_id, row_version) "
-            f"VALUES ('{telegram_id}', 'ДК', 'Телеграмма', 'F1', 'T1', NULL, 1)"
+            f"VALUES ('{telegram_id}', 'Т', 'Телеграмма', 'F1', 'T1', NULL, 1)"
         )
         conn.commit()
 

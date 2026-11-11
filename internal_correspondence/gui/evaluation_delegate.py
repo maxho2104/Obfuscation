@@ -4,6 +4,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import QStyle, QStyledItemDelegate
 
+from internal_correspondence.core.constants import EvaluationValue
 from internal_correspondence.gui.table_model import EVALUATION_VALUE_ROLE
 
 
@@ -11,10 +12,10 @@ class EvaluationItemDelegate(QStyledItemDelegate):
     """Рисует оценку в отдельной ячейке с цветом, соответствующим значению."""
 
     COLORS = {
-        "Б": ("#b71c1c", "#ffcdd2"),
-        "И": ("#8d6e00", "#fff9c4"),
-        "П": ("#1b5e20", "#c8e6c9"),
-        "В": ("#0d47a1", "#bbdefb"),
+        EvaluationValue.USELESS: ("#b71c1c", "#ffcdd2"),
+        EvaluationValue.INTERESTING: ("#8d6e00", "#fff9c4"),
+        EvaluationValue.USEFUL: ("#1b5e20", "#c8e6c9"),
+        EvaluationValue.IMPORTANT: ("#0d47a1", "#bbdefb"),
     }
 
     def __init__(self, evaluation_column: int, parent=None) -> None:

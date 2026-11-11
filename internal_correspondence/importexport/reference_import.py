@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Type
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
+from internal_correspondence.core.enum_registry import PACK_ENUMS, pack_enum_display
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.models import (
     AcademicTitle,
@@ -180,6 +181,16 @@ def import_academic_titles(session: Session, path: Path) -> int:
     return count
 
 
+def _enum_value(enum_name: str, code: Optional[str]) -> Optional[int]:
+    """Преобразует строковый код пакета в числовое значение перечисления."""
+    if code is None:
+        return None
+    for member in PACK_ENUMS[enum_name]:
+        if pack_enum_display(enum_name, int(member)) == code:
+            return int(member)
+    return None
+
+
 def import_scientific_tasks(session: Session, path: Path) -> int:
     """Импортирует научные задачи."""
     rows = _read_sheet_rows(path, "Научные задачи")
@@ -188,13 +199,18 @@ def import_scientific_tasks(session: Session, path: Path) -> int:
     for row in rows:
         task_id = _clean_value(row.get("Код"))
         name = _clean_value(row.get("Наименование"))
-        task_type = _clean_value(row.get("Тип"))
+        task_type = _enum_value(
+            "scientific_task_type", _clean_value(row.get("Тип"))
+        )
         start_date = _date_from_value(row.get("Начало действия"))
         end_date = _date_from_value(row.get("Конец действия"))
         comment = _clean_value(row.get("Комментарий"))
         partial = _to_float(row.get("Частичное решение"))
         full = _to_float(row.get("Полное решение"))
         if not task_id or not name:
+            continue
+        if task_type is None:
+            logger.warning("Задача %s: неизвестный тип, строка пропущена", task_id)
             continue
         if service.exists(task_id):
             continue

@@ -37,21 +37,6 @@
         }
       ]
     },
-    "research_type": {
-      "label": "Тип научного изыскания",
-      "values": [
-        {
-          "key": "experimental",
-          "code": "Э",
-          "label": "Экспериментальный"
-        },
-        {
-          "key": "analytical",
-          "code": "А",
-          "label": "Аналитический"
-        }
-      ]
-    },
     "evaluation_value": {
       "label": "Значение оценки научного материала",
       "values": [
@@ -166,6 +151,30 @@
         },
         "changed_fields": {
           "label": "Изменённые переменные"
+        },
+        "operation_type": {
+          "label": "Тип операции"
+        },
+        "exported_at": {
+          "label": "Дата экспорта"
+        }
+      }
+    },
+    "TaskEntityLink": {
+      "label": "Связь задачи с сущностью",
+      "label_plural": "Связи задач с сущностями",
+      "fields": {
+        "id": {
+          "label": "Идентификатор"
+        },
+        "task_id": {
+          "label": "Научная задача"
+        },
+        "entity_name": {
+          "label": "Сущность"
+        },
+        "entity_pk": {
+          "label": "Ключ сущности"
         }
       }
     },
@@ -458,8 +467,8 @@
         "comment": {
           "label": "Комментарий"
         },
-        "country_id": {
-          "label": "Страна"
+        "countries": {
+          "label": "Страны"
         },
         "consumer_id": {
           "label": "Потребитель"
@@ -530,8 +539,8 @@
         "comment": {
           "label": "Комментарий"
         },
-        "country_id": {
-          "label": "Страна"
+        "countries": {
+          "label": "Страны"
         },
         "branch_id": {
           "label": "Филиал"
@@ -633,6 +642,8 @@
     "button_edit": "Изменить",
     "button_delete": "Удалить",
     "dialog_settings_title": "Настройки",
+    "settings_changes_retention": "Срок хранения журнала изменений (дней):",
+    "settings_retention_forever": "бессрочно",
     "wizard_first_run_title": "Первый запуск",
     "wizard_db_title": "Подключение к базе данных",
     "wizard_db_subtitle": "Выберите тип базы данных и укажите параметры подключения.",

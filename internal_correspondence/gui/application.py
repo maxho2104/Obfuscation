@@ -3,8 +3,9 @@
 import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
+from PyQt5.QtCore import QByteArray
 from PyQt5.QtWidgets import (
     QAction,
     QActionGroup,
@@ -20,9 +21,11 @@ from PyQt5.QtWidgets import (
 
 from internal_correspondence.core.constants import (
     BACKUPS_DIR,
+    DEFAULT_CHANGES_RETENTION_DAYS,
     LOGS_DIR,
     Role,
 )
+from internal_correspondence.core.enum_registry import pack_enum_display
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.core.domain_pack import (
     DomainPackError,
@@ -71,7 +74,10 @@ from internal_correspondence.orm.models import (
     Telegram,
     TerritorialUnit,
 )
-from internal_correspondence.services.change_tracking import register_change_tracking
+from internal_correspondence.services.change_tracking import (
+    purge_expired_changes,
+    register_change_tracking,
+)
 from internal_correspondence.services.enum_validation import validate_enum_codes
 from internal_correspondence.services.reference_service import (
     AcademicTitleService,
@@ -88,9 +94,44 @@ from internal_correspondence.utils.string_resources import STRINGS, reload_strin
 logger = get_logger("application")
 
 
+def _parse_column_widths(raw: str) -> List[int]:
+    """Разбирает сохранённые ширины колонок из строки настроек."""
+    widths = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            widths.append(int(part))
+    return widths
+
+
 def _format_employees(employees) -> str:
     """Форматирует список причастных сотрудников для ячейки таблицы."""
     return ", ".join(employee.display_name() for employee in employees or [])
+
+
+def _format_material_type(value) -> str:
+    """Краткий код типа материала из пакета предметной области."""
+    return pack_enum_display("material_type", value)
+
+
+def _format_telegram_type(value) -> str:
+    """Краткий код типа телеграммы из пакета предметной области."""
+    return pack_enum_display("telegram_type", value)
+
+
+def _format_report_type(value) -> str:
+    """Краткий код типа доклада из пакета предметной области."""
+    return pack_enum_display("telegram_report_type", value)
+
+
+def _format_task_type(value) -> str:
+    """Краткий код типа задачи из пакета предметной области."""
+    return pack_enum_display("scientific_task_type", value)
+
+
+def _format_source_type(value) -> str:
+    """Краткий код типа источника из пакета предметной области."""
+    return pack_enum_display("source_type", value)
 
 
 def _format_departments(departments) -> str:
@@ -107,7 +148,7 @@ def _format_workgroups(workgroups) -> str:
 
 # Описания столбцов для таблицы научных материалов
 MATERIAL_COLUMNS = [
-    ColumnDef("type", width=80),
+    ColumnDef("type", width=80, formatter=_format_material_type),
     ColumnDef("outgoing_number", width=100),
     ColumnDef("outgoing_date", width=100),
     ColumnDef("name", width=250),
@@ -123,7 +164,7 @@ MATERIAL_COLUMNS = [
 
 # Описания столбцов для таблицы телеграмм
 TELEGRAM_COLUMNS = [
-    ColumnDef("type", width=80),
+    ColumnDef("type", width=80, formatter=_format_telegram_type),
     ColumnDef("outgoing_number", width=100),
     ColumnDef("outgoing_date", width=100),
     ColumnDef("name", width=300),
@@ -133,7 +174,7 @@ TELEGRAM_COLUMNS = [
     ColumnDef("participating_employees", width=220, formatter=_format_employees),
     ColumnDef("participating_departments", width=180, formatter=_format_departments),
     ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
-    ColumnDef("report_type", width=100),
+    ColumnDef("report_type", width=100, formatter=_format_report_type),
     ColumnDef("branch.short_name", width=100),
 ]
 
@@ -166,7 +207,7 @@ ACADEMIC_TITLE_COLUMNS = [
 SCIENTIFIC_TASK_COLUMNS = [
     ColumnDef("id", width=100),
     ColumnDef("name", width=300),
-    ColumnDef("type", width=80),
+    ColumnDef("type", width=80, formatter=_format_task_type),
     ColumnDef("start_date", width=100),
     ColumnDef("end_date", width=100),
 ]
@@ -184,7 +225,7 @@ LEADER_COLUMNS = [
 
 SOURCE_COLUMNS = [
     ColumnDef("id", width=100),
-    ColumnDef("type", width=100),
+    ColumnDef("type", width=100, formatter=_format_source_type),
     ColumnDef("comment", width=300),
 ]
 
@@ -205,14 +246,21 @@ def _ensure_app_dirs(app_dir: Path) -> None:
 class MainWindow(QMainWindow):
     """Главное окно приложения."""
 
-    def __init__(self, settings: AppSettings, db_manager: DatabaseManager) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        db_manager: DatabaseManager,
+        settings_manager: Optional[SettingsManager] = None,
+    ) -> None:
         super().__init__()
         self.settings = settings
         self.db_manager = db_manager
+        self._settings_manager = settings_manager or SettingsManager()
         self.setWindowTitle(STRINGS.app_title)
         self.setMinimumSize(1024, 768)
         self._setup_ui()
         self._setup_menu()
+        self._restore_ui_state()
 
     def _setup_ui(self) -> None:
         """Инициализирует интерфейс главного окна с вкладками."""
@@ -384,13 +432,44 @@ class MainWindow(QMainWindow):
                 STRINGS.msg_settings_saved,
             )
 
+    def closeEvent(self, event) -> None:
+        """Сохраняет геометрию окна и ширины колонок при закрытии."""
+        self._save_ui_state()
+        super().closeEvent(event)
+
+    def _save_ui_state(self) -> None:
+        """Сохраняет геометрию окна и ширины колонок таблиц в настройки."""
+        self.settings.window_geometry = (
+            self.saveGeometry().toBase64().data().decode("ascii")
+        )
+        self.settings.material_column_widths = ",".join(
+            str(width) for width in self.materials_tab.column_widths()
+        )
+        self.settings.telegram_column_widths = ",".join(
+            str(width) for width in self.telegram_tab.column_widths()
+        )
+        self._settings_manager.save(self.settings)
+
+    def _restore_ui_state(self) -> None:
+        """Восстанавливает геометрию окна и ширины колонок из настроек."""
+        if self.settings.window_geometry:
+            self.restoreGeometry(
+                QByteArray.fromBase64(self.settings.window_geometry.encode("ascii"))
+            )
+        material_widths = _parse_column_widths(self.settings.material_column_widths)
+        if material_widths:
+            self.materials_tab.set_column_widths(material_widths)
+        telegram_widths = _parse_column_widths(self.settings.telegram_column_widths)
+        if telegram_widths:
+            self.telegram_tab.set_column_widths(telegram_widths)
+
     def _set_theme(self, theme_key: str) -> None:
         """Применяет тему оформления и сохраняет выбор в настройках."""
         if self.settings.theme == theme_key:
             return
         self.settings.theme = theme_key
         apply_theme(QApplication.instance(), theme_key)
-        SettingsManager().save(self.settings)
+        self._settings_manager.save(self.settings)
         # Перекрашиваем строки таблиц и графики
         self.materials_tab.refresh()
         self.telegram_tab.refresh()
@@ -400,7 +479,11 @@ class MainWindow(QMainWindow):
         """Формирует экспортный ZIP-архив."""
         session = self.db_manager.get_session()
         try:
-            service = ExportService(session, self.settings.storage_path_obj())
+            service = ExportService(
+                session,
+                self.settings.storage_path_obj(),
+                retention_days=_changes_retention_days(self.settings),
+            )
             output = service.export()
             session.commit()
             self.materials_tab.refresh()
@@ -559,6 +642,14 @@ class MainWindow(QMainWindow):
         return None, ok
 
 
+def _changes_retention_days(settings: AppSettings) -> int:
+    """Возвращает срок хранения записей Change в днях (<= 0 — бессрочно)."""
+    try:
+        return int(settings.changes_retention_days)
+    except (TypeError, ValueError):
+        return DEFAULT_CHANGES_RETENTION_DAYS
+
+
 def _load_or_create_settings(app_dir: Path) -> AppSettings:
     """Загружает настройки или запускает мастер первого запуска."""
     settings_manager = SettingsManager(app_dir)
@@ -608,6 +699,17 @@ def run_application(argv: List[str]) -> int:
         logger.exception("Ошибка инициализации БД")
         QMessageBox.critical(None, STRINGS.title_error, STRINGS.msg_db_error.format(error=exc))
         return 1
+
+    # Удаление устаревших записей Change по настройке срока хранения
+    try:
+        purge_session = db_manager.get_session()
+        try:
+            purge_expired_changes(purge_session, _changes_retention_days(settings))
+            purge_session.commit()
+        finally:
+            purge_session.close()
+    except Exception:  # pylint: disable=broad-except
+        logger.exception("Ошибка очистки устаревших записей Change")
 
     # Проверка кодов перечислений в БД на соответствие активному пакету
     try:

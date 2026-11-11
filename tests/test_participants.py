@@ -6,6 +6,10 @@ from pathlib import Path
 import pytest
 
 from internal_correspondence.core.database import DatabaseManager
+from internal_correspondence.core.constants import (
+    MaterialType,
+    TelegramType,
+)
 from internal_correspondence.orm.models import (
     Branch,
     Department,
@@ -67,7 +71,7 @@ def test_material_participants_are_calculated_from_employees(db_manager: Databas
     with db_manager.get_session() as session:
         branch, dept_one, dept_two, group_one, _group_two, employee_one, employee_two = _create_oshm(session)
         material = ScientificMaterial(
-            type="С",
+            type=MaterialType.MESSAGE,
             outgoing_number="M-1",
             outgoing_date=date(2024, 6, 1),
             name="Материал",
@@ -95,7 +99,7 @@ def test_telegram_uses_incoming_date_when_outgoing_date_is_missing(
     with db_manager.get_session() as session:
         branch, _dept_one, _dept_two, group_one, group_two, employee_one, employee_two = _create_oshm(session)
         telegram = Telegram(
-            type="Т",
+            type=TelegramType.THEMATIC,
             name="Телеграмма",
             incoming_date=date(2024, 5, 15),
             branch_id=branch.id,
