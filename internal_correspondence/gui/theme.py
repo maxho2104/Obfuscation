@@ -9,6 +9,7 @@ from PyQt5.QtGui import QColor, QPalette
 from PyQt5.QtWidgets import QApplication
 
 _QSS_PATH = Path(__file__).with_name("application.qss")
+_ICON_PATH = Path(__file__).with_name("icons")
 _QSS_TOKEN = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 
 
@@ -69,6 +70,7 @@ class Theme:
 
 
 LIGHT_COLORS = {
+    "COMBO_ARROW": _ICON_PATH.joinpath("combo-arrow-light.svg").as_posix(),
     "WINDOW": "#F3F6FA",
     "SURFACE": "#FFFFFF",
     "SURFACE_ALT": "#F7F9FC",
@@ -93,6 +95,7 @@ LIGHT_COLORS = {
 }
 
 DARK_COLORS = {
+    "COMBO_ARROW": _ICON_PATH.joinpath("combo-arrow-dark.svg").as_posix(),
     "WINDOW": "#151A23",
     "SURFACE": "#1D2430",
     "SURFACE_ALT": "#242D3A",

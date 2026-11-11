@@ -9,6 +9,8 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
     QFileIconProvider,
+    QFrame,
+    QHBoxLayout,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -30,9 +32,15 @@ BROKEN_FILE_COLOR = QColor(190, 40, 40)
 class AttachedFilesWidget(QWidget):
     """Виджет для отображения и управления прикреплёнными файлами."""
 
-    def __init__(self, storage_root: Path, parent=None) -> None:
+    def __init__(
+        self,
+        storage_root: Path,
+        parent=None,
+        show_controls: bool = True,
+    ) -> None:
         super().__init__(parent)
         self.storage_root = storage_root
+        self.show_controls = show_controls
         self.file_records: List[FileRecord] = []
         self.new_files: List[Path] = []
         self._icon_provider = QFileIconProvider()
@@ -40,21 +48,40 @@ class AttachedFilesWidget(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.panel = QFrame()
+        self.panel.setObjectName("attachedFilesPanel")
+        panel_layout = QVBoxLayout(self.panel)
+        panel_layout.setContentsMargins(8, 8, 8, 8)
+        panel_layout.setSpacing(6)
 
         self.list_widget = QListWidget()
+        self.list_widget.setObjectName("attachedFilesList")
         self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        layout.addWidget(self.list_widget)
+        panel_layout.addWidget(self.list_widget, 1)
 
         self.add_btn = QPushButton("+")
+        self.add_btn.setProperty("role", "successCompact")
         self.add_btn.setToolTip(STRINGS.tooltip_add_files)
         self.add_btn.clicked.connect(self._add_files)
 
         self.remove_btn = QPushButton("-")
+        self.remove_btn.setProperty("role", "dangerCompact")
         self.remove_btn.setToolTip(STRINGS.tooltip_remove_files)
         self.remove_btn.clicked.connect(self._remove_files)
 
-        layout.addWidget(self.add_btn)
-        layout.addWidget(self.remove_btn)
+        if self.show_controls:
+            controls = QHBoxLayout()
+            controls.setSpacing(6)
+            controls.addStretch()
+            self.add_btn.setFixedWidth(34)
+            self.remove_btn.setFixedWidth(34)
+            controls.addWidget(self.add_btn)
+            controls.addWidget(self.remove_btn)
+            panel_layout.addLayout(controls)
+
+        layout.addWidget(self.panel)
 
     def set_files(self, file_records: List[FileRecord]) -> None:
         """Устанавливает текущий список прикреплённых файлов из БД."""

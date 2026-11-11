@@ -126,6 +126,15 @@ class StatisticsWidget(QWidget):
         self.year_combo = QComboBox()
         controls.addWidget(self.year_combo)
 
+        for combo in (
+            self.object_combo,
+            self.criterion_combo,
+            self.period_combo,
+            self.index_combo,
+            self.year_combo,
+        ):
+            combo.setProperty("role", "statistics")
+
         self.financial_check = QCheckBox(STRINGS.check_financial_year)
         controls.addWidget(self.financial_check)
         controls.addStretch()

@@ -38,7 +38,7 @@ where = ["."]
 include = ["internal_correspondence*"]
 
 [tool.setuptools.package-data]
-"internal_correspondence.gui" = ["*.qss"]
+"internal_correspondence.gui" = ["*.qss", "icons/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

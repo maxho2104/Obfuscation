@@ -70,30 +70,19 @@ class DocumentListWidget(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        # Панель инструментов
-        toolbar = QHBoxLayout()
         self.add_btn = QPushButton(STRINGS.button_add)
-        self.edit_btn = QPushButton(STRINGS.button_edit)
         self.delete_btn = QPushButton(STRINGS.button_delete)
         self.refresh_btn = QPushButton(STRINGS.button_refresh)
 
         self.add_btn.clicked.connect(self._add)
-        self.edit_btn.clicked.connect(self._edit)
         self.delete_btn.clicked.connect(self._delete)
         self.refresh_btn.clicked.connect(self.refresh)
 
-        toolbar.addWidget(self.add_btn)
-        toolbar.addWidget(self.edit_btn)
-        toolbar.addWidget(self.delete_btn)
-        toolbar.addStretch()
         self.filter_btn = QPushButton(STRINGS.button_filter)
         self.filter_btn.clicked.connect(self._open_filter_dialog)
-        toolbar.addWidget(self.filter_btn)
-        toolbar.addWidget(self.refresh_btn)
-        layout.addLayout(toolbar)
 
-        # Таблица
-        splitter = QSplitter(Qt.Vertical)
+        # Основная таблица слева; фильтр и прикреплённые документы справа.
+        splitter = QSplitter(Qt.Horizontal)
 
         self.table = QTableView()
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -104,10 +93,30 @@ class DocumentListWidget(QWidget):
         self.table.doubleClicked.connect(self._edit)
         splitter.addWidget(self.table)
 
+        sidebar = QWidget()
+        sidebar.setMinimumSize(200, 200)
+        sidebar.setMaximumWidth(230)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(6)
+
+        sidebar_controls = QHBoxLayout()
+        sidebar_controls.setSpacing(6)
+        self.filter_btn.setProperty("role", "compact")
+        self.refresh_btn.setProperty("role", "compact")
+        sidebar_controls.addWidget(self.filter_btn, 1)
+        sidebar_controls.addWidget(self.refresh_btn, 1)
+        sidebar_layout.addLayout(sidebar_controls)
+
         self.files_widget = AttachedFilesWidget(self.storage_root)
-        self.files_widget.setMaximumHeight(150)
-        splitter.addWidget(self.files_widget)
-        splitter.setSizes([400, 150])
+        self.files_widget.setMinimumSize(190, 160)
+        sidebar_layout.addWidget(self.files_widget, 1)
+
+        splitter.addWidget(sidebar)
+        splitter.setCollapsible(1, False)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setSizes([800, 220])
 
         layout.addWidget(splitter)
 
@@ -144,6 +153,12 @@ class DocumentListWidget(QWidget):
         pagination.addWidget(self.next_btn)
         pagination.addWidget(self.last_btn)
 
+        self.add_btn.setProperty("role", "successCompact")
+        self.delete_btn.setProperty("role", "dangerCompact")
+        self.add_btn.setFixedWidth(88)
+        self.delete_btn.setFixedWidth(88)
+        pagination.addWidget(self.add_btn)
+        pagination.addWidget(self.delete_btn)
         pagination.addStretch()
         layout.addLayout(pagination)
 
