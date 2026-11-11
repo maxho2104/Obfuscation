@@ -205,6 +205,16 @@ class DocumentListWidget(QWidget):
         self._update_pagination()
         self._update_filter_button()
 
+    def column_widths(self) -> List[int]:
+        """Возвращает текущие ширины колонок таблицы."""
+        return [self.table.columnWidth(i) for i in range(len(self.columns))]
+
+    def set_column_widths(self, widths: List[int]) -> None:
+        """Применяет сохранённые ширины колонок таблицы."""
+        for index, width in enumerate(widths):
+            if 0 <= index < len(self.columns) and width > 0:
+                self.table.setColumnWidth(index, width)
+
     def _update_pagination(self) -> None:
         total_pages = max(1, self.table_model.total_pages())
         current_page = self.table_model.page()

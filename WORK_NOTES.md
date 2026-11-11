@@ -230,3 +230,97 @@
   - инвариант change tracking: `_TRACKED_TABLES`, правило владельца N-N связи (первая колонка ассоциативной таблицы), `meta.json`;
   - инвариант схемы БД: миграции с переносом данных, batch-режим SQLite, соглашение по типам PK;
   - совместимость СУБД/ОС, стиль кода, оформление результата в WORK_NOTES.
+
+---
+
+## 2026-11-11 — Удаление миксинов VersionedMixin и TimestampMixin
+
+### Изменения
+- **Модель (`orm/base.py`):** удалены классы `VersionedMixin` (`row_version`) и `TimestampMixin` (`created_at`/`updated_at`); убраны неиспользуемые импорты (`Column`, `DateTime`, `Integer`, `timezone`).
+- **Модель (`orm/models.py`):** наследование обоих миксинов убрано у всех 18 классов (у `Change` остаётся собственное `changed_at`).
+- **`orm/__init__.py`:** убран реэкспорт миксинов.
+- **Миграция `alembic/versions/d5b9e3c4f6a7_drop_service_columns.py`:** удаляет `row_version` из 17 таблиц и `created_at`/`updated_at` из `changes` (batch-режим, работает и на SQLite, и на PostgreSQL). Удалённые колонки — чисто служебные, бизнес-данные не затронуты, перенос не требуется; downgrade возвращает колонки (значения не восстанавливаются, с явным комментарием).
+- **Сервисы:** `change_tracking.py` и `import_service.py` — `_SERVICE_FIELDS` сокращён до `{"change_id"}`; из `import_service.py` удалён бамп `row_version` при обновлении сущности.
+- **Тесты:** `tests/test_entity_labels.py` — `SERVICE_FIELDS` сокращён до `{"change_id"}`. `scripts_dev/test_migration_tasks_nn.py` не менялся: вставки идут в схему ревизии `b7c4d2f0a1e9`, где `row_version` ещё существует.
+- **Документация:** README (убран пункт про оптимистичный контроль версий, добавлен про `change_id`), AGENTS.md (инвариант 2: наследовать только `ChangeTrackedMixin`).
+
+### Проверка
+- `scripts_dev/test_migration_tasks_nn.py` — upgrade/downgrade новой миграции на SQLite проходят.
+- `pytest`: **156/156 passed**; импорт GUI (`internal_correspondence.gui.application`) — OK.
+
+---
+
+## 2026-11-11 — Change: тип операции, дата экспорта, дельта-обмен и срок хранения
+
+### Изменения
+- **Модель (`orm/models.py`):** у `Change` новые поля — `operation_type` (SmallInteger, 0 — создание, 1 — изменение, 2 — удаление; `IntEnum ChangeOperation` в `core/constants.py`) и `exported_at` (DateTime, nullable — дата записи в экспортный файл). Миксин-маркер `DELETION_MARKER` удалён из констант, трекинга и экспорта.
+- **Миграция `alembic/versions/e6ca04d5a7b8_change_operation_type.py`:** добавляет обе колонки; переносит данные: записи с `__DELETED__` в `changed_fields` → `operation_type=2` с очищенным множеством полей (LIKE с ESCAPE, работает на SQLite и PostgreSQL), downgrade возвращает маркер. Проверена в обе стороны, включая перенос данных.
+- **Трекинг (`services/change_tracking.py`):** переработан `_mark_change` → `_mark_created`/`_mark_updated`/`_mark_deleted`.
+  - Создание: ищется Change по паре (entity_name, entity_pk) — при пересоздании сущности старая запись перезаписывается как создание (id сохраняется); `changed_fields` = поля, которым заданы значения.
+  - Изменение: если `exported_at` пустое — объединение множеств полей; иначе — `operation_type=1`, только поля после последнего экспорта, `exported_at` сбрасывается.
+  - Удаление: если создание не экспортировалось (`operation_type=0` и `exported_at` пустое) — запись Change удаляется; иначе — `operation_type=2`, поля очищаются. Отклонение от исходной формулировки: созданное, но УЖЕ экспортированное удаляется не молча, а фиксируется как удаление — иначе приёмник никогда не узнал бы о пропавшей сущности.
+  - После экспорта `change_id` у сущности сбрасывается (подсветка в таблицах работает без изменений), запись Change ищется по паре (сущность, ключ).
+- **Экспорт (`importexport/export_service.py`):** выгружает только Change с пустым `exported_at`; удаления определяются по `operation_type`; после упаковки архива записи помечаются `exported_at` (не удаляются), затем вызывается чистка по сроку хранения. Новый параметр конструктора `retention_days`.
+- **Срок хранения:** `purge_expired_changes(session, retention_days)` в `change_tracking.py` удаляет только экспортированные записи старше срока (неэкспортированные не трогает; <= 0 — бессрочно). Настройка `changes_retention_days` в `settings.ini` (default 30, диалог настроек, спинбокс со значением «бессрочно»); чистка — при старте приложения и после экспорта. Строки диалога — через `AppStrings` (секция `strings` пакета регенерирована скриптом).
+- **Пакет (`core/domain_pack.default.json`):** у сущности Change добавлены метки полей `operation_type` («Тип операции») и `exported_at` («Дата экспорта»).
+- **README:** архитектурные решения (дельта-обмен, retention), структура данных «Изменение», раздел особенностей.
+
+### Проверка
+- Новые тесты: жизненный цикл Change (создание/объединение/удаление до экспорта, дельта после экспорта, удаление после экспорта, пересоздание, purge), экспорт/импорт дельты и удалений.
+- `pytest`: **165/165 passed**; импорт GUI и диалога настроек — OK; миграция — upgrade/downgrade на SQLite с проверкой переноса маркера.
+
+### Backlog
+- **Запрос недостающих данных приёмной стороной.** Дельта-обмен делает архивы зависимыми от цепочки: потерянный архив = потерянные изменения. Идея: служебный тип сообщения в том же ZIP (например, `{"Request": {"Entity": pk}}` или запрос полного снимка сущности по известному ключу); приёмник формирует запрос — отправитель отвечает полными данными. Потребует дополнения формата обмена (обратная совместимость: неизвестные ключи при импорте игнорируются).
+
+---
+
+## 2026-11-11 — Перечисления как IntEnum: хранение целыми числами
+
+### Изменения
+- **Константы (`core/constants.py`):** MaterialType, EvaluationValue, ScientificTaskType, TelegramType, TelegramReportType, SourceType переведены с str-Enum на IntEnum (значения 0, 1, 2... в прежнем порядке объявления; имена членов = ключи пакета в верхнем регистре). ResearchType удалён (нигде не использовался); секция research_type удалена из пакета `domain_pack.default.json`.
+- **Реестр (`core/enum_registry.py`, новый):** PACK_ENUMS (имя перечисления пакета ↔ IntEnum) и хелперы: `pack_enum_key` (число → ключ), `pack_enum_display` (число → краткий код пакета), `pack_enum_choices` (наполнение комбобоксов «метка (код)», deprecated-значения исключаются). Отдельный модуль — чтобы избежать циклического импорта constants ↔ domain_pack.
+- **ORM (`orm/base.py`):** TypeDecorator `IntEnumType` — в БД целое (SmallInteger), в Python IntEnum; неизвестные числа отдаются как есть (предупреждение формирует validate_enum_codes).
+- **Модель (`orm/models.py`):** колонки scientific_materials.type, telegrams.type, telegrams.report_type, scientific_tasks.type, sources.type, evaluations.value — на IntEnumType с типизацией Mapped[Enum]. EvaluationMixin.evaluation_display показывает краткий код пакета.
+- **Миграция `alembic/versions/f7db15e6b8c9_enum_codes_to_int.py`:** 6 колонок VARCHAR → SMALLINT через временную колонку и CASE-маппинг (портабельно SQLite/PostgreSQL); неизвестные коды → NULL (в NOT NULL колонках миграция прервётся с ошибкой — требуется ручная чистка). Downgrade возвращает строковые коды (числа вне диапазона → NULL). Проверена в обе стороны с данными; скрипт `scripts_dev/test_migration_tasks_nn.py` поправлен (невалидный код 'ДК' → 'Т').
+- **Сервисы:** `enum_validation` сверяет числа БД с пакетом по ключам (число → IntEnum → ключ); `statistics_service` группирует оценки по значениям IntEnum, метки через пакет; `reference_import` преобразует строковые коды из XLSX в числа (неизвестный тип — строка пропускается с warning).
+- **GUI:** комбобоксы типов наполняются через pack_enum_choices (userData — int); findData приводится к int; форматтеры колонок «Тип»/«Тип доклада» в таблицах показывают краткий код пакета; делегат оценок keyed by EvaluationValue.
+- **Тесты:** значения type/value в тестах переведены на членов IntEnum; тесты неизвестных/устаревших кодов переписаны под целочисленные значения; новый `tests/test_enum_int_storage.py` (хранение int, экспорт int, отображение, выбор без deprecated).
+- **README:** правила совместимости пакета (ключи неизменяемы, коды — краткий текст, БД хранит числа), удалён раздел «Тип научного изыскания», в разделе перечислений — примечание о числовом хранении.
+
+### Проверка
+- Миграция: upgrade/downgrade на SQLite с проверкой переноса всех 6 колонок.
+- `pytest`: **169/169 passed**; импорт GUI — OK.
+
+### Отложено
+- Архивы, созданные прежними версиями (строковые коды в export.json), новой версией не импортируются — принято осознанно (синхронное обновление обеих сторон). При необходимости — добавить конвертацию строк→числа на импорте.
+
+---
+
+## 2026-11-11 — Связь научной задачи с сущностью (TaskEntityLink)
+
+### Изменения
+- **Модель (`orm/models.py`):** новый класс `TaskEntityLink` (таблица `task_entity_links`): `id` Integer autoincrement PK, `task_id` FK → scientific_tasks.id (ON DELETE CASCADE), `entity_name` String(100), `entity_pk` String(255); составной индекс (entity_name, entity_pk). Закладка под механизм распределения научных задач — change tracking и обмен подключать вместе с механизмом (пока сущность не редактируется через UI).
+- **Миграция `alembic/versions/f8cc27a9d0e1_task_entity_links.py`:** create/drop таблицы и индекса. Проверена в обе стороны на SQLite (скрипт test_migration_tasks_nn.py).
+- **`orm/__init__.py`:** реэкспорт TaskEntityLink.
+- **Пакет (`domain_pack.default.json`):** секция entities → метки сущности и полей (id, task_id, entity_name, entity_pk).
+- **README:** раздел «Связь задачи с сущностью» в структуре данных.
+- **Тесты (`tests/test_orm_and_changes.py`):** test_task_entity_link — сохранение/чтение связи и каскадное удаление при удалении задачи (FK-pragma SQLite включена в DatabaseManager).
+
+### Проверка
+- `pytest`: **170/170 passed**; импорт GUI — OK.
+
+---
+
+## 2026-11-11 — Связь документов со странами 1-N -> N-N
+
+### Изменения
+- **Модель (`orm/models.py`):** у ScientificMaterial и Telegram убраны `country_id`/`country`; добавлены ассоциативные таблицы `material_countries` и `telegram_countries` и связи `countries` (владелец — документ, первая колонка ассоциативной таблицы). У Country обратные связи переведены на secondary. Change-tracking и экспорт/импорт работают обобщённо — отдельных правок не потребовалось.
+- **Миграция `alembic/versions/a9de48b1c2f3_countries_many_to_many.py`:** создаёт ассоциативные таблицы, переносит существующие country_id, удаляет колонки; downgrade возвращает колонки с одной (минимальной по коду) страной на документ. Проверена в обе стороны на SQLite с данными.
+- **Интерфейс (`gui/document_dialogs.py`):** комбобокс «Страна» заменён на `CountrySelectWidget` — список стран с чекбоксами (в обоих диалогах); get_data отдаёт «countries».
+- **Пакет (`domain_pack.default.json`):** у ScientificMaterial и Telegram поле country_id заменено на countries («Страны»).
+- **seed_data.py:** документам назначается случайная страна через связь countries.
+- **README:** описания полей «Страны» материала и телеграммы — отношение n-n.
+
+### Проверка
+- Новые тесты в test_export_import.py: N-N стран трекается в Change и экспортируется; импорт восстанавливает связь.
+- `pytest`: **172/172 passed**; импорт GUI — OK.

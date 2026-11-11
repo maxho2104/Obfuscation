@@ -9,6 +9,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from internal_correspondence.core.constants import MaterialType
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.core.domain_pack import (
     dir_name,
@@ -187,10 +188,11 @@ class TestEnumValidation:
             session.commit()
             from internal_correspondence.orm.models import ScientificMaterial
 
-            session.add(ScientificMaterial(type="ZZZ", name="М", branch_id="F1"))
+            # 99 вне диапазона MaterialType — имитация данных чужого пакета
+            session.add(ScientificMaterial(type=99, name="М", branch_id="F1"))
             session.commit()
             warnings = validate_enum_codes(session)
-        assert any("ZZZ" in warning for warning in warnings)
+        assert any("99" in warning for warning in warnings)
 
     def test_known_codes_no_warnings(self, db_manager):
         with db_manager.get_session() as session:
@@ -199,16 +201,21 @@ class TestEnumValidation:
             session.commit()
             from internal_correspondence.orm.models import ScientificMaterial
 
-            session.add(ScientificMaterial(type="ДОК", name="М", branch_id="F1"))
+            session.add(ScientificMaterial(type=MaterialType.DOCUMENT, name="М", branch_id="F1"))
             session.commit()
             assert validate_enum_codes(session) == []
 
     def test_deprecated_codes_are_known(self, db_manager, tmp_path):
-        """Устаревший код в БД не должен считаться ошибкой."""
+        """Устаревшее значение пакета в БД не должно считаться ошибкой."""
         pack_path = _write_pack(tmp_path, {})
         data = json.loads(pack_path.read_text(encoding="utf-8"))
         data["enums"]["material_type"]["values"].append(
-            {"key": "legacy", "code": "СТ", "label": "Старый тип", "deprecated": True}
+            {
+                "key": "product_sample",
+                "code": "ОП",
+                "label": "Образец продукции",
+                "deprecated": True,
+            }
         )
         pack_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         set_domain_pack(load_domain_pack(pack_path))
@@ -219,10 +226,12 @@ class TestEnumValidation:
             session.commit()
             from internal_correspondence.orm.models import ScientificMaterial
 
-            session.add(ScientificMaterial(type="СТ", name="М", branch_id="F1"))
+            session.add(
+                ScientificMaterial(type=MaterialType.PRODUCT_SAMPLE, name="М", branch_id="F1")
+            )
             session.commit()
             warnings = validate_enum_codes(session)
-        assert not any("СТ" in warning for warning in warnings)
+        assert not any("PRODUCT_SAMPLE" in warning for warning in warnings)
 
 
 class TestPackSerialization:

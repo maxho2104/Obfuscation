@@ -20,7 +20,6 @@ from internal_correspondence.core.domain_pack import (
 
 EXPECTED_ENUMS = {
     "material_type",
-    "research_type",
     "evaluation_value",
     "scientific_task_type",
     "telegram_type",

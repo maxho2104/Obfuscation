@@ -7,7 +7,11 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Optional
 
-from internal_correspondence.core.constants import CONFIG_FILE_NAME, Role
+from internal_correspondence.core.constants import (
+    CONFIG_FILE_NAME,
+    DEFAULT_CHANGES_RETENTION_DAYS,
+    Role,
+)
 
 
 @dataclass
@@ -34,6 +38,16 @@ class AppSettings:
 
     # Путь к внешнему пакету предметной области (пусто — встроенный)
     domain_pack: str = ""
+
+    # Геометрия главного окна (QByteArray.saveGeometry в Base64)
+    window_geometry: str = ""
+
+    # Ширины колонок таблиц документов (числа через запятую)
+    material_column_widths: str = ""
+    telegram_column_widths: str = ""
+
+    # Срок хранения записей Change (в днях); <= 0 — бессрочно
+    changes_retention_days: int = DEFAULT_CHANGES_RETENTION_DAYS
 
     def storage_path_obj(self) -> Path:
         """Возвращает путь к файловому хранилищу."""

@@ -24,7 +24,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from internal_correspondence.core.domain_pack import enum_labels
+from internal_correspondence.core.enum_registry import pack_enum_choices
 from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
 from internal_correspondence.gui.employee_picker import ParticipatingEmployeesWidget
 from internal_correspondence.orm.labels import (
@@ -78,6 +78,43 @@ class TaskSelectWidget(QWidget):
             item = self.list_widget.item(row)
             if item.checkState() == Qt.Checked:
                 result.append(self._tasks[item.data(Qt.UserRole)])
+        return result
+
+
+class CountrySelectWidget(QWidget):
+    """Мультивыбор стран документа (список с чекбоксами)."""
+
+    def __init__(self, session, parent=None) -> None:
+        super().__init__(parent)
+        self._countries: Dict[str, Country] = {}
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.list_widget = QListWidget()
+        self.list_widget.setMaximumHeight(90)
+        layout.addWidget(self.list_widget)
+        for country in session.query(Country).order_by(Country.name).all():
+            self._countries[country.id] = country
+            item = QListWidgetItem(country.name)
+            item.setData(Qt.UserRole, country.id)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.list_widget.addItem(item)
+
+    def set_countries(self, countries: List[Country]) -> None:
+        """Отмечает в списке страны, уже связанные с документом."""
+        selected = {country.id for country in countries}
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+            checked = item.data(Qt.UserRole) in selected
+            item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+
+    def get_countries(self) -> List[Country]:
+        """Возвращает страны, отмеченные в списке."""
+        result = []
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+            if item.checkState() == Qt.Checked:
+                result.append(self._countries[item.data(Qt.UserRole)])
         return result
 
 
@@ -189,8 +226,8 @@ class MaterialEditDialog(QDialog):
         self.form = QFormLayout(form_widget)
 
         self.type_combo = QComboBox()
-        for key, label in enum_labels("material_type").items():
-            self.type_combo.addItem(f"{label} ({key})", key)
+        for value, text in pack_enum_choices("material_type"):
+            self.type_combo.addItem(text, value)
         self.form.addRow(field_form_label(ScientificMaterial, "type"), self.type_combo)
 
         self.outgoing_number = QLineEdit()
@@ -240,11 +277,10 @@ class MaterialEditDialog(QDialog):
         self.cost = QLineEdit()
         self.form.addRow(field_form_label(ScientificMaterial, "cost"), self.cost)
 
-        self.country_combo = QComboBox()
-        self.country_combo.addItem("—", None)
-        for country in self.session.query(Country).order_by(Country.name).all():
-            self.country_combo.addItem(country.name, country.id)
-        self.form.addRow(field_form_label(ScientificMaterial, "country_id"), self.country_combo)
+        self.countries_widget = CountrySelectWidget(self.session)
+        self.form.addRow(
+            field_form_label(ScientificMaterial, "countries"), self.countries_widget
+        )
 
         self.consumer_combo = QComboBox()
         self.consumer_combo.addItem("—", None)
@@ -281,7 +317,7 @@ class MaterialEditDialog(QDialog):
 
     def _load_data(self) -> None:
         m = self.material
-        index = self.type_combo.findData(m.type)
+        index = self.type_combo.findData(int(m.type) if m.type is not None else None)
         if index >= 0:
             self.type_combo.setCurrentIndex(index)
         self.outgoing_number.setText(m.outgoing_number or "")
@@ -296,10 +332,7 @@ class MaterialEditDialog(QDialog):
         self.permit_number.setText(m.permit_number or "")
         self.cost.setText(str(m.cost) if m.cost else "")
 
-        if m.country_id:
-            idx = self.country_combo.findData(m.country_id)
-            if idx >= 0:
-                self.country_combo.setCurrentIndex(idx)
+        self.countries_widget.set_countries(list(m.countries))
         if m.consumer_id:
             idx = self.consumer_combo.findData(m.consumer_id)
             if idx >= 0:
@@ -346,7 +379,7 @@ class MaterialEditDialog(QDialog):
             "release_year": int(self.release_year.text()) if self.release_year.text().strip().isdigit() else None,
             "permit_number": self.permit_number.text().strip() or None,
             "cost": float(self.cost.text()) if self.cost.text().strip() else None,
-            "country_id": self.country_combo.currentData(),
+            "countries": self.countries_widget.get_countries(),
             "consumer_id": self.consumer_combo.currentData(),
             "tasks": self.tasks_widget.get_tasks(),
             "employees": self.employees_widget.get_employees(),
@@ -390,8 +423,8 @@ class TelegramEditDialog(QDialog):
         self.form = QFormLayout(form_widget)
 
         self.type_combo = QComboBox()
-        for key, label in enum_labels("telegram_type").items():
-            self.type_combo.addItem(f"{label} ({key})", key)
+        for value, text in pack_enum_choices("telegram_type"):
+            self.type_combo.addItem(text, value)
         self.form.addRow(field_form_label(Telegram, "type"), self.type_combo)
 
         self.outgoing_number = QLineEdit()
@@ -417,15 +450,12 @@ class TelegramEditDialog(QDialog):
 
         self.report_type_combo = QComboBox()
         self.report_type_combo.addItem("—", None)
-        for key, label in enum_labels("telegram_report_type").items():
-            self.report_type_combo.addItem(f"{label} ({key})", key)
+        for value, text in pack_enum_choices("telegram_report_type"):
+            self.report_type_combo.addItem(text, value)
         self.form.addRow(field_form_label(Telegram, "report_type"), self.report_type_combo)
 
-        self.country_combo = QComboBox()
-        self.country_combo.addItem("—", None)
-        for country in self.session.query(Country).order_by(Country.name).all():
-            self.country_combo.addItem(country.name, country.id)
-        self.form.addRow(field_form_label(Telegram, "country_id"), self.country_combo)
+        self.countries_widget = CountrySelectWidget(self.session)
+        self.form.addRow(field_form_label(Telegram, "countries"), self.countries_widget)
 
         self.tasks_widget = TaskSelectWidget(self.session)
         self.form.addRow(field_form_label(Telegram, "tasks"), self.tasks_widget)
@@ -458,7 +488,7 @@ class TelegramEditDialog(QDialog):
 
     def _load_data(self) -> None:
         t = self.telegram
-        index = self.type_combo.findData(t.type)
+        index = self.type_combo.findData(int(t.type) if t.type is not None else None)
         if index >= 0:
             self.type_combo.setCurrentIndex(index)
         self.outgoing_number.setText(t.outgoing_number or "")
@@ -468,14 +498,11 @@ class TelegramEditDialog(QDialog):
         self.incoming_number.setText(t.incoming_number or "")
         if t.incoming_date:
             self.incoming_date.setDate(t.incoming_date)
-        if t.report_type:
-            idx = self.report_type_combo.findData(t.report_type)
+        if t.report_type is not None:
+            idx = self.report_type_combo.findData(int(t.report_type))
             if idx >= 0:
                 self.report_type_combo.setCurrentIndex(idx)
-        if t.country_id:
-            idx = self.country_combo.findData(t.country_id)
-            if idx >= 0:
-                self.country_combo.setCurrentIndex(idx)
+        self.countries_widget.set_countries(list(t.countries))
         self.tasks_widget.set_tasks(list(t.tasks))
         self.report_addresses_widget.set_addresses(list(t.report_addresses))
         self.comment.setPlainText(t.comment or "")
@@ -514,7 +541,7 @@ class TelegramEditDialog(QDialog):
             "incoming_number": self.incoming_number.text().strip() or None,
             "incoming_date": self.incoming_date.date().toPyDate() if self.incoming_date.date().year() > 1900 else None,
             "report_type": self.report_type_combo.currentData(),
-            "country_id": self.country_combo.currentData(),
+            "countries": self.countries_widget.get_countries(),
             "tasks": self.tasks_widget.get_tasks(),
             "report_addresses": self.report_addresses_widget.get_addresses(),
             "employees": self.employees_widget.get_employees(),

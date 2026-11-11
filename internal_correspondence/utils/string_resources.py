@@ -34,6 +34,8 @@ class AppStrings:
     button_edit: str = "Изменить"
     button_delete: str = "Удалить"
     dialog_settings_title: str = "Настройки"
+    settings_changes_retention: str = "Срок хранения журнала изменений (дней):"
+    settings_retention_forever: str = "бессрочно"
     wizard_first_run_title: str = "Первый запуск"
     wizard_db_title: str = "Подключение к базе данных"
     wizard_db_subtitle: str = "Выберите тип базы данных и укажите параметры подключения."
