@@ -10,7 +10,11 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from internal_correspondence.core.constants import Role
+from internal_correspondence.core.constants import (
+    ChangeOperation,
+    MaterialType,
+    Role,
+)
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.importexport.export_service import ExportService, ExportError
 from internal_correspondence.importexport.import_service import ImportService
@@ -76,7 +80,7 @@ def test_export_creates_zip(db_manager: DatabaseManager, tmp_path: Path) -> None
     assert output.suffix == ".zip"
 
 
-def test_export_clears_changes(db_manager: DatabaseManager, tmp_path: Path) -> None:
+def test_export_marks_changes_exported(db_manager: DatabaseManager, tmp_path: Path) -> None:
     storage = tmp_path / "storage"
     storage.mkdir()
 
@@ -86,7 +90,10 @@ def test_export_clears_changes(db_manager: DatabaseManager, tmp_path: Path) -> N
         service.export()
         session.commit()
 
-        assert session.query(Change).count() == 0
+        # Записи Change сохраняются с датой экспорта; ссылки у сущностей сбрасываются
+        changes = session.query(Change).all()
+        assert len(changes) == 3
+        assert all(change.exported_at is not None for change in changes)
         country = session.query(Country).one()
         assert country.change_id is None
 
@@ -141,10 +148,105 @@ def test_export_removes_highlight_in_open_table(
         model.refresh()
 
         assert model.data(model.index(0, 0), Qt.BackgroundRole) is None
-        assert model_session.query(Change).count() == 0
+        assert model_session.query(Change).count() == 3
+        assert all(c.exported_at is not None for c in model_session.query(Change).all())
         assert model_session.get(Country, "RUS").change_id is None
     finally:
         model_session.close()
+
+
+def test_countries_many_to_many_tracked_and_exported(
+    db_manager: DatabaseManager, tmp_path: Path
+) -> None:
+    """Страны документа N-N: трекинг связи и экспорт списка кодов."""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+
+    with db_manager.get_session() as session:
+        session.add(TerritorialUnit(id="MSK", name="Москва"))
+        session.add(Branch(id="F1", name="Филиал", short_name="Ф", territorial_unit_id="MSK"))
+        session.add(Country(id="RUS", name="Россия"))
+        session.add(Country(id="USA", name="США"))
+        material = ScientificMaterial(
+            id=uuid.uuid4(),
+            type=MaterialType.MESSAGE,
+            name="Материал",
+            branch_id="F1",
+            countries=[session.get(Country, "RUS"), session.get(Country, "USA")],
+        )
+        session.add(material)
+        session.commit()
+        material_id = str(material.id)
+
+        output = ExportService(session, storage).export()
+        session.commit()
+
+    with zipfile.ZipFile(output) as zf:
+        data = json.loads(zf.read("export.json").decode("utf-8"))
+    assert data["ScientificMaterial"][material_id]["countries"] == ["RUS", "USA"]
+
+    # Изменение связи после экспорта трекается как новая дельта
+    with db_manager.get_session() as session:
+        material = session.get(ScientificMaterial, uuid.UUID(material_id))
+        material.countries = [session.get(Country, "RUS")]
+        session.commit()
+
+        change = (
+            session.query(Change)
+            .filter(Change.entity_name == "ScientificMaterial")
+            .one()
+        )
+        assert change.changed_fields == ["countries"]
+
+        output = ExportService(session, storage).export()
+        session.commit()
+
+    with zipfile.ZipFile(output) as zf:
+        data = json.loads(zf.read("export.json").decode("utf-8"))
+    assert data["ScientificMaterial"][material_id]["countries"] == ["RUS"]
+
+
+def test_import_creates_m2m_countries(db_manager: DatabaseManager, tmp_path: Path) -> None:
+    """Импорт восстанавливает N-N связь документа со странами."""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    material_id = str(uuid.uuid4())
+    payload = {
+        "ScientificMaterial": {
+            material_id: {
+                "id": material_id,
+                "type": int(MaterialType.MESSAGE),
+                "name": "Материал",
+                "branch_id": "F1",
+                "countries": ["RUS", "USA"],
+            }
+        },
+        "Country": {
+            "RUS": {"id": "RUS", "name": "Россия"},
+            "USA": {"id": "USA", "name": "США"},
+        },
+        "Branch": {
+            "F1": {
+                "id": "F1",
+                "name": "Филиал",
+                "short_name": "Ф",
+                "territorial_unit_id": "MSK",
+            }
+        },
+        "TerritorialUnit": {"MSK": {"id": "MSK", "name": "Москва"}},
+    }
+    archive = tmp_path / "countries.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("export.json", json.dumps(payload, ensure_ascii=False))
+
+    with db_manager.get_session() as session:
+        result = ImportService(session, storage, Role.HEAD_OFFICE.value).import_archive(archive)
+
+    assert result["imported"] == 5
+    assert result["skipped"] == 0
+    with db_manager.get_session() as session:
+        material = session.query(ScientificMaterial).one()
+        assert {country.id for country in material.countries} == {"RUS", "USA"}
 
 
 def test_m2m_changes_are_tracked_and_exported(
@@ -169,7 +271,7 @@ def test_m2m_changes_are_tracked_and_exported(
             )
         )
         session.add(
-            ScientificMaterial(id=material_id, type="статья", name="Материал", branch_id="F1")
+            ScientificMaterial(id=material_id, type=MaterialType.MESSAGE, name="Материал", branch_id="F1")
         )
         session.commit()
         ExportService(session, storage).export()
@@ -215,7 +317,7 @@ def test_export_and_import_synchronizes_attached_files(
         source_file.write_text("hello", encoding="utf-8")
         service = ScientificMaterialService(session, source_storage)
         material = service.create_with_files(
-            {"type": "статья", "name": "Материал", "branch_id": "F1"},
+            {"type": int(MaterialType.MESSAGE), "name": "Материал", "branch_id": "F1"},
             [source_file],
         )
         session.commit()
@@ -265,7 +367,7 @@ def test_import_creates_m2m_dependencies(db_manager: DatabaseManager, tmp_path: 
         "ScientificMaterial": {
             material_id: {
                 "id": material_id,
-                "type": "статья",
+                "type": int(MaterialType.MESSAGE),
                 "name": "Материал",
                 "branch_id": "F1",
                 "employees": [employee_id],
@@ -347,7 +449,7 @@ def test_import_resolves_dependencies_from_json(
         "ScientificMaterial": {
             material_id: {
                 "id": material_id,
-                "type": "статья",
+                "type": int(MaterialType.MESSAGE),
                 "name": "Материал",
                 "branch_id": "FIL001",
             }
@@ -377,6 +479,117 @@ def test_import_resolves_dependencies_from_json(
         assert session.query(Branch).count() == 1
         assert session.query(ScientificMaterial).count() == 1
         assert session.query(Change).count() == 0
+
+
+def test_update_after_export_starts_new_delta(
+    db_manager: DatabaseManager, tmp_path: Path
+) -> None:
+    """После экспорта изменение фиксируется как «изменение» только новых полей."""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        ExportService(session, storage).export()
+        session.commit()
+
+    with db_manager.get_session() as session:
+        country = session.get(Country, "RUS")
+        country.name = "Российская Федерация"
+        session.commit()
+
+    with db_manager.get_session() as session:
+        change = (
+            session.query(Change).filter(Change.entity_name == "Country").one()
+        )
+        assert change.operation_type == ChangeOperation.UPDATE.value
+        assert change.changed_fields == ["name"]
+        assert change.exported_at is None
+        assert session.get(Country, "RUS").change_id == change.id
+
+        output = ExportService(session, storage).export()
+        session.commit()
+
+    data = _read_export_json(output)
+    assert data == {"Country": {"RUS": {"name": "Российская Федерация"}}}
+
+
+def test_delete_after_export_marks_deletion(
+    db_manager: DatabaseManager, tmp_path: Path
+) -> None:
+    """Удаление экспортированной сущности фиксируется как операция удаления."""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        ExportService(session, storage).export()
+        session.commit()
+
+    with db_manager.get_session() as session:
+        session.delete(session.get(Country, "RUS"))
+        session.commit()
+
+    with db_manager.get_session() as session:
+        change = (
+            session.query(Change).filter(Change.entity_name == "Country").one()
+        )
+        assert change.operation_type == ChangeOperation.DELETE.value
+        assert change.changed_fields == []
+        assert change.exported_at is None
+
+        output = ExportService(session, storage).export()
+        session.commit()
+
+    data = _read_export_json(output)
+    assert data == {"Country": {"RUS": {"deleted": True}}}
+
+
+def test_recreate_after_exported_delete_reuses_change(
+    db_manager: DatabaseManager, tmp_path: Path
+) -> None:
+    """Пересоздание после экспортированного удаления перезаписывает запись Change."""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        ExportService(session, storage).export()
+        session.commit()
+
+    with db_manager.get_session() as session:
+        session.delete(session.get(Country, "RUS"))
+        session.commit()
+
+    with db_manager.get_session() as session:
+        session.add(Country(id="RUS", name="Россия"))
+        session.commit()
+
+    with db_manager.get_session() as session:
+        changes = session.query(Change).filter(Change.entity_name == "Country").all()
+        assert len(changes) == 1
+        change = changes[0]
+        assert change.operation_type == ChangeOperation.CREATE.value
+        assert change.exported_at is None
+        assert set(change.changed_fields) == {"id", "name"}
+        assert session.get(Country, "RUS").change_id == change.id
+
+
+def test_second_export_raises_when_all_exported(
+    db_manager: DatabaseManager, tmp_path: Path
+) -> None:
+    """Повторный экспорт без новых изменений отклоняется."""
+    storage = tmp_path / "storage"
+    storage.mkdir()
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        ExportService(session, storage).export()
+        session.commit()
+
+    with db_manager.get_session() as session:
+        with pytest.raises(ExportError):
+            ExportService(session, storage).export()
 
 
 def test_export_raises_when_no_changes(db_manager: DatabaseManager, tmp_path: Path) -> None:

@@ -30,6 +30,7 @@ from internal_correspondence.gui.evaluation_delegate import EvaluationItemDelega
 from internal_correspondence.gui.filter_dialog import FilterDialog
 from internal_correspondence.gui.table_model import ColumnDef, SqlAlchemyTableModel
 from internal_correspondence.orm.base import Base
+from internal_correspondence.utils.string_resources import STRINGS
 from internal_correspondence.orm.labels import deletion_confirmation_text
 from internal_correspondence.orm.models import ScientificMaterial, Telegram
 from internal_correspondence.services.document_service import (
@@ -68,17 +69,13 @@ class DocumentListWidget(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 12)
-        layout.setSpacing(10)
 
         # Панель инструментов
         toolbar = QHBoxLayout()
-        self.add_btn = QPushButton("Добавить")
-        self.edit_btn = QPushButton("Изменить")
-        self.delete_btn = QPushButton("Удалить")
-        self.refresh_btn = QPushButton("Обновить")
-        self.add_btn.setProperty("role", "primary")
-        self.delete_btn.setProperty("role", "danger")
+        self.add_btn = QPushButton(STRINGS.button_add)
+        self.edit_btn = QPushButton(STRINGS.button_edit)
+        self.delete_btn = QPushButton(STRINGS.button_delete)
+        self.refresh_btn = QPushButton(STRINGS.button_refresh)
 
         self.add_btn.clicked.connect(self._add)
         self.edit_btn.clicked.connect(self._edit)
@@ -89,14 +86,14 @@ class DocumentListWidget(QWidget):
         toolbar.addWidget(self.edit_btn)
         toolbar.addWidget(self.delete_btn)
         toolbar.addStretch()
-        self.filter_btn = QPushButton("Фильтр")
+        self.filter_btn = QPushButton(STRINGS.button_filter)
         self.filter_btn.clicked.connect(self._open_filter_dialog)
         toolbar.addWidget(self.filter_btn)
         toolbar.addWidget(self.refresh_btn)
         layout.addLayout(toolbar)
 
         # Таблица
-        splitter = QSplitter(Qt.Horizontal)
+        splitter = QSplitter(Qt.Vertical)
 
         self.table = QTableView()
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -108,12 +105,9 @@ class DocumentListWidget(QWidget):
         splitter.addWidget(self.table)
 
         self.files_widget = AttachedFilesWidget(self.storage_root)
-        self.files_widget.setMinimumWidth(170)
-        self.files_widget.setMaximumWidth(250)
+        self.files_widget.setMaximumHeight(150)
         splitter.addWidget(self.files_widget)
-        splitter.setStretchFactor(0, 5)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([820, 190])
+        splitter.setSizes([400, 150])
 
         layout.addWidget(splitter)
 
@@ -125,13 +119,10 @@ class DocumentListWidget(QWidget):
         self.page_edit.setAlignment(Qt.AlignCenter)
         self.page_edit.setMaximumWidth(60)
         self.page_edit.setValidator(QIntValidator(1, 999999, self))
-        self.page_edit.setToolTip("Номер страницы (Enter — перейти)")
+        self.page_edit.setToolTip(STRINGS.tooltip_page_number)
         self.next_btn = QPushButton(">")
         self.last_btn = QPushButton(">|")
-        self.page_total_label = QLabel("из 1")
-
-        for button in (self.first_btn, self.prev_btn, self.next_btn, self.last_btn):
-            button.setProperty("role", "compact")
+        self.page_total_label = QLabel(STRINGS.page_of.format(total=1))
 
         self.first_btn.clicked.connect(lambda: self._go_to_page(1))
         self.prev_btn.clicked.connect(
@@ -147,7 +138,7 @@ class DocumentListWidget(QWidget):
 
         pagination.addWidget(self.first_btn)
         pagination.addWidget(self.prev_btn)
-        pagination.addWidget(QLabel("страница"))
+        pagination.addWidget(QLabel(STRINGS.label_page))
         pagination.addWidget(self.page_edit)
         pagination.addWidget(self.page_total_label)
         pagination.addWidget(self.next_btn)
@@ -197,11 +188,15 @@ class DocumentListWidget(QWidget):
     def _update_filter_button(self) -> None:
         """Показывает количество применённых фильтров на кнопке."""
         count = len(self.table_model.filters())
-        self.filter_btn.setText(f"Фильтр ({count})" if count else "Фильтр")
+        self.filter_btn.setText(
+            STRINGS.button_filter_count.format(count=count)
+            if count
+            else STRINGS.button_filter
+        )
         self.filter_btn.setToolTip(
-            "Настроить фильтрацию записей"
+            STRINGS.tooltip_filter_setup
             if not count
-            else f"Применено фильтров: {count}"
+            else STRINGS.tooltip_filter_applied.format(count=count)
         )
 
     def refresh(self) -> None:
@@ -210,11 +205,21 @@ class DocumentListWidget(QWidget):
         self._update_pagination()
         self._update_filter_button()
 
+    def column_widths(self) -> List[int]:
+        """Возвращает текущие ширины колонок таблицы."""
+        return [self.table.columnWidth(i) for i in range(len(self.columns))]
+
+    def set_column_widths(self, widths: List[int]) -> None:
+        """Применяет сохранённые ширины колонок таблицы."""
+        for index, width in enumerate(widths):
+            if 0 <= index < len(self.columns) and width > 0:
+                self.table.setColumnWidth(index, width)
+
     def _update_pagination(self) -> None:
         total_pages = max(1, self.table_model.total_pages())
         current_page = self.table_model.page()
         self.page_edit.setText(str(current_page))
-        self.page_total_label.setText(f"из {total_pages}")
+        self.page_total_label.setText(STRINGS.page_of.format(total=total_pages))
         self.first_btn.setEnabled(current_page > 1)
         self.prev_btn.setEnabled(current_page > 1)
         self.next_btn.setEnabled(current_page < total_pages)
@@ -283,7 +288,9 @@ class DocumentListWidget(QWidget):
             self.refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка создания документа")
-            QMessageBox.critical(self, "Ошибка", f"Не удалось создать запись:\n{exc}")
+            QMessageBox.critical(
+                self, STRINGS.title_error, STRINGS.msg_create_error.format(error=exc)
+            )
             self.session.rollback()
 
     def _edit(self) -> None:
@@ -317,7 +324,9 @@ class DocumentListWidget(QWidget):
             self.refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка обновления документа")
-            QMessageBox.critical(self, "Ошибка", f"Не удалось обновить запись:\n{exc}")
+            QMessageBox.critical(
+                self, STRINGS.title_error, STRINGS.msg_update_error.format(error=exc)
+            )
             self.session.rollback()
 
     def _delete(self) -> None:
@@ -327,7 +336,7 @@ class DocumentListWidget(QWidget):
             return
         reply = QMessageBox.warning(
             self,
-            "Внимание",
+            STRINGS.title_attention,
             deletion_confirmation_text(self.model_class, len(items)),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
@@ -341,5 +350,7 @@ class DocumentListWidget(QWidget):
             self.refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка удаления документов")
-            QMessageBox.critical(self, "Ошибка", f"Не удалось удалить записи:\n{exc}")
+            QMessageBox.critical(
+                self, STRINGS.title_error, STRINGS.msg_delete_error.format(error=exc)
+            )
             self.session.rollback()

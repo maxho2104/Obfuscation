@@ -14,6 +14,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -22,12 +24,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from internal_correspondence.core.constants import (
-    EVALUATION_VALUE_LABELS,
-    MATERIAL_TYPE_LABELS,
-    REPORT_TYPE_LABELS,
-    TELEGRAM_TYPE_LABELS,
-)
+from internal_correspondence.core.enum_registry import pack_enum_choices
 from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
 from internal_correspondence.gui.employee_picker import ParticipatingEmployeesWidget
 from internal_correspondence.orm.labels import (
@@ -38,11 +35,162 @@ from internal_correspondence.orm.labels import (
 from internal_correspondence.orm.models import (
     Country,
     Consumer,
+    Leader,
+    ReportAddress,
     ScientificMaterial,
     ScientificTask,
     Telegram,
 )
 from internal_correspondence.utils.string_resources import STRINGS
+
+
+class TaskSelectWidget(QWidget):
+    """Мультивыбор научных задач документа (список с чекбоксами)."""
+
+    def __init__(self, session, parent=None) -> None:
+        super().__init__(parent)
+        self._tasks: Dict[str, ScientificTask] = {}
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.list_widget = QListWidget()
+        self.list_widget.setMaximumHeight(120)
+        layout.addWidget(self.list_widget)
+        for task in session.query(ScientificTask).order_by(ScientificTask.id).all():
+            self._tasks[task.id] = task
+            item = QListWidgetItem(f"{task.id} — {task.name}")
+            item.setData(Qt.UserRole, task.id)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.list_widget.addItem(item)
+
+    def set_tasks(self, tasks: List[ScientificTask]) -> None:
+        """Отмечает в списке задачи, уже связанные с документом."""
+        selected = {task.id for task in tasks}
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+            checked = item.data(Qt.UserRole) in selected
+            item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+
+    def get_tasks(self) -> List[ScientificTask]:
+        """Возвращает задачи, отмеченные в списке."""
+        result = []
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+            if item.checkState() == Qt.Checked:
+                result.append(self._tasks[item.data(Qt.UserRole)])
+        return result
+
+
+class CountrySelectWidget(QWidget):
+    """Мультивыбор стран документа (список с чекбоксами)."""
+
+    def __init__(self, session, parent=None) -> None:
+        super().__init__(parent)
+        self._countries: Dict[str, Country] = {}
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.list_widget = QListWidget()
+        self.list_widget.setMaximumHeight(90)
+        layout.addWidget(self.list_widget)
+        for country in session.query(Country).order_by(Country.name).all():
+            self._countries[country.id] = country
+            item = QListWidgetItem(country.name)
+            item.setData(Qt.UserRole, country.id)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.list_widget.addItem(item)
+
+    def set_countries(self, countries: List[Country]) -> None:
+        """Отмечает в списке страны, уже связанные с документом."""
+        selected = {country.id for country in countries}
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+            checked = item.data(Qt.UserRole) in selected
+            item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+
+    def get_countries(self) -> List[Country]:
+        """Возвращает страны, отмеченные в списке."""
+        result = []
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+            if item.checkState() == Qt.Checked:
+                result.append(self._countries[item.data(Qt.UserRole)])
+        return result
+
+
+class ReportAddressesWidget(QWidget):
+    """Редактор адресации доклада: список «руководитель — дата доклада»."""
+
+    def __init__(self, session, parent=None) -> None:
+        super().__init__(parent)
+        self._leaders = (
+            session.query(Leader)
+            .filter(Leader.active.is_(True))
+            .order_by(Leader.id)
+            .all()
+        )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        controls = QHBoxLayout()
+        self.leader_combo = QComboBox()
+        for leader in self._leaders:
+            self.leader_combo.addItem(leader.id, leader.id)
+        self.date_edit = QDateEdit()
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDate(date.today())
+        self.add_btn = QPushButton(STRINGS.button_add)
+        self.add_btn.clicked.connect(self._add)
+        self.remove_btn = QPushButton(STRINGS.button_delete)
+        self.remove_btn.clicked.connect(self._remove)
+        controls.addWidget(self.leader_combo, 1)
+        controls.addWidget(self.date_edit)
+        controls.addWidget(self.add_btn)
+        controls.addWidget(self.remove_btn)
+        layout.addLayout(controls)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setMaximumHeight(100)
+        layout.addWidget(self.list_widget)
+
+    def _add(self) -> None:
+        leader_id = self.leader_combo.currentData()
+        if leader_id is None:
+            return
+        self._add_item(leader_id, self.date_edit.date().toPyDate(), None)
+
+    def _add_item(
+        self,
+        leader_id: str,
+        report_date: date,
+        address: Optional[ReportAddress],
+    ) -> None:
+        item = QListWidgetItem(f"{leader_id} — {report_date.isoformat()}")
+        item.setData(Qt.UserRole, (leader_id, report_date, address))
+        self.list_widget.addItem(item)
+
+    def _remove(self) -> None:
+        for item in self.list_widget.selectedItems():
+            self.list_widget.takeItem(self.list_widget.row(item))
+
+    def set_addresses(self, addresses: List[ReportAddress]) -> None:
+        """Заполняет список существующими записями адресации."""
+        self.list_widget.clear()
+        ordered = sorted(addresses, key=lambda a: (a.report_date, a.leader_id))
+        for address in ordered:
+            self._add_item(address.leader_id, address.report_date, address)
+
+    def get_addresses(self) -> List[ReportAddress]:
+        """Возвращает записи адресации; существующие сохраняют идентичность."""
+        result = []
+        for row in range(self.list_widget.count()):
+            leader_id, report_date, address = self.list_widget.item(row).data(
+                Qt.UserRole
+            )
+            if address is None:
+                address = ReportAddress(leader_id=leader_id, report_date=report_date)
+            result.append(address)
+        return result
 
 
 class MaterialEditDialog(QDialog):
@@ -78,8 +226,8 @@ class MaterialEditDialog(QDialog):
         self.form = QFormLayout(form_widget)
 
         self.type_combo = QComboBox()
-        for key, label in MATERIAL_TYPE_LABELS.items():
-            self.type_combo.addItem(f"{label} ({key})", key)
+        for value, text in pack_enum_choices("material_type"):
+            self.type_combo.addItem(text, value)
         self.form.addRow(field_form_label(ScientificMaterial, "type"), self.type_combo)
 
         self.outgoing_number = QLineEdit()
@@ -129,11 +277,10 @@ class MaterialEditDialog(QDialog):
         self.cost = QLineEdit()
         self.form.addRow(field_form_label(ScientificMaterial, "cost"), self.cost)
 
-        self.country_combo = QComboBox()
-        self.country_combo.addItem("—", None)
-        for country in self.session.query(Country).order_by(Country.name).all():
-            self.country_combo.addItem(country.name, country.id)
-        self.form.addRow(field_form_label(ScientificMaterial, "country_id"), self.country_combo)
+        self.countries_widget = CountrySelectWidget(self.session)
+        self.form.addRow(
+            field_form_label(ScientificMaterial, "countries"), self.countries_widget
+        )
 
         self.consumer_combo = QComboBox()
         self.consumer_combo.addItem("—", None)
@@ -141,11 +288,10 @@ class MaterialEditDialog(QDialog):
             self.consumer_combo.addItem(consumer.name, consumer.id)
         self.form.addRow(field_form_label(ScientificMaterial, "consumer_id"), self.consumer_combo)
 
-        self.task_combo = QComboBox()
-        self.task_combo.addItem("—", None)
-        for task in self.session.query(ScientificTask).order_by(ScientificTask.id).all():
-            self.task_combo.addItem(f"{task.id} — {task.name}", task.id)
-        self.form.addRow(field_form_label(ScientificMaterial, "task_id"), self.task_combo)
+        self.tasks_widget = TaskSelectWidget(self.session)
+        self.form.addRow(
+            field_form_label(ScientificMaterial, "tasks"), self.tasks_widget
+        )
 
         self.employees_widget = ParticipatingEmployeesWidget(self.session, self.branch_id)
         self.form.addRow(self.employees_widget)
@@ -171,7 +317,7 @@ class MaterialEditDialog(QDialog):
 
     def _load_data(self) -> None:
         m = self.material
-        index = self.type_combo.findData(m.type)
+        index = self.type_combo.findData(int(m.type) if m.type is not None else None)
         if index >= 0:
             self.type_combo.setCurrentIndex(index)
         self.outgoing_number.setText(m.outgoing_number or "")
@@ -186,18 +332,12 @@ class MaterialEditDialog(QDialog):
         self.permit_number.setText(m.permit_number or "")
         self.cost.setText(str(m.cost) if m.cost else "")
 
-        if m.country_id:
-            idx = self.country_combo.findData(m.country_id)
-            if idx >= 0:
-                self.country_combo.setCurrentIndex(idx)
+        self.countries_widget.set_countries(list(m.countries))
         if m.consumer_id:
             idx = self.consumer_combo.findData(m.consumer_id)
             if idx >= 0:
                 self.consumer_combo.setCurrentIndex(idx)
-        if m.task_id:
-            idx = self.task_combo.findData(m.task_id)
-            if idx >= 0:
-                self.task_combo.setCurrentIndex(idx)
+        self.tasks_widget.set_tasks(list(m.tasks))
 
         self.comment.setPlainText(m.comment or "")
         self.employees_widget.set_employees(list(m.employees))
@@ -239,9 +379,9 @@ class MaterialEditDialog(QDialog):
             "release_year": int(self.release_year.text()) if self.release_year.text().strip().isdigit() else None,
             "permit_number": self.permit_number.text().strip() or None,
             "cost": float(self.cost.text()) if self.cost.text().strip() else None,
-            "country_id": self.country_combo.currentData(),
+            "countries": self.countries_widget.get_countries(),
             "consumer_id": self.consumer_combo.currentData(),
-            "task_id": self.task_combo.currentData(),
+            "tasks": self.tasks_widget.get_tasks(),
             "employees": self.employees_widget.get_employees(),
             "comment": self.comment.toPlainText().strip() or None,
             "branch_id": self.branch_id,
@@ -283,8 +423,8 @@ class TelegramEditDialog(QDialog):
         self.form = QFormLayout(form_widget)
 
         self.type_combo = QComboBox()
-        for key, label in TELEGRAM_TYPE_LABELS.items():
-            self.type_combo.addItem(f"{label} ({key})", key)
+        for value, text in pack_enum_choices("telegram_type"):
+            self.type_combo.addItem(text, value)
         self.form.addRow(field_form_label(Telegram, "type"), self.type_combo)
 
         self.outgoing_number = QLineEdit()
@@ -310,21 +450,21 @@ class TelegramEditDialog(QDialog):
 
         self.report_type_combo = QComboBox()
         self.report_type_combo.addItem("—", None)
-        for key, label in REPORT_TYPE_LABELS.items():
-            self.report_type_combo.addItem(f"{label} ({key})", key)
+        for value, text in pack_enum_choices("telegram_report_type"):
+            self.report_type_combo.addItem(text, value)
         self.form.addRow(field_form_label(Telegram, "report_type"), self.report_type_combo)
 
-        self.country_combo = QComboBox()
-        self.country_combo.addItem("—", None)
-        for country in self.session.query(Country).order_by(Country.name).all():
-            self.country_combo.addItem(country.name, country.id)
-        self.form.addRow(field_form_label(Telegram, "country_id"), self.country_combo)
+        self.countries_widget = CountrySelectWidget(self.session)
+        self.form.addRow(field_form_label(Telegram, "countries"), self.countries_widget)
 
-        self.task_combo = QComboBox()
-        self.task_combo.addItem("—", None)
-        for task in self.session.query(ScientificTask).order_by(ScientificTask.id).all():
-            self.task_combo.addItem(f"{task.id} — {task.name}", task.id)
-        self.form.addRow(field_form_label(Telegram, "task_id"), self.task_combo)
+        self.tasks_widget = TaskSelectWidget(self.session)
+        self.form.addRow(field_form_label(Telegram, "tasks"), self.tasks_widget)
+
+        self.report_addresses_widget = ReportAddressesWidget(self.session)
+        self.form.addRow(
+            field_form_label(Telegram, "report_addresses"),
+            self.report_addresses_widget,
+        )
 
         self.employees_widget = ParticipatingEmployeesWidget(self.session, self.branch_id)
         self.form.addRow(self.employees_widget)
@@ -348,7 +488,7 @@ class TelegramEditDialog(QDialog):
 
     def _load_data(self) -> None:
         t = self.telegram
-        index = self.type_combo.findData(t.type)
+        index = self.type_combo.findData(int(t.type) if t.type is not None else None)
         if index >= 0:
             self.type_combo.setCurrentIndex(index)
         self.outgoing_number.setText(t.outgoing_number or "")
@@ -358,18 +498,13 @@ class TelegramEditDialog(QDialog):
         self.incoming_number.setText(t.incoming_number or "")
         if t.incoming_date:
             self.incoming_date.setDate(t.incoming_date)
-        if t.report_type:
-            idx = self.report_type_combo.findData(t.report_type)
+        if t.report_type is not None:
+            idx = self.report_type_combo.findData(int(t.report_type))
             if idx >= 0:
                 self.report_type_combo.setCurrentIndex(idx)
-        if t.country_id:
-            idx = self.country_combo.findData(t.country_id)
-            if idx >= 0:
-                self.country_combo.setCurrentIndex(idx)
-        if t.task_id:
-            idx = self.task_combo.findData(t.task_id)
-            if idx >= 0:
-                self.task_combo.setCurrentIndex(idx)
+        self.countries_widget.set_countries(list(t.countries))
+        self.tasks_widget.set_tasks(list(t.tasks))
+        self.report_addresses_widget.set_addresses(list(t.report_addresses))
         self.comment.setPlainText(t.comment or "")
         self.employees_widget.set_employees(list(t.employees))
         self.files_widget.set_files(list(t.files))
@@ -406,8 +541,9 @@ class TelegramEditDialog(QDialog):
             "incoming_number": self.incoming_number.text().strip() or None,
             "incoming_date": self.incoming_date.date().toPyDate() if self.incoming_date.date().year() > 1900 else None,
             "report_type": self.report_type_combo.currentData(),
-            "country_id": self.country_combo.currentData(),
-            "task_id": self.task_combo.currentData(),
+            "countries": self.countries_widget.get_countries(),
+            "tasks": self.tasks_widget.get_tasks(),
+            "report_addresses": self.report_addresses_widget.get_addresses(),
             "employees": self.employees_widget.get_employees(),
             "comment": self.comment.toPlainText().strip() or None,
             "branch_id": self.branch_id,

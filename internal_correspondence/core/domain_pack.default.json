@@ -1,0 +1,741 @@
+{
+  "id": "scientific-network",
+  "version": "1.0.0",
+  "enums": {
+    "material_type": {
+      "label": "Тип научного материала",
+      "values": [
+        {
+          "key": "message",
+          "code": "С",
+          "label": "Сообщение"
+        },
+        {
+          "key": "document",
+          "code": "ДОК",
+          "label": "Документ"
+        },
+        {
+          "key": "reference",
+          "code": "СПР",
+          "label": "Справка"
+        },
+        {
+          "key": "product_sample",
+          "code": "ОП",
+          "label": "Образец продукции"
+        },
+        {
+          "key": "technical_document",
+          "code": "ТДОК",
+          "label": "Технический документ"
+        },
+        {
+          "key": "report",
+          "code": "Д",
+          "label": "Доклад"
+        }
+      ]
+    },
+    "evaluation_value": {
+      "label": "Значение оценки научного материала",
+      "values": [
+        {
+          "key": "useless",
+          "code": "Б",
+          "label": "Бесполезно",
+          "weight": 0
+        },
+        {
+          "key": "interesting",
+          "code": "И",
+          "label": "Интересно",
+          "weight": 1
+        },
+        {
+          "key": "useful",
+          "code": "П",
+          "label": "Полезно",
+          "weight": 2
+        },
+        {
+          "key": "important",
+          "code": "В",
+          "label": "Важно",
+          "weight": 3
+        }
+      ]
+    },
+    "scientific_task_type": {
+      "label": "Тип научной задачи",
+      "values": [
+        {
+          "key": "main",
+          "code": "ОЗ",
+          "label": "Основная задача"
+        },
+        {
+          "key": "additional",
+          "code": "ДЗ",
+          "label": "Дополнительная задача"
+        }
+      ]
+    },
+    "telegram_type": {
+      "label": "Тип телеграммы",
+      "values": [
+        {
+          "key": "thematic",
+          "code": "Т",
+          "label": "Тематическая"
+        },
+        {
+          "key": "progress_report",
+          "code": "ОХР",
+          "label": "О ходе работ"
+        },
+        {
+          "key": "results_report",
+          "code": "ОДР",
+          "label": "О достигнутых результатах"
+        }
+      ]
+    },
+    "telegram_report_type": {
+      "label": "Тип доклада телеграммы",
+      "values": [
+        {
+          "key": "reported",
+          "code": "ДР",
+          "label": "Доложено руководителю"
+        },
+        {
+          "key": "urgently_reported",
+          "code": "СДР",
+          "label": "Срочно доложено руководителю"
+        }
+      ]
+    },
+    "source_type": {
+      "label": "Тип источника",
+      "values": [
+        {
+          "key": "experimental_equipment",
+          "code": "ЭО",
+          "label": "Экспериментальное оборудование"
+        },
+        {
+          "key": "scientific_work",
+          "code": "НТ",
+          "label": "Научный труд"
+        }
+      ]
+    }
+  },
+  "entities": {
+    "Change": {
+      "label": "Изменение",
+      "label_plural": "Изменения",
+      "fields": {
+        "id": {
+          "label": "Идентификатор"
+        },
+        "entity_name": {
+          "label": "Сущность"
+        },
+        "entity_pk": {
+          "label": "Ключ сущности"
+        },
+        "changed_at": {
+          "label": "Дата и время изменения"
+        },
+        "changed_fields": {
+          "label": "Изменённые переменные"
+        },
+        "operation_type": {
+          "label": "Тип операции"
+        },
+        "exported_at": {
+          "label": "Дата экспорта"
+        }
+      }
+    },
+    "TaskEntityLink": {
+      "label": "Связь задачи с сущностью",
+      "label_plural": "Связи задач с сущностями",
+      "fields": {
+        "id": {
+          "label": "Идентификатор"
+        },
+        "task_id": {
+          "label": "Научная задача"
+        },
+        "entity_name": {
+          "label": "Сущность"
+        },
+        "entity_pk": {
+          "label": "Ключ сущности"
+        }
+      }
+    },
+    "TerritorialUnit": {
+      "label": "Территориальная единица",
+      "label_plural": "Территориальные единицы",
+      "fields": {
+        "id": {
+          "label": "Сокращенное наименование"
+        },
+        "name": {
+          "label": "Наименование"
+        }
+      }
+    },
+    "Branch": {
+      "label": "Филиал",
+      "label_plural": "Филиалы",
+      "fields": {
+        "id": {
+          "label": "Индекс"
+        },
+        "name": {
+          "label": "Наименование"
+        },
+        "short_name": {
+          "label": "Сокращенное наименование",
+          "short": "Сокращение"
+        },
+        "territorial_unit_id": {
+          "label": "Территориальная единица"
+        },
+        "territorial_unit": {
+          "label": "Территориальная единица"
+        }
+      }
+    },
+    "Country": {
+      "label": "Страна",
+      "label_plural": "Страны",
+      "fields": {
+        "id": {
+          "label": "Сокращенное наименование"
+        },
+        "name": {
+          "label": "Наименование"
+        }
+      }
+    },
+    "AcademicTitle": {
+      "label": "Научное звание",
+      "label_plural": "Научные звания",
+      "fields": {
+        "id": {
+          "label": "Сокращенное наименование"
+        },
+        "name": {
+          "label": "Наименование"
+        },
+        "genitive": {
+          "label": "Род. падеж"
+        },
+        "dative": {
+          "label": "Дат. падеж"
+        },
+        "sort_order": {
+          "label": "Порядок"
+        }
+      }
+    },
+    "Consumer": {
+      "label": "Потребитель",
+      "label_plural": "Потребители",
+      "fields": {
+        "id": {
+          "label": "Индекс"
+        },
+        "short_name": {
+          "label": "Сокращенное наименование",
+          "short": "Сокращение"
+        },
+        "name": {
+          "label": "Наименование"
+        }
+      }
+    },
+    "Source": {
+      "label": "Источник",
+      "label_plural": "Источники",
+      "fields": {
+        "id": {
+          "label": "Индекс"
+        },
+        "type": {
+          "label": "Тип"
+        },
+        "comment": {
+          "label": "Комментарий"
+        }
+      }
+    },
+    "Leader": {
+      "label": "Руководитель",
+      "label_plural": "Руководители",
+      "fields": {
+        "id": {
+          "label": "Сокращенное наименование"
+        },
+        "active": {
+          "label": "Действительный"
+        }
+      }
+    },
+    "Department": {
+      "label": "Отдел",
+      "label_plural": "Отделы",
+      "fields": {
+        "name": {
+          "label": "Наименование"
+        },
+        "short_name": {
+          "label": "Сокращенное наименование",
+          "short": "Сокращение"
+        },
+        "active": {
+          "label": "Действительный"
+        },
+        "branch_id": {
+          "label": "Филиал"
+        },
+        "id": {
+          "label": "Идентификатор"
+        }
+      }
+    },
+    "WorkingGroup": {
+      "label": "Рабочая группа",
+      "label_plural": "Рабочие группы",
+      "fields": {
+        "name": {
+          "label": "Наименование"
+        },
+        "comment": {
+          "label": "Комментарий"
+        },
+        "active": {
+          "label": "Действительная"
+        },
+        "department_id": {
+          "label": "Отдел"
+        },
+        "id": {
+          "label": "Идентификатор"
+        }
+      }
+    },
+    "Employee": {
+      "label": "Сотрудник",
+      "label_plural": "Сотрудники",
+      "fields": {
+        "last_name": {
+          "label": "Фамилия"
+        },
+        "first_name": {
+          "label": "Имя"
+        },
+        "middle_name": {
+          "label": "Отчество"
+        },
+        "position": {
+          "label": "Должность"
+        },
+        "active": {
+          "label": "Действительный"
+        },
+        "academic_title_id": {
+          "label": "Научное звание"
+        },
+        "department_id": {
+          "label": "Отдел"
+        },
+        "working_group_id": {
+          "label": "Рабочая группа"
+        },
+        "workgroup_start_date": {
+          "label": "Начало работы в рабочей группе",
+          "short": "Начало в группе"
+        },
+        "workgroup_end_date": {
+          "label": "Конец работы в рабочей группе",
+          "short": "Конец в группе"
+        },
+        "id": {
+          "label": "Идентификатор"
+        }
+      }
+    },
+    "ScientificTask": {
+      "label": "Научная задача",
+      "label_plural": "Научные задачи",
+      "fields": {
+        "id": {
+          "label": "Код"
+        },
+        "name": {
+          "label": "Наименование"
+        },
+        "type": {
+          "label": "Тип"
+        },
+        "start_date": {
+          "label": "Начало действия",
+          "short": "Начало"
+        },
+        "end_date": {
+          "label": "Конец действия",
+          "short": "Окончание"
+        },
+        "comment": {
+          "label": "Комментарий"
+        },
+        "partial_threshold": {
+          "label": "Частичное решение"
+        },
+        "full_threshold": {
+          "label": "Полное решение"
+        }
+      }
+    },
+    "FileRecord": {
+      "label": "Файл",
+      "label_plural": "Файлы",
+      "fields": {
+        "name": {
+          "label": "Имя"
+        },
+        "extension": {
+          "label": "Расширение"
+        },
+        "path": {
+          "label": "Путь"
+        },
+        "id": {
+          "label": "Идентификатор"
+        }
+      }
+    },
+    "ScientificMaterial": {
+      "label": "Научный материал",
+      "label_plural": "Научные материалы",
+      "label_prepositional": "научном материале",
+      "label_prepositional_plural": "научных материалах",
+      "fields": {
+        "type": {
+          "label": "Тип"
+        },
+        "outgoing_number": {
+          "label": "Исходящий номер",
+          "short": "Исх. номер",
+          "required": true
+        },
+        "outgoing_date": {
+          "label": "Дата исходящего номера",
+          "short": "Дата исх.",
+          "required": true
+        },
+        "name": {
+          "label": "Наименование"
+        },
+        "incoming_number": {
+          "label": "Входящий номер",
+          "short": "Вх. номер"
+        },
+        "incoming_date": {
+          "label": "Дата входящего номера",
+          "short": "Дата вх."
+        },
+        "serial_number": {
+          "label": "Серийный номер"
+        },
+        "release_year": {
+          "label": "Год выпуска"
+        },
+        "permit_number": {
+          "label": "Номер разрешительного документа"
+        },
+        "cost": {
+          "label": "Стоимость"
+        },
+        "comment": {
+          "label": "Комментарий"
+        },
+        "countries": {
+          "label": "Страны"
+        },
+        "consumer_id": {
+          "label": "Потребитель"
+        },
+        "branch_id": {
+          "label": "Филиал"
+        },
+        "tasks": {
+          "label": "Задачи"
+        },
+        "consumer": {
+          "label": "Потребитель"
+        },
+        "branch": {
+          "label": "Филиал"
+        },
+        "id": {
+          "label": "Идентификатор"
+        },
+        "participating_employees": {
+          "label": "Сотрудники"
+        },
+        "participating_departments": {
+          "label": "Отделы"
+        },
+        "participating_workgroups": {
+          "label": "Рабочие группы"
+        },
+        "evaluation_display": {
+          "label": "Оценка"
+        }
+      }
+    },
+    "Telegram": {
+      "label": "Телеграмма",
+      "label_plural": "Телеграммы",
+      "label_prepositional": "телеграмме",
+      "label_prepositional_plural": "телеграммах",
+      "fields": {
+        "type": {
+          "label": "Тип"
+        },
+        "outgoing_number": {
+          "label": "Исходящий номер",
+          "short": "Исх. номер",
+          "required": true
+        },
+        "outgoing_date": {
+          "label": "Дата исходящего номера",
+          "short": "Дата исх.",
+          "required": true
+        },
+        "name": {
+          "label": "Наименование (тема)",
+          "short": "Наименование"
+        },
+        "incoming_number": {
+          "label": "Входящий номер",
+          "short": "Вх. номер"
+        },
+        "incoming_date": {
+          "label": "Дата входящего номера",
+          "short": "Дата вх."
+        },
+        "report_type": {
+          "label": "Тип доклада"
+        },
+        "comment": {
+          "label": "Комментарий"
+        },
+        "countries": {
+          "label": "Страны"
+        },
+        "branch_id": {
+          "label": "Филиал"
+        },
+        "tasks": {
+          "label": "Задачи"
+        },
+        "report_addresses": {
+          "label": "Адресация доклада"
+        },
+        "branch": {
+          "label": "Филиал"
+        },
+        "id": {
+          "label": "Идентификатор"
+        },
+        "participating_employees": {
+          "label": "Сотрудники"
+        },
+        "participating_departments": {
+          "label": "Отделы"
+        },
+        "participating_workgroups": {
+          "label": "Рабочие группы"
+        },
+        "evaluation_display": {
+          "label": "Оценка"
+        }
+      }
+    },
+    "ReportAddress": {
+      "label": "Адресация доклада",
+      "label_plural": "Адресации доклада",
+      "fields": {
+        "report_date": {
+          "label": "Дата доклада"
+        },
+        "telegram_id": {
+          "label": "Телеграмма"
+        },
+        "leader_id": {
+          "label": "Руководитель"
+        },
+        "id": {
+          "label": "Идентификатор"
+        }
+      }
+    },
+    "EvaluationList": {
+      "label": "Список оценок",
+      "label_plural": "Списки оценок",
+      "fields": {
+        "number": {
+          "label": "Номер"
+        },
+        "date": {
+          "label": "Дата"
+        },
+        "id": {
+          "label": "Идентификатор"
+        }
+      }
+    },
+    "Evaluation": {
+      "label": "Оценка",
+      "label_plural": "Оценки",
+      "fields": {
+        "value": {
+          "label": "Значение оценки"
+        },
+        "evaluation_list_id": {
+          "label": "Список оценок"
+        },
+        "id": {
+          "label": "Идентификатор"
+        }
+      }
+    }
+  },
+  "directories": {
+    "files": "Файлы",
+    "templates": "Шаблоны",
+    "export": "Экспорт",
+    "material_files": "Научные материалы",
+    "telegram_files": "Телеграммы"
+  },
+  "strings": {
+    "app_title": "Внутренняя корреспонденция",
+    "menu_file": "Файл",
+    "menu_settings": "Настройки...",
+    "menu_exit": "Выход",
+    "menu_data": "Данные",
+    "role_head_office": "Головной офис",
+    "role_branch": "Филиал",
+    "button_ok": "Ок",
+    "button_cancel": "Отмена",
+    "button_save": "Сохранить",
+    "button_add": "Добавить",
+    "button_edit": "Изменить",
+    "button_delete": "Удалить",
+    "dialog_settings_title": "Настройки",
+    "settings_changes_retention": "Срок хранения журнала изменений (дней):",
+    "settings_retention_forever": "бессрочно",
+    "wizard_first_run_title": "Первый запуск",
+    "wizard_db_title": "Подключение к базе данных",
+    "wizard_db_subtitle": "Выберите тип базы данных и укажите параметры подключения.",
+    "wizard_storage_title": "Файловое хранилище",
+    "wizard_storage_subtitle": "Выберите корневую директорию для хранения файлов, шаблонов и экспорта.",
+    "wizard_role_title": "Роль приложения",
+    "wizard_role_subtitle": "Выберите, как будет использоваться приложение.",
+    "msg_db_error": "Не удалось инициализировать базу данных:\n{error}",
+    "msg_settings_saved": "Настройки сохранены. Изменения в подключении к БД вступят в силу после перезапуска.",
+    "tab_statistics": "Статистика",
+    "menu_view": "Вид",
+    "menu_theme": "Оформление",
+    "action_export": "Экспорт...",
+    "action_import": "Импорт...",
+    "action_import_primary": "Загрузка первичных данных...",
+    "action_import_actual": "Загрузка актуальных данных...",
+    "action_oshm": "ОШС",
+    "action_domain_pack": "Пакет предметной области...",
+    "title_error": "Ошибка",
+    "title_export": "Экспорт",
+    "title_import": "Импорт",
+    "title_oshm": "ОШС",
+    "title_confirm": "Подтверждение",
+    "title_attention": "Внимание",
+    "title_domain_pack": "Пакет предметной области",
+    "msg_export_done": "Экспорт завершён:\n{output}",
+    "msg_export_error": "Не удалось выполнить экспорт:\n{error}",
+    "msg_import_error": "Не удалось выполнить импорт:\n{error}",
+    "msg_import_result": "Импортировано: {imported}\nУдалено: {deleted}\nПропущено: {skipped}\nКонфликтов: {conflicts}",
+    "msg_import_warnings": "Предупреждения:",
+    "msg_import_done": "Импорт завершён:\n{results}",
+    "dialog_select_export_file": "Выберите экспортный файл",
+    "dialog_primary_data_file": "Файл первичных данных",
+    "dialog_actual_data_file": "Файл актуальных данных",
+    "dialog_domain_pack_save": "Выгрузить пакет предметной области",
+    "msg_pack_save_error": "Не удалось сохранить файл:\n{error}",
+    "msg_pack_saved_use": "Пакет сохранён:\n{path}\n\nИспользовать этот файл как активный пакет?\n(изменение вступит в силу после перезапуска приложения)",
+    "msg_pack_load_error": "Не удалось загрузить пакет '{path}':\n{error}\n\nБудет использован встроенный пакет по умолчанию.",
+    "msg_unknown_codes_in_db": "В базе данных есть значения, отсутствующие в активном пакете:\n\n",
+    "msg_no_branch_selected": "Не выбран филиал в настройках.",
+    "dialog_select_branch": "Выбор филиала",
+    "label_branch": "Филиал:",
+    "oshm_window_title": "ОШС филиала {branch_id}",
+    "oshm_col_element": "Элемент",
+    "oshm_col_status": "Статус",
+    "status_active_m": "Действующий",
+    "status_active_f": "Действующая",
+    "status_inactive_dept": "Сокращён",
+    "status_inactive_wg": "Упразднена",
+    "status_inactive_emp": "Неактивный",
+    "action_add_entity": "Добавить {entity}",
+    "action_toggle_hide": "Скрыть/показать",
+    "msg_delete_element_confirm": "Удалить выбранный элемент?",
+    "oshm_new_m": "Новый {title}",
+    "oshm_new_f": "Новая {title}",
+    "button_clear_dates": "Очистить даты",
+    "date_not_set": "не задано",
+    "label_object": "Объект:",
+    "label_criterion": "Критерий:",
+    "label_period": "Период:",
+    "label_year": "Год:",
+    "check_financial_year": "Финансовый год (окт–сен)",
+    "button_calculate": "Рассчитать",
+    "tooltip_split_ratio": "Соотношение размеров таблицы и графика",
+    "half_year_1": "I полугодие",
+    "half_year_2": "II полугодие",
+    "quarter_label": "{roman} квартал",
+    "msg_calc_error": "Не удалось выполнить расчёт:\n{error}",
+    "stats_period_prefix": "Период: {label}",
+    "header_total": "Итого",
+    "row_grand_total": "ИТОГО",
+    "chart_by_months": "{title}: по месяцам",
+    "chart_no_data": "Нет данных для отображения",
+    "axis_count": "Количество",
+    "button_refresh": "Обновить",
+    "button_filter": "Фильтр",
+    "button_filter_count": "Фильтр ({count})",
+    "tooltip_filter_setup": "Настроить фильтрацию записей",
+    "tooltip_filter_applied": "Применено фильтров: {count}",
+    "label_page": "страница",
+    "page_of": "из {total}",
+    "tooltip_page_number": "Номер страницы (Enter — перейти)",
+    "msg_create_error": "Не удалось создать запись:\n{error}",
+    "msg_update_error": "Не удалось обновить запись:\n{error}",
+    "msg_delete_error": "Не удалось удалить записи:\n{error}",
+    "msg_delete_records_one": "Вы действительно хотите удалить запись о {entity}?",
+    "msg_delete_records_many": "Вы действительно хотите удалить {records} о {entity}?",
+    "tooltip_add_files": "Добавить файлы",
+    "tooltip_remove_files": "Открепить выбранные файлы",
+    "tooltip_file_missing": "Файл отсутствует в хранилище: {path}",
+    "file_new_suffix": "(новый)",
+    "dialog_select_files": "Выберите файлы",
+    "msg_detach_confirm": "Открепить выбранные файлы ({count})?"
+  }
+}

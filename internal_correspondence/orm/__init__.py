@@ -1,6 +1,6 @@
 """Публичный интерфейс ORM-моделей."""
 
-from internal_correspondence.orm.base import Base, TimestampMixin, VersionedMixin
+from internal_correspondence.orm.base import Base
 from internal_correspondence.orm.models import (
     AcademicTitle,
     Branch,
@@ -17,6 +17,7 @@ from internal_correspondence.orm.models import (
     ScientificMaterial,
     ScientificTask,
     Source,
+    TaskEntityLink,
     Telegram,
     TerritorialUnit,
     WorkingGroup,
@@ -24,8 +25,6 @@ from internal_correspondence.orm.models import (
 
 __all__ = [
     "Base",
-    "TimestampMixin",
-    "VersionedMixin",
     "AcademicTitle",
     "Branch",
     "Change",
@@ -41,6 +40,7 @@ __all__ = [
     "ScientificMaterial",
     "ScientificTask",
     "Source",
+    "TaskEntityLink",
     "Telegram",
     "TerritorialUnit",
     "WorkingGroup",

@@ -4,12 +4,19 @@
 наименование сущности — атрибуты ``__entity_label__`` и
 ``__entity_label_plural__`` класса; метки полей — словарь ``info`` колонок
 и связей, либо словарь ``__field_labels__`` для вычисляемых свойств.
+
+Активный пакет предметной области (``core/domain_pack.py``) может
+переопределять любые встроенные метки — это основа white-label
+настройки приложения под другую предметную область.
 """
 
 import logging
 from typing import Any, Dict
 
 from sqlalchemy import inspect as sa_inspect
+
+from internal_correspondence.core.domain_pack import get_domain_pack
+from internal_correspondence.utils.string_resources import STRINGS
 
 logger = logging.getLogger("internal_correspondence.orm.labels")
 
@@ -21,6 +28,9 @@ def entity_label(model_class: type, plural: bool = False) -> str:
         model_class: Класс ORM-модели.
         plural: Вернуть наименование множественного числа.
     """
+    pack_label = get_domain_pack().entity_label(model_class.__name__, plural=plural)
+    if pack_label:
+        return pack_label
     label = None
     if plural:
         label = getattr(model_class, "__entity_label_plural__", None)
@@ -34,20 +44,26 @@ def entity_label(model_class: type, plural: bool = False) -> str:
 def field_info(model_class: type, field_name: str) -> Dict[str, Any]:
     """Возвращает метаданные отображения поля (info) или пустой словарь.
 
-    Порядок поиска: колонка таблицы, связь ORM, словарь __field_labels__.
+    Порядок поиска: колонка таблицы, связь ORM, словарь __field_labels__;
+    поверх результата накладываются переопределения активного пакета
+    предметной области.
     """
+    info: Dict[str, Any] = {}
     mapper = sa_inspect(model_class)
     column = mapper.columns.get(field_name)
     if column is not None and column.info:
-        return dict(column.info)
-    if field_name in mapper.relationships:
+        info = dict(column.info)
+    elif field_name in mapper.relationships:
         relationship = mapper.relationships[field_name]
         if relationship.info:
-            return dict(relationship.info)
-    field_labels = getattr(model_class, "__field_labels__", {})
-    if field_name in field_labels:
-        return {"label": field_labels[field_name]}
-    return {}
+            info = dict(relationship.info)
+    else:
+        field_labels = getattr(model_class, "__field_labels__", {})
+        if field_name in field_labels:
+            info = {"label": field_labels[field_name]}
+    # Переопределения пакета предметной области имеют приоритет
+    info.update(get_domain_pack().entity_field_info(model_class.__name__, field_name))
+    return info
 
 
 def field_label(model_class: type, field_name: str) -> str:
@@ -80,15 +96,17 @@ def field_short_label(model_class: type, field_name: str) -> str:
 def field_required(model_class: type, field_name: str) -> bool:
     """Проверяет обязательность заполнения поля.
 
-    Явный флаг ``required`` в info имеет приоритет; иначе обязательность
-    определяется ограничением NOT NULL колонки.
+    Явный флаг ``required`` (в info колонки или в пакете предметной
+    области) имеет приоритет; иначе обязательность определяется
+    ограничением NOT NULL колонки.
     """
     mapper = sa_inspect(model_class)
     column = mapper.columns.get(field_name)
     if column is None:
         return False
-    if "required" in column.info:
-        return bool(column.info["required"])
+    info = field_info(model_class, field_name)
+    if "required" in info:
+        return bool(info["required"])
     return not column.nullable
 
 
@@ -107,6 +125,11 @@ def entity_label_prepositional(model_class: type, plural: bool = False) -> str:
     При отсутствии формы в метаданных возвращает наименование в И.п.
     в нижнем регистре.
     """
+    pack_label = get_domain_pack().entity_label_prepositional(
+        model_class.__name__, plural=plural
+    )
+    if pack_label:
+        return pack_label
     attr = (
         "__entity_label_prepositional_plural__"
         if plural
@@ -145,12 +168,10 @@ def deletion_confirmation_text(model_class: type, count: int) -> str:
     множественного числа.
     """
     if count == 1:
-        return (
-            "Вы действительно хотите удалить запись "
-            f"о {entity_label_prepositional(model_class)}?"
+        return STRINGS.msg_delete_records_one.format(
+            entity=entity_label_prepositional(model_class)
         )
-    return (
-        "Вы действительно хотите удалить "
-        f"{plural_records(count)} "
-        f"о {entity_label_prepositional(model_class, plural=True)}?"
+    return STRINGS.msg_delete_records_many.format(
+        records=plural_records(count),
+        entity=entity_label_prepositional(model_class, plural=True),
     )

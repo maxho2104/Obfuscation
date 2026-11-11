@@ -9,10 +9,15 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
-from internal_correspondence.core.constants import DELETION_MARKER, EXPORT_DIR
+from internal_correspondence.core.constants import (
+    DEFAULT_CHANGES_RETENTION_DAYS,
+    ChangeOperation,
+)
+from internal_correspondence.core.domain_pack import dir_name, get_domain_pack
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.models import Change, FileRecord
 from internal_correspondence.orm.utils import parse_primary_key, resolve_entity_class
+from internal_correspondence.services.change_tracking import purge_expired_changes
 
 logger = get_logger("export_service")
 
@@ -20,15 +25,23 @@ logger = get_logger("export_service")
 class ExportService:
     """Формирует экспортный ZIP-архив с изменёнными сущностями и файлами."""
 
-    def __init__(self, session: Session, storage_root: Path) -> None:
+    def __init__(
+        self,
+        session: Session,
+        storage_root: Path,
+        retention_days: int = DEFAULT_CHANGES_RETENTION_DAYS,
+    ) -> None:
         self.session = session
         self.storage_root = storage_root
-        self.export_dir = storage_root / EXPORT_DIR
+        self.retention_days = retention_days
+        self.export_dir = storage_root / dir_name("export")
         self.export_dir.mkdir(parents=True, exist_ok=True)
 
     def export(self, output_path: Optional[Path] = None) -> Path:
         """Формирует экспортный архив и возвращает путь к нему."""
-        changes = self.session.query(Change).all()
+        changes = (
+            self.session.query(Change).filter(Change.exported_at.is_(None)).all()
+        )
         if not changes:
             raise ExportError("Нет изменений для экспорта")
 
@@ -43,7 +56,8 @@ class ExportService:
             output_path = self.export_dir / filename
 
         self._pack_archive(output_path, export_data, file_records)
-        self._clear_changes(changes)
+        self._mark_exported(changes)
+        purge_expired_changes(self.session, self.retention_days)
         logger.info("Экспорт завершён: %s", output_path)
         return output_path
 
@@ -53,14 +67,13 @@ class ExportService:
         deleted_keys: Set[Tuple[str, str]] = set()
 
         for change in changes:
-            if DELETION_MARKER not in (change.changed_fields or []):
+            if change.operation_type != ChangeOperation.DELETE.value:
                 continue
             deleted_keys.add((change.entity_name, change.entity_pk))
             export_data.setdefault(change.entity_name, {})[change.entity_pk] = {"deleted": True}
 
         for change in changes:
-            changed_fields = change.changed_fields or []
-            if DELETION_MARKER in changed_fields:
+            if change.operation_type == ChangeOperation.DELETE.value:
                 continue
             if (change.entity_name, change.entity_pk) in deleted_keys:
                 continue
@@ -70,8 +83,8 @@ class ExportService:
                 logger.warning("Неизвестная сущность: %s", change.entity_name)
                 continue
 
-            fields = self._column_fields(entity_class, changed_fields)
-            relationships = self._relationship_fields(entity_class, changed_fields)
+            fields = self._column_fields(entity_class, change.changed_fields or [])
+            relationships = self._relationship_fields(entity_class, change.changed_fields or [])
             if not fields and not relationships:
                 logger.warning(
                     "Нет изменяемых полей для экспорта: %s pk=%s",
@@ -168,7 +181,15 @@ class ExportService:
         file_records: List[FileRecord],
     ) -> None:
         """Упаковывает JSON и файлы в ZIP-архив."""
+        pack = get_domain_pack()
+        meta = {
+            "app": "internal-correspondence",
+            "pack_id": pack.id,
+            "pack_version": pack.version,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+        }
         with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
             zf.writestr("export.json", json.dumps(export_data, ensure_ascii=False, indent=2))
             storage_root = self.storage_root.resolve()
             for file_record in file_records:
@@ -186,8 +207,13 @@ class ExportService:
                 else:
                     logger.warning("Файл не найден: %s", source_path)
 
-    def _clear_changes(self, changes: List[Change]) -> None:
-        """Сбрасывает change_id у экспортированных сущностей и удаляет записи Change."""
+    def _mark_exported(self, changes: List[Change]) -> None:
+        """Отмечает записи Change экспортированными и сбрасывает change_id.
+
+        Записи Change сохраняются (с датой экспорта) для дельта-учёта
+        последующих изменений и удаляются позже по сроку хранения.
+        """
+        exported_at = datetime.now(timezone.utc).replace(tzinfo=None)
         for change in changes:
             entity_class = resolve_entity_class(change.entity_name)
             if entity_class is not None:
@@ -199,7 +225,7 @@ class ExportService:
                     instance = self.session.get(entity_class, pk)
                     if instance is not None and getattr(instance, "change_id", None) == change.id:
                         instance.change_id = None  # type: ignore[attr-defined]
-            self.session.delete(change)
+            change.exported_at = exported_at
         self.session.flush()
 
 

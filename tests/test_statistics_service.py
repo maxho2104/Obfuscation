@@ -12,6 +12,13 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
 from internal_correspondence.core.database import DatabaseManager
+from internal_correspondence.core.constants import (
+    EvaluationValue,
+    MaterialType,
+    ScientificTaskType,
+    SourceType,
+    TelegramType,
+)
 from internal_correspondence.orm.models import (
     Branch,
     Consumer,
@@ -87,41 +94,40 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
     )
     session.add_all([employee1, employee2])
     session.add(Consumer(id="C1", short_name="П1", name="Потребитель 1"))
-    session.add(
-        ScientificTask(
-            id="T1",
-            name="Задача 1",
-            type="ОЗ",
-            start_date=date(2026, 1, 1),
-        )
+    task = ScientificTask(
+        id="T1",
+        name="Задача 1",
+        type=ScientificTaskType.MAIN,
+        start_date=date(2026, 1, 1),
     )
-    session.add(Source(id="S1", type="НТ", comment="Первый"))
-    session.add(Source(id="S2", type="ЭО", comment=None))
+    session.add(task)
+    session.add(Source(id="S1", type=SourceType.SCIENTIFIC_WORK, comment="Первый"))
+    session.add(Source(id="S2", type=SourceType.EXPERIMENTAL_EQUIPMENT, comment=None))
     session.flush()
 
     material1 = ScientificMaterial(
-        type="С",
+        type=MaterialType.MESSAGE,
         name="Материал 1",
         branch_id="F1",
         outgoing_date=date(2026, 2, 10),
         consumer_id="C1",
-        task_id="T1",
+        tasks=[task],
     )
     material2 = ScientificMaterial(
-        type="С",
+        type=MaterialType.MESSAGE,
         name="Материал 2",
         branch_id="F1",
         outgoing_date=date(2026, 5, 10),
-        task_id="T1",
+        tasks=[task],
     )
     material3 = ScientificMaterial(
-        type="С",
+        type=MaterialType.MESSAGE,
         name="Материал 3",
         branch_id="F1",
         outgoing_date=date(2026, 8, 10),
     )
     material0 = ScientificMaterial(
-        type="С",
+        type=MaterialType.MESSAGE,
         name="Материал 0",
         branch_id="F1",
         outgoing_date=date(2025, 11, 5),
@@ -129,7 +135,7 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
     session.add_all([material0, material1, material2, material3])
 
     telegram = Telegram(
-        type="Т",
+        type=TelegramType.THEMATIC,
         name="Телеграмма 1",
         branch_id="F1",
         outgoing_date=date(2026, 5, 10),
@@ -151,10 +157,10 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
     session.flush()
 
     evaluation_useful = Evaluation(
-        id=None, value="П", evaluation_list_id=evaluation_list1.id
+        id=None, value=EvaluationValue.USEFUL, evaluation_list_id=evaluation_list1.id
     )
     evaluation_important = Evaluation(
-        id=None, value="В", evaluation_list_id=evaluation_list2.id
+        id=None, value=EvaluationValue.IMPORTANT, evaluation_list_id=evaluation_list2.id
     )
     session.add_all([evaluation_useful, evaluation_important])
     session.flush()

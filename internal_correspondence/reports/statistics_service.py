@@ -7,11 +7,9 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 from sqlalchemy.orm import Session
 
-from internal_correspondence.core.constants import (
-    EVALUATION_VALUE_LABELS,
-    SOURCE_TYPE_LABELS,
-    EvaluationValue,
-)
+from internal_correspondence.core.constants import EvaluationValue
+from internal_correspondence.core.domain_pack import enum_label
+from internal_correspondence.core.enum_registry import pack_enum_display
 from internal_correspondence.orm.base import Base
 from internal_correspondence.orm.labels import entity_label
 
@@ -290,8 +288,11 @@ class StatisticsService:
             order.append(key)
 
         if query.criterion == CRITERION_EVALUATION:
-            for value in EvaluationValue:
-                register(value.value, EVALUATION_VALUE_LABELS.get(value.value, value.value))
+            # Регистрируем все значения перечисления, чтобы строки с нулевым
+            # количеством тоже попали в отчёт
+            for member in EvaluationValue:
+                code = pack_enum_display("evaluation_value", int(member))
+                register(int(member), enum_label("evaluation_value", code))
 
         for document in documents:
             document_date = self._document_date(document)
@@ -404,10 +405,7 @@ class StatisticsService:
             return [(consumer.id, consumer.short_name or consumer.name)]
 
         if criterion == CRITERION_TASK:
-            task = getattr(document, "task", None)
-            if task is None:
-                return []
-            return [(task.id, task.name)]
+            return [(task.id, task.name) for task in document.tasks]
 
         if criterion == CRITERION_SOURCE:
             return [
@@ -419,15 +417,16 @@ class StatisticsService:
             evaluation = document.latest_evaluation
             if evaluation is None:
                 return []
-            value = evaluation.value
-            return [(value, EVALUATION_VALUE_LABELS.get(value, value))]
+            code = pack_enum_display("evaluation_value", evaluation.value)
+            return [(int(evaluation.value), enum_label("evaluation_value", code))]
 
         return []
 
     @staticmethod
     def _source_label(source: Any) -> str:
         """Формирует подпись источника данных."""
-        label = SOURCE_TYPE_LABELS.get(source.type, source.type)
+        code = pack_enum_display("source_type", source.type)
+        label = enum_label("source_type", code)
         if source.comment:
             label = f"{label} ({source.comment})"
         return label

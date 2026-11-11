@@ -15,11 +15,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
-from internal_correspondence.core.constants import (
-    REPORT_TYPE_LABELS,
-    SOURCE_TYPE_LABELS,
-    TASK_TYPE_LABELS,
-)
+from internal_correspondence.core.enum_registry import pack_enum_choices
 from internal_correspondence.orm.labels import (
     entity_label,
     field_form_label,
@@ -201,8 +197,8 @@ class ScientificTaskDialog(BaseReferenceDialog):
         self.id_edit.setEnabled(self.item is None)
         self.name_edit = QLineEdit()
         self.type_combo = QComboBox()
-        for key, label in TASK_TYPE_LABELS.items():
-            self.type_combo.addItem(f"{label} ({key})", key)
+        for value, text in pack_enum_choices("scientific_task_type"):
+            self.type_combo.addItem(text, value)
         self.start_date = QDateEdit()
         self.start_date.setCalendarPopup(True)
         self.end_date = QDateEdit()
@@ -224,7 +220,7 @@ class ScientificTaskDialog(BaseReferenceDialog):
     def _load_data(self) -> None:
         self.id_edit.setText(self.item.id)
         self.name_edit.setText(self.item.name)
-        idx = self.type_combo.findData(self.item.type)
+        idx = self.type_combo.findData(int(self.item.type))
         if idx >= 0:
             self.type_combo.setCurrentIndex(idx)
         if self.item.start_date:
@@ -308,8 +304,8 @@ class SourceDialog(BaseReferenceDialog):
         self.id_edit = QLineEdit()
         self.id_edit.setEnabled(self.item is None)
         self.type_combo = QComboBox()
-        for key, label in SOURCE_TYPE_LABELS.items():
-            self.type_combo.addItem(f"{label} ({key})", key)
+        for value, text in pack_enum_choices("source_type"):
+            self.type_combo.addItem(text, value)
         self.comment_edit = QPlainTextEdit()
         self.comment_edit.setMaximumHeight(80)
         self.form.addRow(field_form_label(Source, "id"), self.id_edit)
@@ -318,7 +314,7 @@ class SourceDialog(BaseReferenceDialog):
 
     def _load_data(self) -> None:
         self.id_edit.setText(self.item.id)
-        idx = self.type_combo.findData(self.item.type)
+        idx = self.type_combo.findData(int(self.item.type))
         if idx >= 0:
             self.type_combo.setCurrentIndex(idx)
         self.comment_edit.setPlainText(self.item.comment or "")
@@ -331,8 +327,6 @@ class SourceDialog(BaseReferenceDialog):
         }
 
 
-# Перечисление REPORT_TYPE_LABELS используется диалогами документов;
-# импорт сохранён для совместимости публичного интерфейса модуля.
 __all__ = [
     "AcademicTitleDialog",
     "BranchDialog",

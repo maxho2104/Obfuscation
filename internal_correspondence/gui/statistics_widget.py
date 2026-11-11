@@ -11,7 +11,7 @@ from PyQt5.QtChart import (
     QValueAxis,
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QPainter, QPen
+from PyQt5.QtGui import QColor, QPainter
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -43,6 +43,7 @@ from internal_correspondence.reports.statistics_service import (
     StatisticsResult,
     StatisticsService,
 )
+from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("statistics_widget")
 
@@ -76,26 +77,6 @@ _CHART_COLORS = (
 )
 
 
-class DownArrowComboBox(QComboBox):
-    """Выпадающий список с явно нарисованной стрелкой вниз."""
-
-    def paintEvent(self, event) -> None:  # noqa: N802 - имя метода Qt
-        super().paintEvent(event)
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        pen = QPen(self.palette().color(self.foregroundRole()))
-        pen.setWidthF(1.7)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-        painter.setPen(pen)
-
-        center_x = self.width() - 14
-        center_y = self.height() // 2
-        painter.drawLine(center_x - 4, center_y - 2, center_x, center_y + 2)
-        painter.drawLine(center_x, center_y + 2, center_x + 4, center_y - 2)
-
-
 def _chart_color(index: int) -> QColor:
     """Возвращает цвет столбца для параметра с указанным индексом."""
     return _CHART_COLORS[index % len(_CHART_COLORS)]
@@ -118,54 +99,50 @@ class StatisticsWidget(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 12)
-        layout.setSpacing(9)
 
         controls = QHBoxLayout()
-        controls.addWidget(QLabel("Объект:"))
-        self.object_combo = DownArrowComboBox()
+        controls.addWidget(QLabel(STRINGS.label_object))
+        self.object_combo = QComboBox()
         self.object_combo.addItem(entity_label(ScientificMaterial, plural=True), ScientificMaterial)
         self.object_combo.addItem(entity_label(Telegram, plural=True), Telegram)
         controls.addWidget(self.object_combo)
 
-        controls.addWidget(QLabel("Критерий:"))
-        self.criterion_combo = DownArrowComboBox()
+        controls.addWidget(QLabel(STRINGS.label_criterion))
+        self.criterion_combo = QComboBox()
         for key, label in CRITERION_LABELS.items():
             self.criterion_combo.addItem(label, key)
         controls.addWidget(self.criterion_combo)
 
-        controls.addWidget(QLabel("Период:"))
-        self.period_combo = DownArrowComboBox()
+        controls.addWidget(QLabel(STRINGS.label_period))
+        self.period_combo = QComboBox()
         for key, label in PERIOD_LABELS.items():
             self.period_combo.addItem(label, key)
         controls.addWidget(self.period_combo)
 
-        self.index_combo = DownArrowComboBox()
+        self.index_combo = QComboBox()
         controls.addWidget(self.index_combo)
 
-        controls.addWidget(QLabel("Год:"))
-        self.year_combo = DownArrowComboBox()
+        controls.addWidget(QLabel(STRINGS.label_year))
+        self.year_combo = QComboBox()
         controls.addWidget(self.year_combo)
 
-        self.financial_check = QCheckBox("Финансовый год (окт–сен)")
+        self.financial_check = QCheckBox(STRINGS.check_financial_year)
         controls.addWidget(self.financial_check)
         controls.addStretch()
         layout.addLayout(controls)
 
         actions = QHBoxLayout()
         actions.addStretch()
-        self.calculate_btn = QPushButton("Рассчитать")
-        self.calculate_btn.setProperty("role", "primary")
+        self.calculate_btn = QPushButton(STRINGS.button_calculate)
         self.calculate_btn.clicked.connect(self.refresh)
         actions.addWidget(self.calculate_btn)
         layout.addLayout(actions)
 
         self.title_label = QLabel()
-        self.title_label.setObjectName("sectionTitle")
+        self.title_label.setStyleSheet("font-weight: bold;")
         layout.addWidget(self.title_label)
 
         self.period_label = QLabel()
-        self.period_label.setObjectName("sectionSubtitle")
         layout.addWidget(self.period_label)
 
         self.content_layout = QHBoxLayout()
@@ -181,7 +158,7 @@ class StatisticsWidget(QWidget):
         self.split_slider.setRange(10, 90)
         self.split_slider.setValue(50)
         self.split_slider.setFixedWidth(24)
-        self.split_slider.setToolTip("Соотношение размеров таблицы и графика")
+        self.split_slider.setToolTip(STRINGS.tooltip_split_ratio)
         self.split_slider.valueChanged.connect(self._update_split)
         self.content_layout.addWidget(self.split_slider)
 
@@ -233,11 +210,13 @@ class StatisticsWidget(QWidget):
 
         self.index_combo.setEnabled(True)
         if period_type == PERIOD_HALF:
-            self.index_combo.addItem("I полугодие", 1)
-            self.index_combo.addItem("II полугодие", 2)
+            self.index_combo.addItem(STRINGS.half_year_1, 1)
+            self.index_combo.addItem(STRINGS.half_year_2, 2)
         elif period_type == PERIOD_QUARTER:
             for index in range(1, 5):
-                self.index_combo.addItem(f"{_roman(index)} квартал", index)
+                self.index_combo.addItem(
+                    STRINGS.quarter_label.format(roman=_roman(index)), index
+                )
         elif period_type == PERIOD_MONTH:
             for index, name in enumerate(_MONTH_NAMES, start=1):
                 self.index_combo.addItem(name, index)
@@ -268,7 +247,9 @@ class StatisticsWidget(QWidget):
             result = self.service.calculate(query)
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка статистического подсчёта")
-            QMessageBox.critical(self, "Ошибка", f"Не удалось выполнить расчёт:\n{exc}")
+            QMessageBox.critical(
+                self, STRINGS.title_error, STRINGS.msg_calc_error.format(error=exc)
+            )
             return
 
         self._display(result)
@@ -277,9 +258,11 @@ class StatisticsWidget(QWidget):
         """Отображает результат подсчёта в таблице."""
         self._last_result = result
         self.title_label.setText(result.title)
-        self.period_label.setText(f"Период: {result.period_label}")
+        self.period_label.setText(
+            STRINGS.stats_period_prefix.format(label=result.period_label)
+        )
 
-        headers = [self.criterion_combo.currentText()] + result.columns + ["Итого"]
+        headers = [self.criterion_combo.currentText()] + result.columns + [STRINGS.header_total]
         self.table.clear()
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
@@ -296,7 +279,7 @@ class StatisticsWidget(QWidget):
             )
 
         totals_row = len(result.rows)
-        self.table.setItem(totals_row, 0, self._text_item("ИТОГО", bold=True))
+        self.table.setItem(totals_row, 0, self._text_item(STRINGS.row_grand_total, bold=True))
         for column_index, value in enumerate(result.totals, start=1):
             self.table.setItem(
                 totals_row,
@@ -322,12 +305,12 @@ class StatisticsWidget(QWidget):
             if current_theme().key == "dark"
             else QChart.ChartThemeLight
         )
-        chart.setTitle(f"{result.title}: по месяцам")
+        chart.setTitle(STRINGS.chart_by_months.format(title=result.title))
 
         month_indices = result.month_indices
         categories = result.month_columns
         if not result.rows or not month_indices:
-            chart.setTitle("Нет данных для отображения")
+            chart.setTitle(STRINGS.chart_no_data)
             self._chart = chart
             self.chart_view.setChart(chart)
             return
@@ -356,7 +339,7 @@ class StatisticsWidget(QWidget):
         axis_y.setRange(0, max(max_value, 1))
         axis_y.setLabelFormat("%d")
         axis_y.setTickCount(min(max(max_value, 1), 10) + 1)
-        axis_y.setTitleText("Количество")
+        axis_y.setTitleText(STRINGS.axis_count)
         chart.addAxis(axis_y, Qt.AlignLeft)
         series.attachAxis(axis_y)
 

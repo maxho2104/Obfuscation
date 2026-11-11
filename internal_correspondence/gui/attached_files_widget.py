@@ -19,43 +19,12 @@ from PyQt5.QtWidgets import (
 
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.models import FileRecord
+from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("attached_files_widget")
 
 # Цвет отображения файла, ссылка на который в БД «битая»
 BROKEN_FILE_COLOR = QColor(190, 40, 40)
-
-
-class FileListWidget(QListWidget):
-    """Список файлов с компактными кнопками действий внутри поля."""
-
-    BUTTON_SIZE = 35
-    MARGIN = 8
-    GAP = 2
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.add_button = QPushButton("+", self)
-        self.add_button.setProperty("role", "successCompact")
-        self.add_button.setFixedSize(self.BUTTON_SIZE, self.BUTTON_SIZE)
-
-        self.remove_button = QPushButton("-", self)
-        self.remove_button.setProperty("role", "dangerCompact")
-        self.remove_button.setFixedSize(self.BUTTON_SIZE, self.BUTTON_SIZE)
-
-        bottom_margin = self.BUTTON_SIZE + self.MARGIN * 2
-        self.setViewportMargins(0, 0, 0, bottom_margin)
-
-    def resizeEvent(self, event) -> None:  # noqa: N802 - имя метода Qt
-        """Прижимает кнопки к нижнему правому углу списка."""
-        super().resizeEvent(event)
-        y = self.height() - self.BUTTON_SIZE - self.MARGIN
-        remove_x = self.width() - self.BUTTON_SIZE - self.MARGIN
-        add_x = remove_x - self.BUTTON_SIZE - self.GAP
-        self.add_button.move(add_x, y)
-        self.remove_button.move(remove_x, y)
-        self.add_button.raise_()
-        self.remove_button.raise_()
 
 
 class AttachedFilesWidget(QWidget):
@@ -71,20 +40,21 @@ class AttachedFilesWidget(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
 
-        self.list_widget = FileListWidget()
-        self.list_widget.setObjectName("fileList")
+        self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
         layout.addWidget(self.list_widget)
 
-        self.add_btn = self.list_widget.add_button
-        self.add_btn.setToolTip("Добавить файлы")
+        self.add_btn = QPushButton("+")
+        self.add_btn.setToolTip(STRINGS.tooltip_add_files)
         self.add_btn.clicked.connect(self._add_files)
 
-        self.remove_btn = self.list_widget.remove_button
-        self.remove_btn.setToolTip("Открепить выбранные файлы")
+        self.remove_btn = QPushButton("-")
+        self.remove_btn.setToolTip(STRINGS.tooltip_remove_files)
         self.remove_btn.clicked.connect(self._remove_files)
+
+        layout.addWidget(self.add_btn)
+        layout.addWidget(self.remove_btn)
 
     def set_files(self, file_records: List[FileRecord]) -> None:
         """Устанавливает текущий список прикреплённых файлов из БД."""
@@ -113,11 +83,13 @@ class AttachedFilesWidget(QWidget):
                 font.setStrikeOut(True)
                 item.setFont(font)
                 item.setForeground(BROKEN_FILE_COLOR)
-                item.setToolTip(f"Файл отсутствует в хранилище: {file_path}")
+                item.setToolTip(STRINGS.tooltip_file_missing.format(path=file_path))
             self.list_widget.addItem(item)
 
         for path in self.new_files:
-            item = QListWidgetItem(self._icon(path), f"{path.name} (новый)")
+            item = QListWidgetItem(
+                self._icon(path), f"{path.name} {STRINGS.file_new_suffix}"
+            )
             item.setData(Qt.UserRole, str(path))
             self.list_widget.addItem(item)
 
@@ -132,7 +104,7 @@ class AttachedFilesWidget(QWidget):
         return self.storage_root / record.path / f"{record.name}.{record.extension}"
 
     def _add_files(self) -> None:
-        paths, _ = QFileDialog.getOpenFileNames(self, "Выберите файлы")
+        paths, _ = QFileDialog.getOpenFileNames(self, STRINGS.dialog_select_files)
         for path in paths:
             self.new_files.append(Path(path))
         self._refresh_list()
@@ -143,8 +115,8 @@ class AttachedFilesWidget(QWidget):
             return
         reply = QMessageBox.question(
             self,
-            "Подтверждение",
-            f"Открепить выбранные файлы ({len(selected)})?",
+            STRINGS.title_confirm,
+            STRINGS.msg_detach_confirm.format(count=len(selected)),
         )
         if reply != QMessageBox.Yes:
             return

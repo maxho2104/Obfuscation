@@ -14,10 +14,14 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
+    QSpinBox,
     QVBoxLayout,
 )
 
-from internal_correspondence.core.constants import Role
+from internal_correspondence.core.constants import (
+    DEFAULT_CHANGES_RETENTION_DAYS,
+    Role,
+)
 from internal_correspondence.core.settings import AppSettings
 from internal_correspondence.utils.string_resources import STRINGS
 
@@ -90,6 +94,12 @@ class SettingsDialog(QDialog):
         self.branch_id = QLineEdit()
         form.addRow("Роль:", self.role_combo)
         form.addRow("Филиал:", self.branch_id)
+
+        # Срок хранения журнала изменений
+        self.changes_retention = QSpinBox()
+        self.changes_retention.setRange(0, 3650)
+        self.changes_retention.setSpecialValueText(STRINGS.settings_retention_forever)
+        form.addRow(STRINGS.settings_changes_retention, self.changes_retention)
         layout.addLayout(form)
 
         # Кнопки
@@ -150,6 +160,11 @@ class SettingsDialog(QDialog):
         if index >= 0:
             self.role_combo.setCurrentIndex(index)
         self.branch_id.setText(self.settings.branch_id)
+        try:
+            retention = int(self.settings.changes_retention_days)
+        except (TypeError, ValueError):
+            retention = DEFAULT_CHANGES_RETENTION_DAYS
+        self.changes_retention.setValue(max(0, retention))
         self._on_db_type_changed()
 
     def _on_save(self) -> None:
@@ -169,4 +184,5 @@ class SettingsDialog(QDialog):
         self.settings.storage_path = self.storage_path.text().strip()
         self.settings.role = self.role_combo.currentData()
         self.settings.branch_id = self.branch_id.text().strip()
+        self.settings.changes_retention_days = self.changes_retention.value()
         self.accept()
