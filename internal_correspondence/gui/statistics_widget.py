@@ -11,7 +11,7 @@ from PyQt5.QtChart import (
     QValueAxis,
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QPainter
+from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -76,6 +76,26 @@ _CHART_COLORS = (
 )
 
 
+class DownArrowComboBox(QComboBox):
+    """Выпадающий список с явно нарисованной стрелкой вниз."""
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - имя метода Qt
+        super().paintEvent(event)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(self.palette().color(self.foregroundRole()))
+        pen.setWidthF(1.7)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+
+        center_x = self.width() - 14
+        center_y = self.height() // 2
+        painter.drawLine(center_x - 4, center_y - 2, center_x, center_y + 2)
+        painter.drawLine(center_x, center_y + 2, center_x + 4, center_y - 2)
+
+
 def _chart_color(index: int) -> QColor:
     """Возвращает цвет столбца для параметра с указанным индексом."""
     return _CHART_COLORS[index % len(_CHART_COLORS)]
@@ -98,31 +118,33 @@ class StatisticsWidget(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 12)
+        layout.setSpacing(9)
 
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Объект:"))
-        self.object_combo = QComboBox()
+        self.object_combo = DownArrowComboBox()
         self.object_combo.addItem(entity_label(ScientificMaterial, plural=True), ScientificMaterial)
         self.object_combo.addItem(entity_label(Telegram, plural=True), Telegram)
         controls.addWidget(self.object_combo)
 
         controls.addWidget(QLabel("Критерий:"))
-        self.criterion_combo = QComboBox()
+        self.criterion_combo = DownArrowComboBox()
         for key, label in CRITERION_LABELS.items():
             self.criterion_combo.addItem(label, key)
         controls.addWidget(self.criterion_combo)
 
         controls.addWidget(QLabel("Период:"))
-        self.period_combo = QComboBox()
+        self.period_combo = DownArrowComboBox()
         for key, label in PERIOD_LABELS.items():
             self.period_combo.addItem(label, key)
         controls.addWidget(self.period_combo)
 
-        self.index_combo = QComboBox()
+        self.index_combo = DownArrowComboBox()
         controls.addWidget(self.index_combo)
 
         controls.addWidget(QLabel("Год:"))
-        self.year_combo = QComboBox()
+        self.year_combo = DownArrowComboBox()
         controls.addWidget(self.year_combo)
 
         self.financial_check = QCheckBox("Финансовый год (окт–сен)")
@@ -133,15 +155,17 @@ class StatisticsWidget(QWidget):
         actions = QHBoxLayout()
         actions.addStretch()
         self.calculate_btn = QPushButton("Рассчитать")
+        self.calculate_btn.setProperty("role", "primary")
         self.calculate_btn.clicked.connect(self.refresh)
         actions.addWidget(self.calculate_btn)
         layout.addLayout(actions)
 
         self.title_label = QLabel()
-        self.title_label.setStyleSheet("font-weight: bold;")
+        self.title_label.setObjectName("sectionTitle")
         layout.addWidget(self.title_label)
 
         self.period_label = QLabel()
+        self.period_label.setObjectName("sectionSubtitle")
         layout.addWidget(self.period_label)
 
         self.content_layout = QHBoxLayout()

@@ -179,6 +179,7 @@ class FilterDialog(QDialog):
         layout.addWidget(self.scroll, 1)
 
         self.add_btn = QPushButton("Добавить фильтр")
+        self.add_btn.setProperty("role", "primary")
         self.add_btn.clicked.connect(self._add_filter)
         layout.addWidget(self.add_btn)
 

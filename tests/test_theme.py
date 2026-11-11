@@ -56,12 +56,18 @@ def test_modified_row_color_differs() -> None:
     assert THEMES["light"].stripe != THEMES["dark"].stripe
 
 
-def test_dark_theme_sets_stylesheet(qt_app: QApplication) -> None:
-    """Тёмная тема задаёт глобальную таблицу стилей, светлая — сбрасывает."""
+def test_both_themes_load_external_stylesheet(qt_app: QApplication) -> None:
+    """Обе темы применяют общий QSS-шаблон со своей палитрой."""
     apply_theme(qt_app, "dark")
-    assert qt_app.styleSheet()
+    dark_stylesheet = qt_app.styleSheet()
+    assert dark_stylesheet
+    assert "{{" not in dark_stylesheet
+
     apply_theme(qt_app, "light")
-    assert qt_app.styleSheet() == ""
+    light_stylesheet = qt_app.styleSheet()
+    assert light_stylesheet
+    assert "{{" not in light_stylesheet
+    assert light_stylesheet != dark_stylesheet
 
 
 def test_theme_setting_roundtrip(tmp_path) -> None:

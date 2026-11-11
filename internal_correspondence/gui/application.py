@@ -212,11 +212,15 @@ class MainWindow(QMainWindow):
     def _setup_ui(self) -> None:
         """Инициализирует интерфейс главного окна с вкладками."""
         container = QWidget()
+        container.setObjectName("centralContainer")
         layout = QVBoxLayout(container)
+        layout.setContentsMargins(16, 12, 16, 16)
+        layout.setSpacing(10)
 
         from internal_correspondence.orm.models import ScientificMaterial, Telegram
 
         self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         self.materials_tab = DocumentListWidget(
             self.db_manager.get_session(),
             self.settings.storage_path_obj(),
@@ -519,12 +523,17 @@ def _load_or_create_settings(app_dir: Path) -> AppSettings:
 def run_application(argv: List[str]) -> int:
     """Инициализирует и запускает приложение."""
     app = QApplication(argv)
+    app.setStyle("Fusion")
 
     app_dir = Path(os.path.dirname(os.path.abspath(__file__))).parent.parent
     configure_logging(app_dir)
     _ensure_app_dirs(app_dir)
 
     install_translations(app)
+
+    # Светлая тема оформляет в том числе мастер первого запуска; после чтения
+    # настроек ниже она заменяется сохранённой темой пользователя.
+    apply_theme(app, "light")
 
     settings = _load_or_create_settings(app_dir)
     _ensure_storage_dirs(settings.storage_path_obj())

@@ -68,6 +68,8 @@ class DocumentListWidget(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 12)
+        layout.setSpacing(10)
 
         # Панель инструментов
         toolbar = QHBoxLayout()
@@ -75,6 +77,8 @@ class DocumentListWidget(QWidget):
         self.edit_btn = QPushButton("Изменить")
         self.delete_btn = QPushButton("Удалить")
         self.refresh_btn = QPushButton("Обновить")
+        self.add_btn.setProperty("role", "primary")
+        self.delete_btn.setProperty("role", "danger")
 
         self.add_btn.clicked.connect(self._add)
         self.edit_btn.clicked.connect(self._edit)
@@ -92,7 +96,7 @@ class DocumentListWidget(QWidget):
         layout.addLayout(toolbar)
 
         # Таблица
-        splitter = QSplitter(Qt.Vertical)
+        splitter = QSplitter(Qt.Horizontal)
 
         self.table = QTableView()
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -104,9 +108,12 @@ class DocumentListWidget(QWidget):
         splitter.addWidget(self.table)
 
         self.files_widget = AttachedFilesWidget(self.storage_root)
-        self.files_widget.setMaximumHeight(150)
+        self.files_widget.setMinimumWidth(170)
+        self.files_widget.setMaximumWidth(250)
         splitter.addWidget(self.files_widget)
-        splitter.setSizes([400, 150])
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([820, 190])
 
         layout.addWidget(splitter)
 
@@ -122,6 +129,9 @@ class DocumentListWidget(QWidget):
         self.next_btn = QPushButton(">")
         self.last_btn = QPushButton(">|")
         self.page_total_label = QLabel("из 1")
+
+        for button in (self.first_btn, self.prev_btn, self.next_btn, self.last_btn):
+            button.setProperty("role", "compact")
 
         self.first_btn.clicked.connect(lambda: self._go_to_page(1))
         self.prev_btn.clicked.connect(

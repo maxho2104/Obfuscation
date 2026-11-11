@@ -26,6 +26,38 @@ logger = get_logger("attached_files_widget")
 BROKEN_FILE_COLOR = QColor(190, 40, 40)
 
 
+class FileListWidget(QListWidget):
+    """Список файлов с компактными кнопками действий внутри поля."""
+
+    BUTTON_SIZE = 35
+    MARGIN = 8
+    GAP = 2
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.add_button = QPushButton("+", self)
+        self.add_button.setProperty("role", "successCompact")
+        self.add_button.setFixedSize(self.BUTTON_SIZE, self.BUTTON_SIZE)
+
+        self.remove_button = QPushButton("-", self)
+        self.remove_button.setProperty("role", "dangerCompact")
+        self.remove_button.setFixedSize(self.BUTTON_SIZE, self.BUTTON_SIZE)
+
+        bottom_margin = self.BUTTON_SIZE + self.MARGIN * 2
+        self.setViewportMargins(0, 0, 0, bottom_margin)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - имя метода Qt
+        """Прижимает кнопки к нижнему правому углу списка."""
+        super().resizeEvent(event)
+        y = self.height() - self.BUTTON_SIZE - self.MARGIN
+        remove_x = self.width() - self.BUTTON_SIZE - self.MARGIN
+        add_x = remove_x - self.BUTTON_SIZE - self.GAP
+        self.add_button.move(add_x, y)
+        self.remove_button.move(remove_x, y)
+        self.add_button.raise_()
+        self.remove_button.raise_()
+
+
 class AttachedFilesWidget(QWidget):
     """Виджет для отображения и управления прикреплёнными файлами."""
 
@@ -39,21 +71,20 @@ class AttachedFilesWidget(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        self.list_widget = QListWidget()
+        self.list_widget = FileListWidget()
+        self.list_widget.setObjectName("fileList")
         self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
         layout.addWidget(self.list_widget)
 
-        self.add_btn = QPushButton("+")
+        self.add_btn = self.list_widget.add_button
         self.add_btn.setToolTip("Добавить файлы")
         self.add_btn.clicked.connect(self._add_files)
 
-        self.remove_btn = QPushButton("-")
+        self.remove_btn = self.list_widget.remove_button
         self.remove_btn.setToolTip("Открепить выбранные файлы")
         self.remove_btn.clicked.connect(self._remove_files)
-
-        layout.addWidget(self.add_btn)
-        layout.addWidget(self.remove_btn)
 
     def set_files(self, file_records: List[FileRecord]) -> None:
         """Устанавливает текущий список прикреплённых файлов из БД."""

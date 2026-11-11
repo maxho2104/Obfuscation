@@ -37,6 +37,9 @@ ic-system = "internal_correspondence.main:main"
 where = ["."]
 include = ["internal_correspondence*"]
 
+[tool.setuptools.package-data]
+"internal_correspondence.gui" = ["*.qss"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

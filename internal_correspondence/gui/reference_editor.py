@@ -51,12 +51,16 @@ class ReferenceEditorWidget(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 12)
+        layout.setSpacing(10)
 
         toolbar = QHBoxLayout()
         self.add_btn = QPushButton("Добавить")
         self.edit_btn = QPushButton("Изменить")
         self.delete_btn = QPushButton("Удалить")
         self.refresh_btn = QPushButton("Обновить")
+        self.add_btn.setProperty("role", "primary")
+        self.delete_btn.setProperty("role", "danger")
 
         self.add_btn.clicked.connect(self._add)
         self.edit_btn.clicked.connect(self._edit)

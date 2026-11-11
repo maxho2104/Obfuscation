@@ -107,10 +107,12 @@ class ParticipatingEmployeesWidget(QGroupBox):
 
         buttons = QHBoxLayout()
         self.add_btn = QPushButton("+")
+        self.add_btn.setProperty("role", "compact")
         self.add_btn.setToolTip("Добавить причастных сотрудников")
         self.add_btn.clicked.connect(self._add_employees)
 
         self.remove_btn = QPushButton("-")
+        self.remove_btn.setProperty("role", "compact")
         self.remove_btn.setToolTip("Удалить выбранных сотрудников")
         self.remove_btn.clicked.connect(self._remove_employees)
 
