@@ -157,10 +157,16 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
     session.flush()
 
     evaluation_useful = Evaluation(
-        id=None, value=EvaluationValue.USEFUL, evaluation_list_id=evaluation_list1.id
+        id=None,
+        value=EvaluationValue.USEFUL,
+        date=date(2026, 3, 1),
+        evaluation_list_id=evaluation_list1.id,
     )
     evaluation_important = Evaluation(
-        id=None, value=EvaluationValue.IMPORTANT, evaluation_list_id=evaluation_list2.id
+        id=None,
+        value=EvaluationValue.IMPORTANT,
+        date=date(2026, 6, 1),
+        evaluation_list_id=evaluation_list2.id,
     )
     session.add_all([evaluation_useful, evaluation_important])
     session.flush()

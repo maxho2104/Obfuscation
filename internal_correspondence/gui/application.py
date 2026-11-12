@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from PyQt5.QtCore import QByteArray
+from PyQt5.QtCore import QByteArray, Qt
 from PyQt5.QtWidgets import (
     QAction,
     QActionGroup,
@@ -36,7 +36,12 @@ from internal_correspondence.core.domain_pack import (
 )
 from internal_correspondence.core.logging_config import configure_logging, get_logger
 from internal_correspondence.core.settings import AppSettings, SettingsManager
+from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
 from internal_correspondence.gui.document_list_widget import DocumentListWidget
+from internal_correspondence.gui.filter_model import (
+    deserialize_filters,
+    serialize_filters,
+)
 from internal_correspondence.gui.first_run_wizard import run_first_run_wizard
 from internal_correspondence.gui.i18n import install_translations
 from internal_correspondence.gui.oshm_dialog import OSHMDialog
@@ -146,37 +151,97 @@ def _format_workgroups(workgroups) -> str:
     return ", ".join(workgroup.name for workgroup in workgroups or [])
 
 
-# Описания столбцов для таблицы научных материалов
-MATERIAL_COLUMNS = [
-    ColumnDef("type", width=80, formatter=_format_material_type),
-    ColumnDef("outgoing_number", width=100),
-    ColumnDef("outgoing_date", width=100),
-    ColumnDef("name", width=250),
-    ColumnDef("evaluation_display", width=90),
-    ColumnDef("incoming_number", width=100),
-    ColumnDef("incoming_date", width=100),
-    ColumnDef("participating_employees", width=220, formatter=_format_employees),
-    ColumnDef("participating_departments", width=180, formatter=_format_departments),
-    ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
-    ColumnDef("branch.short_name", width=100),
-    ColumnDef("consumer.short_name", width=120),
-]
+def _format_countries(countries) -> str:
+    """Форматирует список стран происхождения данных для ячейки таблицы."""
+    return ", ".join(country.name for country in countries or [])
 
-# Описания столбцов для таблицы телеграмм
-TELEGRAM_COLUMNS = [
-    ColumnDef("type", width=80, formatter=_format_telegram_type),
-    ColumnDef("outgoing_number", width=100),
-    ColumnDef("outgoing_date", width=100),
-    ColumnDef("name", width=300),
-    ColumnDef("evaluation_display", width=90),
-    ColumnDef("incoming_number", width=100),
-    ColumnDef("incoming_date", width=100),
-    ColumnDef("participating_employees", width=220, formatter=_format_employees),
-    ColumnDef("participating_departments", width=180, formatter=_format_departments),
-    ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
-    ColumnDef("report_type", width=100, formatter=_format_report_type),
-    ColumnDef("branch.short_name", width=100),
-]
+
+def _format_addresses(addresses) -> str:
+    """Форматирует адресацию доклада («ИД+» через запятую)."""
+    from internal_correspondence.gui.edit_elements import format_report_addresses
+
+    return format_report_addresses(addresses or [])
+
+
+def _is_head_office(role: Optional[str]) -> bool:
+    """Проверяет, задана ли роль «головной офис»."""
+    return role == Role.HEAD_OFFICE.value
+
+
+def material_columns(role: Optional[str] = None) -> List[ColumnDef]:
+    """Возвращает описания столбцов таблицы научных материалов для роли.
+
+    Порядок и состав столбцов — по плану редактирования отображения:
+    для роли «филиал» дополнительно отделы и сотрудники, для роли
+    «головной офис» — филиал.
+    """
+    columns = [
+        ColumnDef("outgoing_number", width=100),
+        ColumnDef("outgoing_date", width=110),
+        ColumnDef("type", width=80, formatter=_format_material_type),
+        ColumnDef("name", width=250),
+        ColumnDef("countries", width=150, formatter=_format_countries),
+        ColumnDef("consumer.short_name", width=120),
+    ]
+    if _is_head_office(role):
+        columns.append(ColumnDef("branch.short_name", width=100))
+        columns.append(
+            ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups)
+        )
+    else:
+        columns.extend(
+            [
+                ColumnDef("participating_departments", width=180, formatter=_format_departments),
+                ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
+                ColumnDef("participating_employees", width=220, formatter=_format_employees),
+            ]
+        )
+    columns.extend(
+        [
+            ColumnDef("incoming_number", width=100),
+            ColumnDef("incoming_date", width=110),
+            ColumnDef("evaluation_display", width=90),
+        ]
+    )
+    return columns
+
+
+def telegram_columns(role: Optional[str] = None) -> List[ColumnDef]:
+    """Возвращает описания столбцов таблицы телеграмм для роли."""
+    columns = [
+        ColumnDef("outgoing_number", width=100),
+        ColumnDef("outgoing_date", width=110),
+        ColumnDef("type", width=80, formatter=_format_telegram_type),
+        ColumnDef("name", width=280),
+        ColumnDef("countries", width=150, formatter=_format_countries),
+        ColumnDef("report_addresses", width=160, formatter=_format_addresses),
+        ColumnDef("report_type", width=100, formatter=_format_report_type),
+    ]
+    if _is_head_office(role):
+        columns.append(ColumnDef("branch.short_name", width=100))
+    else:
+        columns.extend(
+            [
+                ColumnDef("participating_departments", width=180, formatter=_format_departments),
+                ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
+                ColumnDef("participating_employees", width=220, formatter=_format_employees),
+            ]
+        )
+    columns.extend(
+        [
+            ColumnDef("incoming_number", width=100),
+            ColumnDef("incoming_date", width=110),
+            ColumnDef("evaluation_display", width=90),
+        ]
+    )
+    return columns
+
+
+# Описания столбцов таблицы научных материалов (роль «филиал»)
+MATERIAL_COLUMNS = material_columns()
+
+# Описания столбцов для таблицы телеграмм (роль «филиал»)
+TELEGRAM_COLUMNS = telegram_columns()
 
 # Описания столбцов справочников
 TERRITORIAL_UNIT_COLUMNS = [
@@ -274,15 +339,17 @@ class MainWindow(QMainWindow):
             self.db_manager.get_session(),
             self.settings.storage_path_obj(),
             ScientificMaterial,
-            MATERIAL_COLUMNS,
+            material_columns(self.settings.role),
             self.settings.branch_id,
+            role=self.settings.role,
         )
         self.telegram_tab = DocumentListWidget(
             self.db_manager.get_session(),
             self.settings.storage_path_obj(),
             Telegram,
-            TELEGRAM_COLUMNS,
+            telegram_columns(self.settings.role),
             self.settings.branch_id,
+            role=self.settings.role,
         )
         self.statistics_tab = StatisticsWidget(
             self.db_manager.get_session(),
@@ -294,6 +361,46 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.statistics_tab, STRINGS.tab_statistics)
         layout.addWidget(self.tabs)
         self.setCentralWidget(container)
+
+        self.materials_tab.filtersChanged.connect(self._materials_filters_changed)
+        self.telegram_tab.filtersChanged.connect(self._telegram_filters_changed)
+
+        # Док-виджет прикреплённых файлов привязан к текущей записи вкладки
+        self.files_dock = AttachedFilesWidget(
+            self.db_manager.get_session(),
+            self.settings.storage_path_obj(),
+            self,
+        )
+        self.addDockWidget(Qt.RightDockWidgetArea, self.files_dock)
+        self.tabs.currentChanged.connect(lambda _index: self._sync_files_dock())
+        self.materials_tab.currentDocumentChanged.connect(
+            lambda document: self._files_document_changed(self.materials_tab, document)
+        )
+        self.telegram_tab.currentDocumentChanged.connect(
+            lambda document: self._files_document_changed(self.telegram_tab, document)
+        )
+        self._sync_files_dock()
+
+    def _files_document_changed(self, tab, document) -> None:
+        """Привязывает док файлов к записи, если её вкладка активна."""
+        if tab is self.tabs.currentWidget():
+            self.files_dock.set_document(document)
+
+    def _sync_files_dock(self) -> None:
+        """Обновляет док файлов при смене вкладки."""
+        tab = self.tabs.currentWidget()
+        if isinstance(tab, DocumentListWidget):
+            self.files_dock.set_document(tab.current_document())
+        else:
+            self.files_dock.set_document(None)
+
+    def _materials_filters_changed(self, filters) -> None:
+        """Запоминает фильтры материалов для сохранения при закрытии."""
+        self.settings.material_filters = serialize_filters(filters)
+
+    def _telegram_filters_changed(self, filters) -> None:
+        """Запоминает фильтры телеграмм для сохранения при закрытии."""
+        self.settings.telegram_filters = serialize_filters(filters)
 
     def _setup_menu(self) -> None:
         """Формирует главное меню приложения."""
@@ -422,7 +529,7 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         """Открывает диалог настроек."""
-        dialog = SettingsDialog(self.settings, self)
+        dialog = SettingsDialog(self.settings, self.db_manager, self)
         if dialog.exec_() == SettingsDialog.Accepted:
             settings_manager = SettingsManager()
             settings_manager.save(self.settings)
@@ -462,6 +569,16 @@ class MainWindow(QMainWindow):
         telegram_widths = _parse_column_widths(self.settings.telegram_column_widths)
         if telegram_widths:
             self.telegram_tab.set_column_widths(telegram_widths)
+        self._restore_filters()
+
+    def _restore_filters(self) -> None:
+        """Восстанавливает фильтры таблиц из настроек (два набора раздельно)."""
+        self.materials_tab.set_filters(
+            deserialize_filters(self.settings.material_filters, ScientificMaterial)
+        )
+        self.telegram_tab.set_filters(
+            deserialize_filters(self.settings.telegram_filters, Telegram)
+        )
 
     def _set_theme(self, theme_key: str) -> None:
         """Применяет тему оформления и сохраняет выбор в настройках."""

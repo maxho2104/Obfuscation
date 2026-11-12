@@ -1,9 +1,10 @@
 """Модель фильтрации записей таблиц."""
 
+import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric
 from sqlalchemy import inspect as sa_inspect
@@ -183,3 +184,58 @@ class FilterCondition:
             return _compare(bool(actual), expected, self.operator)
 
         return True
+
+    def to_dict(self) -> dict:
+        """Сериализует условие для сохранения в настройках."""
+        return {
+            "column": self.column_name,
+            "operator": self.operator,
+            "value": self.value,
+        }
+
+    @staticmethod
+    def from_dict(raw: dict, model_class: type) -> Optional["FilterCondition"]:
+        """Восстанавливает условие из словаря; None — условие недопустимо.
+
+        Проверяет существование колонки и оператора для её типа —
+        сохранённое в INI значение может отставать от схемы.
+        """
+        if not isinstance(raw, dict):
+            return None
+        column_name = raw.get("column")
+        operator = raw.get("operator")
+        value = raw.get("value")
+        if not isinstance(column_name, str) or not isinstance(operator, str):
+            return None
+        if not isinstance(value, (str, int, float)):
+            return None
+        value_type = resolve_value_type(model_class, column_name)
+        valid_operators = {item for item, _label in operators_for(value_type)}
+        if operator not in valid_operators:
+            return None
+        return FilterCondition(column_name, operator, str(value))
+
+
+def serialize_filters(filters: List[FilterCondition]) -> str:
+    """Сериализует список условий в JSON-строку для settings.ini."""
+    return json.dumps([condition.to_dict() for condition in filters], ensure_ascii=False)
+
+
+def deserialize_filters(
+    raw: str, model_class: type
+) -> List[FilterCondition]:
+    """Восстанавливает список условий из JSON-строки; мусор отбрасывается."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    result = []
+    for item in data:
+        condition = FilterCondition.from_dict(item, model_class)
+        if condition is not None:
+            result.append(condition)
+    return result

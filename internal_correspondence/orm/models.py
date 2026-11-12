@@ -754,21 +754,12 @@ class EvaluationMixin:
 
     @property
     def latest_evaluation(self) -> Optional["Evaluation"]:
-        """Возвращает последнюю оценку документа по дате списка оценок."""
-        evaluations = [
-            evaluation
-            for evaluation in self.evaluations
-            if evaluation.evaluation_list is not None
-        ]
-        if not evaluations:
+        """Возвращает последнюю оценку документа по дате выставления."""
+        if not self.evaluations:
             return None
         return max(
-            evaluations,
-            key=lambda evaluation: (
-                evaluation.evaluation_list.date,
-                evaluation.evaluation_list.number or "",
-                str(evaluation.id),
-            ),
+            self.evaluations,
+            key=lambda evaluation: (evaluation.date, str(evaluation.id)),
         )
 
     @property
@@ -828,6 +819,7 @@ class ScientificMaterial(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationM
     serial_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Серийный номер"})
     release_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, info={"label": "Год выпуска"})
     permit_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Номер разрешительного документа"})
+    permit_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата разрешительного документа"})
     cost: Mapped[Optional[float]] = mapped_column(Numeric(15, 2), nullable=True, info={"label": "Стоимость"})
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
 
@@ -865,6 +857,7 @@ class ScientificMaterial(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationM
         "Employee",
         secondary=material_employee_association,
         back_populates="materials",
+        info={"label": "Сотрудники"},
     )
     workgroups: Mapped[List["WorkingGroup"]] = relationship(
         "WorkingGroup",
@@ -960,6 +953,7 @@ class Telegram(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationMixin):
         "Employee",
         secondary=telegram_employee_association,
         back_populates="telegrams",
+        info={"label": "Сотрудники"},
     )
     workgroups: Mapped[List["WorkingGroup"]] = relationship(
         "WorkingGroup",
@@ -1008,7 +1002,7 @@ class ReportAddress(Base, ChangeTrackedMixin):
     __tablename__ = "report_addresses"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    report_date: Mapped[date] = mapped_column(Date, nullable=False, info={"label": "Дата доклада"})
+    report_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата доклада"})
 
     telegram_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("telegrams.id", ondelete="CASCADE"),
@@ -1062,13 +1056,14 @@ class Evaluation(Base, ChangeTrackedMixin):
     value: Mapped[EvaluationValue] = mapped_column(
         IntEnumType(EvaluationValue), nullable=False, info={"label": "Значение оценки"}
     )
+    date: Mapped[date] = mapped_column(Date, nullable=False, info={"label": "Дата выставления"})
 
-    evaluation_list_id: Mapped[uuid.UUID] = mapped_column(
+    evaluation_list_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("evaluation_lists.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         info={"label": "Список оценок"},
     )
-    evaluation_list: Mapped["EvaluationList"] = relationship(
+    evaluation_list: Mapped[Optional["EvaluationList"]] = relationship(
         "EvaluationList",
         back_populates="evaluations",
     )

@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -30,6 +31,7 @@ from internal_correspondence.gui.filter_model import (
 )
 from internal_correspondence.gui.table_model import ColumnDef
 from internal_correspondence.orm.labels import field_short_label
+from internal_correspondence.utils.string_resources import STRINGS
 
 _VALUE_PAGES = {
     "text": 0,
@@ -42,17 +44,30 @@ _VALUE_PAGES = {
 
 
 class AddFilterDialog(QDialog):
-    """Диалог создания одного условия фильтрации."""
+    """Диалог создания или изменения одного условия фильтрации."""
 
-    def __init__(self, model_class: type, columns: List[ColumnDef], parent=None) -> None:
+    def __init__(
+        self,
+        model_class: type,
+        columns: List[ColumnDef],
+        condition: Optional[FilterCondition] = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.model_class = model_class
         self.columns = columns
+        self._condition = condition
         self._value_type = "text"
-        self.setWindowTitle("Добавить фильтр")
+        self.setWindowTitle(
+            STRINGS.dialog_edit_filter_title
+            if condition is not None
+            else STRINGS.dialog_add_filter_title
+        )
         self.setMinimumWidth(420)
         self._setup_ui()
         self._on_column_changed()
+        if condition is not None:
+            self._load_condition(condition)
 
     def _setup_ui(self) -> None:
         layout = QFormLayout(self)
@@ -61,14 +76,14 @@ class AddFilterDialog(QDialog):
         for column in self.columns:
             header = column.header or field_short_label(self.model_class, column.name)
             self.column_combo.addItem(header, column.name)
-        layout.addRow("Поле:", self.column_combo)
+        layout.addRow(STRINGS.label_field, self.column_combo)
 
         self.operator_combo = QComboBox()
-        layout.addRow("Условие:", self.operator_combo)
+        layout.addRow(STRINGS.label_condition, self.operator_combo)
 
         self.value_stack = QStackedWidget()
         self.text_edit = QLineEdit()
-        self.text_edit.setPlaceholderText("Введите значение")
+        self.text_edit.setPlaceholderText(STRINGS.placeholder_filter_value)
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDisplayFormat("dd.MM.yyyy")
@@ -95,7 +110,7 @@ class AddFilterDialog(QDialog):
             self.int_edit,
         ):
             self.value_stack.addWidget(widget)
-        layout.addRow("Значение:", self.value_stack)
+        layout.addRow(STRINGS.label_value, self.value_stack)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.buttons.accepted.connect(self.accept)
@@ -112,6 +127,39 @@ class AddFilterDialog(QDialog):
             self.operator_combo.addItem(label, operator)
         self.value_stack.setCurrentIndex(_VALUE_PAGES.get(self._value_type, 0))
 
+    def _load_condition(self, condition: FilterCondition) -> None:
+        """Заполняет редакторы существующим условием (режим изменения)."""
+        column_index = self.column_combo.findData(condition.column_name)
+        if column_index >= 0:
+            self.column_combo.setCurrentIndex(column_index)
+        operator_index = self.operator_combo.findData(condition.operator)
+        if operator_index >= 0:
+            self.operator_combo.setCurrentIndex(operator_index)
+        if self._value_type == "date":
+            self.date_edit.setDate(
+                QDate.fromString(condition.value, "yyyy-MM-dd")
+            )
+        elif self._value_type == "datetime":
+            self.datetime_edit.setDateTime(
+                QDateTime.fromString(condition.value, Qt.ISODate)
+            )
+        elif self._value_type == "number":
+            try:
+                self.number_edit.setValue(float(condition.value))
+            except ValueError:
+                pass
+        elif self._value_type == "integer":
+            try:
+                self.int_edit.setValue(int(condition.value))
+            except ValueError:
+                pass
+        elif self._value_type == "bool":
+            index = self.bool_combo.findData(condition.value)
+            if index >= 0:
+                self.bool_combo.setCurrentIndex(index)
+        else:
+            self.text_edit.setText(condition.value)
+
     def _current_value(self) -> str:
         if self._value_type == "date":
             return self.date_edit.date().toString("yyyy-MM-dd")
@@ -126,7 +174,7 @@ class AddFilterDialog(QDialog):
         return self.text_edit.text().strip()
 
     def condition(self) -> Optional[FilterCondition]:
-        """Возвращает созданное условие или None, если значение не задано."""
+        """Возвращает созданное (изменённое) условие; None, если пусто."""
         value = self._current_value()
         if self._value_type == "text" and not value:
             return None
@@ -144,7 +192,11 @@ class AddFilterDialog(QDialog):
 
 
 class FilterDialog(QDialog):
-    """Диалог управления примененными фильтрами."""
+    """Диалог управления примененными фильтрами.
+
+    Строки условий оформлены рамкой (QFrame.Box); «×» удаляет условие,
+    двойной щелчок по строке открывает диалог её изменения.
+    """
 
     filtersChanged = pyqtSignal(list)
 
@@ -160,7 +212,7 @@ class FilterDialog(QDialog):
         self.columns = columns
         self._columns_by_name = {column.name: column for column in columns}
         self._filters = list(filters)
-        self.setWindowTitle("Фильтры")
+        self.setWindowTitle(STRINGS.button_filter)
         self.setMinimumWidth(520)
         self.setMinimumHeight(320)
         self._setup_ui()
@@ -168,7 +220,7 @@ class FilterDialog(QDialog):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Примененные фильтры:"))
+        layout.addWidget(QLabel(STRINGS.filters_applied_caption))
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -178,7 +230,7 @@ class FilterDialog(QDialog):
         self.scroll.setWidget(self.rows_widget)
         layout.addWidget(self.scroll, 1)
 
-        self.add_btn = QPushButton("Добавить фильтр")
+        self.add_btn = QPushButton(STRINGS.button_add_filter)
         self.add_btn.clicked.connect(self._add_filter)
         layout.addWidget(self.add_btn)
 
@@ -201,7 +253,7 @@ class FilterDialog(QDialog):
         self._clear_rows()
 
         if not self._filters:
-            empty_label = QLabel("Фильтры не заданы.")
+            empty_label = QLabel(STRINGS.filters_none)
             self._rows_layout.addWidget(empty_label)
 
         for condition in self._filters:
@@ -209,35 +261,58 @@ class FilterDialog(QDialog):
 
         self._rows_layout.addStretch(1)
 
-    def _build_row(self, condition: FilterCondition) -> QWidget:
+    def _build_row(self, condition: FilterCondition) -> QFrame:
         column = self._columns_by_name.get(condition.column_name)
         header = column.header if column else condition.column_name
         value_type = resolve_value_type(self.model_class, condition.column_name)
 
-        row = QWidget()
+        row = QFrame()
+        row.setFrameShape(QFrame.Box)
+        row.mouseDoubleClickEvent = (
+            lambda _event, item=condition: self._edit_filter(item)
+        )
         row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setContentsMargins(6, 4, 6, 4)
 
         label = QLabel(condition.describe(header, value_type))
         label.setWordWrap(True)
-        row_layout.addWidget(label, 1)
+        row_layout.addWidget(label, 1, Qt.AlignVCenter)
 
         remove_btn = QToolButton()
         remove_btn.setText("×")
-        remove_btn.setToolTip("Удалить фильтр")
-        remove_btn.clicked.connect(lambda _checked=False, item=condition: self._remove_filter(item))
-        row_layout.addWidget(remove_btn)
+        remove_btn.setToolTip(STRINGS.tooltip_remove_filter)
+        remove_btn.clicked.connect(
+            lambda _checked=False, item=condition: self._remove_filter(item)
+        )
+        row_layout.addWidget(remove_btn, 0, Qt.AlignVCenter)
 
         return row
 
     def _add_filter(self) -> None:
-        dialog = AddFilterDialog(self.model_class, self.columns, self)
+        dialog = AddFilterDialog(self.model_class, self.columns, parent=self)
         if dialog.exec_() != QDialog.Accepted:
             return
         condition = dialog.condition()
         if condition is None or condition in self._filters:
             return
         self._filters.append(condition)
+        self._rebuild_rows()
+        self.filtersChanged.emit(self.filters())
+
+    def _edit_filter(self, condition: FilterCondition) -> None:
+        """Открывает диалог изменения существующего условия."""
+        dialog = AddFilterDialog(
+            self.model_class, self.columns, condition=condition, parent=self
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        updated = dialog.condition()
+        if updated is None or (
+            updated != condition and updated in self._filters
+        ):
+            return
+        index = self._filters.index(condition)
+        self._filters[index] = updated
         self._rebuild_rows()
         self.filtersChanged.emit(self.filters())
 
