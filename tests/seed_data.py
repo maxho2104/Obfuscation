@@ -611,7 +611,9 @@ def _create_evaluations(
             ),
         )
         for _ in range(fake.random_int(3, 8)):
-            evaluation = Evaluation(value=fake.random_element(values))
+            evaluation = Evaluation(
+                value=fake.random_element(values), date=evaluation_list.date
+            )
             for document in random.sample(
                 documents, k=min(len(documents), fake.random_int(1, 4))
             ):

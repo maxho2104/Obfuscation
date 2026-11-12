@@ -46,6 +46,10 @@ class AppSettings:
     material_column_widths: str = ""
     telegram_column_widths: str = ""
 
+    # Применённые фильтры таблиц документов (JSON, см. gui/filter_model)
+    material_filters: str = ""
+    telegram_filters: str = ""
+
     # Срок хранения записей Change (в днях); <= 0 — бессрочно
     changes_retention_days: int = DEFAULT_CHANGES_RETENTION_DAYS
 

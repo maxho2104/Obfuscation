@@ -10,6 +10,10 @@ from internal_correspondence.core.domain_pack import dir_name
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.models import FileRecord, ScientificMaterial, Telegram
 from internal_correspondence.services.base_service import BaseService
+from internal_correspondence.services.file_service import (
+    cleanup_empty_dirs,
+    is_inside_storage,
+)
 
 logger = get_logger("document_service")
 
@@ -76,6 +80,121 @@ class DocumentFilesMixin:
             date_str = "unknown"
         number = document.outgoing_number or str(document.id)
         return Path(dir_name("files")) / dir_name(self._files_dir_key) / date_str / number
+
+    def plan_copy_targets(
+        self, document: Document, source_paths: List[Path]
+    ) -> List[tuple]:
+        """Возвращает пары (источник, назначение) для файлов вне хранилища.
+
+        Файлы внутри хранилища копированию не подлежат (см.
+        :meth:`link_existing_files`). Назначение вычисляется по исходящему
+        номеру и дате документа; разрешение конфликтов имён — на вызывающей
+        стороне (виджет спрашивает пользователя).
+        """
+        relative_dir = self._file_relative_dir(document)
+        target_dir = self.storage_root / relative_dir
+        return [
+            (source, target_dir / source.name)
+            for source in source_paths
+            if not is_inside_storage(source, self.storage_root)
+        ]
+
+    def link_existing_files(
+        self, document: Document, paths: List[Path]
+    ) -> List[FileRecord]:
+        """Привязывает файлы из хранилища без копирования (только связь)."""
+        records = []
+        for path in paths:
+            relative = path.resolve().relative_to(self.storage_root.resolve())
+            record = self._find_or_create_record(relative.parent, path.name)
+            if record not in document.files:
+                document.files.append(record)
+            records.append(record)
+        self.session.flush()
+        return records
+
+    def attach_copied_files(
+        self, document: Document, pairs: List[tuple]
+    ) -> List[FileRecord]:
+        """Привязывает уже скопированные в хранилище файлы (только связь в БД)."""
+        records = []
+        for _source, target in pairs:
+            relative = target.resolve().relative_to(self.storage_root.resolve())
+            record = self._find_or_create_record(relative.parent, target.name)
+            if record not in document.files:
+                document.files.append(record)
+            records.append(record)
+        self.session.flush()
+        return records
+
+    def detach_files(self, document: Document, records: List[FileRecord]) -> None:
+        """Открепляет файлы; неразделённые записи удаляются с диска.
+
+        Для каждого файла, не привязанного больше ни к одной записи,
+        удаляется запись FileRecord и сам файл; пустые папки хранилища
+        удаляются рекурсивно вплоть до корневой папки типа документа.
+        """
+        base_dir = self.storage_root / dir_name("files") / dir_name(self._files_dir_key)
+        for record in records:
+            if record in document.files:
+                document.files.remove(record)
+            self.session.flush()
+            if record.materials or record.telegrams:
+                continue  # файл разделён с другими записями — только отвязка
+            file_path = (
+                self.storage_root / record.path / f"{record.name}.{record.extension}"
+            )
+            parent = file_path.parent
+            self.session.delete(record)
+            self.session.flush()
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                except OSError as exc:
+                    logger.warning("Не удалось удалить файл %s: %s", file_path, exc)
+                    continue
+            cleanup_empty_dirs(parent, base_dir)
+
+    def rename_file(self, record: FileRecord, new_name: str) -> None:
+        """Переименовывает файл на диске и обновляет запись в БД."""
+        new_name = new_name.strip()
+        if not new_name:
+            raise DocumentServiceError("Имя файла не задано")
+        old_path = (
+            self.storage_root / record.path / f"{record.name}.{record.extension}"
+        )
+        target = old_path.with_name(new_name)
+        if target.exists() and target != old_path:
+            raise DocumentServiceError(f"Файл с именем {new_name} уже существует")
+        if old_path.exists() and old_path != target:
+            try:
+                old_path.rename(target)
+            except OSError as exc:
+                raise DocumentServiceError(f"Не удалось переименовать файл: {exc}")
+        record.name = target.stem
+        record.extension = target.suffix.lstrip(".")
+        self.session.flush()
+
+    def _find_or_create_record(self, relative: Path, file_name: str) -> FileRecord:
+        """Возвращает существующую запись файла или создаёт новую."""
+        record = (
+            self.session.query(FileRecord)
+            .filter_by(
+                path=str(relative).replace("\\", "/"),
+                name=Path(file_name).stem,
+                extension=Path(file_name).suffix.lstrip("."),
+            )
+            .first()
+        )
+        if record is None:
+            record = FileRecord(
+                name=Path(file_name).stem,
+                extension=Path(file_name).suffix.lstrip("."),
+                path=str(relative).replace("\\", "/"),
+            )
+            self.session.add(record)
+            self.session.flush()
+        return record
 
 
 class ScientificMaterialService(DocumentFilesMixin, BaseService[ScientificMaterial]):

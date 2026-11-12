@@ -181,6 +181,84 @@ class AppStrings:
     dialog_select_files: str = "Выберите файлы"
     msg_detach_confirm: str = "Открепить выбранные файлы ({count})?"
 
+    # --- Элементы редактирования и базовый диалог редактирования ---
+    button_more: str = "Больше"
+    button_less: str = "Меньше"
+    tooltip_add_items: str = "Добавить записи"
+    tooltip_remove_items: str = "Удалить выбранные записи"
+    placeholder_search: str = "Поиск..."
+    dialog_pick_title: str = "Выбор: {entity}"
+    msg_required_field: str = "Не заполнено обязательное поле «{label}»."
+    msg_invalid_field: str = "Поле «{label}» заполнено некорректно: {error}"
+    msg_value_must_be_int: str = "ожидается целое число"
+    msg_value_must_be_float: str = "ожидается число"
+    msg_number_date_together: str = "номер и дата должны быть заполнены вместе"
+    msg_duplicate_fields: str = "Запись с таким сочетанием полей ({fields}) уже существует."
+    msg_record_hidden_by_filters: str = (
+        "Запись сохранена, но не отображается в таблице: "
+        "она не попадает под действующие фильтры."
+    )
+
+    # --- Диалог фильтров ---
+    dialog_add_filter_title: str = "Добавить фильтр"
+    dialog_edit_filter_title: str = "Изменить фильтр"
+    label_field: str = "Поле:"
+    label_condition: str = "Условие:"
+    label_value: str = "Значение:"
+    placeholder_filter_value: str = "Введите значение"
+    button_add_filter: str = "Добавить фильтр"
+    filters_applied_caption: str = "Примененные фильтры:"
+    filters_none: str = "Фильтры не заданы."
+    tooltip_remove_filter: str = "Удалить фильтр"
+
+    # --- Прикреплённые файлы (док-виджет) ---
+    files_label_material: str = "Файлы к научному материалу № {number} от {date}"
+    files_label_telegram: str = "Файлы к телеграмме № {number} от {date}"
+    files_no_selection: str = "Выберите запись, чтобы увидеть прикреплённые файлы."
+    files_no_outgoing: str = (
+        "У выбранной записи не заданы исходящий номер и дата. "
+        "Прикрепление файлов невозможно."
+    )
+    files_copy_progress: str = "Копирование {name} из {source} в {target}"
+    files_conflict_text: str = (
+        "Файл «{name}» уже существует в папке назначения.\n"
+        "Заменить его или сохранить новый файл под другим именем?"
+    )
+    files_replace: str = "Заменить"
+    files_rename_new: str = "Новое имя"
+    files_skip: str = "Пропустить"
+    files_rename_title: str = "Переименовать файл"
+    files_rename_prompt: str = "Новое имя файла:"
+    files_rename_many: str = "Переименовать {count} файлов?"
+    files_detach_confirm: str = (
+        "Открепить выбранные файлы ({count})?\n"
+        "Файлы, не прикреплённые к другим записям, будут удалены с диска."
+    )
+    files_add_error: str = "Не удалось прикрепить файлы:\n{error}"
+    files_attached_info: str = "Прикреплено файлов: {count}"
+    action_rename: str = "Переименовать"
+    action_reveal: str = "Расположение файла"
+    action_assign_evaluation: str = "Выставить оценку"
+    dialog_assign_evaluation_title: str = "Выставить оценку"
+    label_evaluation_value: str = "Оценка:"
+    label_evaluation_date: str = "Дата выставления:"
+    msg_evaluation_assigned: str = "Оценка выставлена для {count} записей."
+
+    # --- Диалог настроек ---
+    settings_db_group: str = "База данных"
+    settings_sqlite_file_dialog: str = "Файл базы данных SQLite"
+    settings_sqlite_filter: str = "SQLite (*.db *.sqlite *.sqlite3)"
+    settings_storage_label: str = "Путь к хранилищу:"
+    settings_storage_dialog: str = "Директория хранилища"
+    label_role: str = "Роль:"
+    label_db_file: str = "Файл:"
+    label_host: str = "Хост:"
+    label_port: str = "Порт:"
+    label_database: str = "БД:"
+    label_user: str = "Пользователь:"
+    label_password: str = "Пароль:"
+    button_browse: str = "Обзор..."
+
 
 STRINGS = AppStrings()
 

@@ -62,7 +62,9 @@ def _create_documents(session):
 
 def _add_evaluation(session, number: str, value_date: date, value: EvaluationValue, materials, telegrams):
     evaluation_list = EvaluationList(number=number, date=value_date)
-    evaluation = Evaluation(value=value, materials=list(materials), telegrams=list(telegrams))
+    evaluation = Evaluation(
+        value=value, date=value_date, materials=list(materials), telegrams=list(telegrams)
+    )
     evaluation_list.evaluations.append(evaluation)
     session.add(evaluation_list)
     session.commit()
@@ -112,6 +114,43 @@ def test_latest_evaluation_is_used(db_manager: DatabaseManager) -> None:
         assert material_two.evaluation_display == "0,33 И"
         assert telegram.evaluation_display == "0,33 И"
         assert material_one.latest_evaluation.value == EvaluationValue.IMPORTANT
+
+
+def test_manual_evaluation_without_list_is_used(db_manager: DatabaseManager) -> None:
+    """Оценка без списка оценок участвует в отображении (ручное выставление)."""
+    with db_manager.get_session() as session:
+        material_one, _material_two, _telegram = _create_documents(session)
+        evaluation = Evaluation(
+            value=EvaluationValue.USEFUL,
+            date=date(2024, 4, 1),
+            materials=[material_one],
+        )
+        session.add(evaluation)
+        session.commit()
+
+        assert material_one.latest_evaluation is evaluation
+        assert material_one.evaluation_display == "П"
+
+
+def test_latest_evaluation_compares_evaluation_dates(db_manager: DatabaseManager) -> None:
+    """«Последняя» оценка определяется по дате выставления, а не списка."""
+    with db_manager.get_session() as session:
+        material_one, _material_two, _telegram = _create_documents(session)
+        older_list = EvaluationList(number="ОЦ-0001", date=date(2024, 5, 1))
+        older_evaluation = Evaluation(
+            value=EvaluationValue.INTERESTING, date=date(2024, 2, 1)
+        )
+        older_list.evaluations.append(older_evaluation)
+        material_one.evaluations.append(older_evaluation)
+        newer_evaluation = Evaluation(
+            value=EvaluationValue.IMPORTANT, date=date(2024, 3, 1)
+        )
+        material_one.evaluations.append(newer_evaluation)
+        session.add_all([older_list, material_one])
+        session.commit()
+
+        assert material_one.latest_evaluation is newer_evaluation
+        assert material_one.evaluation_display == "В"
 
 
 def test_evaluation_is_blank_when_missing(db_manager: DatabaseManager) -> None:

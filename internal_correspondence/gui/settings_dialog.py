@@ -1,6 +1,7 @@
 """Диалог настроек приложения."""
 
 from pathlib import Path
+from typing import List, Optional, Tuple
 
 from PyQt5.QtWidgets import (
     QComboBox,
@@ -16,22 +17,39 @@ from PyQt5.QtWidgets import (
     QRadioButton,
     QSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from internal_correspondence.core.constants import (
     DEFAULT_CHANGES_RETENTION_DAYS,
     Role,
 )
+from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.core.settings import AppSettings
+from internal_correspondence.gui.first_run_wizard import load_branches
+from internal_correspondence.orm.models import Branch
 from internal_correspondence.utils.string_resources import STRINGS
 
 
 class SettingsDialog(QDialog):
-    """Диалог изменения настроек приложения."""
+    """Диалог изменения настроек приложения.
 
-    def __init__(self, settings: AppSettings, parent=None) -> None:
+    Поля подключения PostgreSQL («Хост», «Порт», «БД», «Пользователь»,
+    «Пароль») скрываются при выборе SQLite и показываются при выборе
+    PostgreSQL; поле «Файл» SQLite — наоборот. Поле «Филиал» отображается
+    только для роли «Филиал» и заполняется наименованиями филиалов из
+    таблицы «Филиалы».
+    """
+
+    def __init__(
+        self,
+        settings: AppSettings,
+        db_manager: Optional[DatabaseManager] = None,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.settings = settings
+        self._db_manager = db_manager
         self.setWindowTitle(STRINGS.dialog_settings_title)
         self.setMinimumWidth(500)
         self._setup_ui()
@@ -42,7 +60,7 @@ class SettingsDialog(QDialog):
         form = QFormLayout()
 
         # База данных
-        self.db_group = QGroupBox("База данных")
+        self.db_group = QGroupBox(STRINGS.settings_db_group)
         db_layout = QGridLayout(self.db_group)
         self.sqlite_radio = QRadioButton("SQLite")
         self.postgresql_radio = QRadioButton("PostgreSQL")
@@ -50,9 +68,12 @@ class SettingsDialog(QDialog):
         db_layout.addWidget(self.postgresql_radio, 0, 1)
 
         self.sqlite_path = QLineEdit()
-        self.sqlite_browse = QPushButton("Обзор...")
+        self.sqlite_browse = QPushButton(STRINGS.button_browse)
         self.sqlite_browse.clicked.connect(self._browse_sqlite)
-        db_layout.addWidget(QLabel("Файл:"), 1, 0)
+        self._sqlite_rows: List[Tuple[QWidget, ...]] = [
+            (QLabel(STRINGS.label_db_file), self.sqlite_path, self.sqlite_browse)
+        ]
+        db_layout.addWidget(self._sqlite_rows[0][0], 1, 0)
         db_layout.addWidget(self.sqlite_path, 1, 1)
         db_layout.addWidget(self.sqlite_browse, 1, 2)
 
@@ -62,16 +83,16 @@ class SettingsDialog(QDialog):
         self.pg_user = QLineEdit()
         self.pg_password = QLineEdit()
         self.pg_password.setEchoMode(QLineEdit.Password)
-        db_layout.addWidget(QLabel("Хост:"), 2, 0)
-        db_layout.addWidget(self.pg_host, 2, 1)
-        db_layout.addWidget(QLabel("Порт:"), 3, 0)
-        db_layout.addWidget(self.pg_port, 3, 1)
-        db_layout.addWidget(QLabel("БД:"), 4, 0)
-        db_layout.addWidget(self.pg_database, 4, 1)
-        db_layout.addWidget(QLabel("Пользователь:"), 5, 0)
-        db_layout.addWidget(self.pg_user, 5, 1)
-        db_layout.addWidget(QLabel("Пароль:"), 6, 0)
-        db_layout.addWidget(self.pg_password, 6, 1)
+        self._pg_rows: List[Tuple[QWidget, ...]] = [
+            (QLabel(STRINGS.label_host), self.pg_host),
+            (QLabel(STRINGS.label_port), self.pg_port),
+            (QLabel(STRINGS.label_database), self.pg_database),
+            (QLabel(STRINGS.label_user), self.pg_user),
+            (QLabel(STRINGS.label_password), self.pg_password),
+        ]
+        for row_index, (label, editor) in enumerate(self._pg_rows, start=2):
+            db_layout.addWidget(label, row_index, 0)
+            db_layout.addWidget(editor, row_index, 1)
 
         self.sqlite_radio.toggled.connect(self._on_db_type_changed)
         self.postgresql_radio.toggled.connect(self._on_db_type_changed)
@@ -79,10 +100,10 @@ class SettingsDialog(QDialog):
 
         # Хранилище
         self.storage_path = QLineEdit()
-        self.storage_browse = QPushButton("Обзор...")
+        self.storage_browse = QPushButton(STRINGS.button_browse)
         self.storage_browse.clicked.connect(self._browse_storage)
         storage_layout = QGridLayout()
-        storage_layout.addWidget(QLabel("Путь к хранилищу:"), 0, 0)
+        storage_layout.addWidget(QLabel(STRINGS.settings_storage_label), 0, 0)
         storage_layout.addWidget(self.storage_path, 0, 1)
         storage_layout.addWidget(self.storage_browse, 0, 2)
         layout.addLayout(storage_layout)
@@ -91,9 +112,17 @@ class SettingsDialog(QDialog):
         self.role_combo = QComboBox()
         self.role_combo.addItem(STRINGS.role_head_office, Role.HEAD_OFFICE.value)
         self.role_combo.addItem(STRINGS.role_branch, Role.BRANCH.value)
-        self.branch_id = QLineEdit()
-        form.addRow("Роль:", self.role_combo)
-        form.addRow("Филиал:", self.branch_id)
+        form.addRow(STRINGS.label_role, self.role_combo)
+
+        # Филиал: выбор из справочника филиалов (только для роли «Филиал»)
+        self.branch_label = QLabel(STRINGS.label_branch)
+        self.branch_combo = QComboBox()
+        form.addRow(self.branch_label, self.branch_combo)
+        self._branch_rows: Tuple[QWidget, ...] = (
+            self.branch_label,
+            self.branch_combo,
+        )
+        self.role_combo.currentIndexChanged.connect(self._on_role_changed)
 
         # Срок хранения журнала изменений
         self.changes_retention = QSpinBox()
@@ -111,29 +140,64 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.buttons)
 
     def _on_db_type_changed(self) -> None:
+        """Показывает поля выбранного типа БД и скрывает остальные."""
         is_sqlite = self.sqlite_radio.isChecked()
-        self.sqlite_path.setEnabled(is_sqlite)
-        self.sqlite_browse.setEnabled(is_sqlite)
-        self.pg_host.setEnabled(not is_sqlite)
-        self.pg_port.setEnabled(not is_sqlite)
-        self.pg_database.setEnabled(not is_sqlite)
-        self.pg_user.setEnabled(not is_sqlite)
-        self.pg_password.setEnabled(not is_sqlite)
+        for row in self._sqlite_rows:
+            for widget in row:
+                widget.setVisible(is_sqlite)
+        for row in self._pg_rows:
+            for widget in row:
+                widget.setVisible(not is_sqlite)
+
+    def _on_role_changed(self) -> None:
+        """Показывает поле «Филиал» только для роли «Филиал»."""
+        is_branch = self.role_combo.currentData() == Role.BRANCH.value
+        for widget in self._branch_rows:
+            widget.setVisible(is_branch)
 
     def _browse_sqlite(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Файл базы данных SQLite",
+            STRINGS.settings_sqlite_file_dialog,
             "",
-            "SQLite (*.db *.sqlite *.sqlite3)",
+            STRINGS.settings_sqlite_filter,
         )
         if path:
             self.sqlite_path.setText(path)
 
     def _browse_storage(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Директория хранилища")
+        path = QFileDialog.getExistingDirectory(
+            self, STRINGS.settings_storage_dialog
+        )
         if path:
             self.storage_path.setText(path)
+
+    def _load_branches(self) -> None:
+        """Заполняет комбобокс филиалов наименованиями из таблицы «Филиалы»."""
+        if self._db_manager is not None:
+            session = self._db_manager.get_session()
+            try:
+                rows = session.query(Branch.id, Branch.name).order_by(Branch.name).all()
+                branches = [(row[0], row[1]) for row in rows]
+            except Exception:  # pylint: disable=broad-except
+                branches = []
+            finally:
+                session.close()
+        else:
+            branches = load_branches(self.settings.db_url)
+
+        self.branch_combo.clear()
+        for branch_id, name in branches:
+            self.branch_combo.addItem(f"{branch_id} — {name}", branch_id)
+        # Текущее значение настройки должно отображаться даже если
+        # филиал отсутствует в справочнике
+        current = self.settings.branch_id
+        if current:
+            index = self.branch_combo.findData(current)
+            if index < 0:
+                self.branch_combo.addItem(current, current)
+                index = self.branch_combo.count() - 1
+            self.branch_combo.setCurrentIndex(index)
 
     def _load_settings(self) -> None:
         url = self.settings.db_url
@@ -159,13 +223,14 @@ class SettingsDialog(QDialog):
         index = self.role_combo.findData(self.settings.role)
         if index >= 0:
             self.role_combo.setCurrentIndex(index)
-        self.branch_id.setText(self.settings.branch_id)
+        self._load_branches()
         try:
             retention = int(self.settings.changes_retention_days)
         except (TypeError, ValueError):
             retention = DEFAULT_CHANGES_RETENTION_DAYS
         self.changes_retention.setValue(max(0, retention))
         self._on_db_type_changed()
+        self._on_role_changed()
 
     def _on_save(self) -> None:
         if self.sqlite_radio.isChecked():
@@ -183,6 +248,6 @@ class SettingsDialog(QDialog):
 
         self.settings.storage_path = self.storage_path.text().strip()
         self.settings.role = self.role_combo.currentData()
-        self.settings.branch_id = self.branch_id.text().strip()
+        self.settings.branch_id = self.branch_combo.currentData() or ""
         self.settings.changes_retention_days = self.changes_retention.value()
         self.accept()

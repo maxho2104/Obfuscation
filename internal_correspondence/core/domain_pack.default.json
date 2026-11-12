@@ -461,6 +461,9 @@
         "permit_number": {
           "label": "Номер разрешительного документа"
         },
+        "permit_date": {
+          "label": "Дата разрешительного документа"
+        },
         "cost": {
           "label": "Стоимость"
         },
@@ -478,6 +481,9 @@
         },
         "tasks": {
           "label": "Задачи"
+        },
+        "employees": {
+          "label": "Сотрудники"
         },
         "consumer": {
           "label": "Потребитель"
@@ -551,6 +557,9 @@
         "report_addresses": {
           "label": "Адресация доклада"
         },
+        "employees": {
+          "label": "Сотрудники"
+        },
         "branch": {
           "label": "Филиал"
         },
@@ -610,6 +619,9 @@
       "fields": {
         "value": {
           "label": "Значение оценки"
+        },
+        "date": {
+          "label": "Дата выставления"
         },
         "evaluation_list_id": {
           "label": "Список оценок"
@@ -758,6 +770,64 @@
     "tooltip_file_missing": "Файл отсутствует в хранилище: {path}",
     "file_new_suffix": "(новый)",
     "dialog_select_files": "Выберите файлы",
-    "msg_detach_confirm": "Открепить выбранные файлы ({count})?"
+    "msg_detach_confirm": "Открепить выбранные файлы ({count})?",
+    "button_more": "Больше",
+    "button_less": "Меньше",
+    "tooltip_add_items": "Добавить записи",
+    "tooltip_remove_items": "Удалить выбранные записи",
+    "placeholder_search": "Поиск...",
+    "dialog_pick_title": "Выбор: {entity}",
+    "msg_required_field": "Не заполнено обязательное поле «{label}».",
+    "msg_invalid_field": "Поле «{label}» заполнено некорректно: {error}",
+    "msg_value_must_be_int": "ожидается целое число",
+    "msg_value_must_be_float": "ожидается число",
+    "msg_number_date_together": "номер и дата должны быть заполнены вместе",
+    "msg_duplicate_fields": "Запись с таким сочетанием полей ({fields}) уже существует.",
+    "msg_record_hidden_by_filters": "Запись сохранена, но не отображается в таблице: она не попадает под действующие фильтры.",
+    "dialog_add_filter_title": "Добавить фильтр",
+    "dialog_edit_filter_title": "Изменить фильтр",
+    "label_field": "Поле:",
+    "label_condition": "Условие:",
+    "label_value": "Значение:",
+    "placeholder_filter_value": "Введите значение",
+    "button_add_filter": "Добавить фильтр",
+    "filters_applied_caption": "Примененные фильтры:",
+    "filters_none": "Фильтры не заданы.",
+    "tooltip_remove_filter": "Удалить фильтр",
+    "files_label_material": "Файлы к научному материалу № {number} от {date}",
+    "files_label_telegram": "Файлы к телеграмме № {number} от {date}",
+    "files_no_selection": "Выберите запись, чтобы увидеть прикреплённые файлы.",
+    "files_no_outgoing": "У выбранной записи не заданы исходящий номер и дата. Прикрепление файлов невозможно.",
+    "files_copy_progress": "Копирование {name} из {source} в {target}",
+    "files_conflict_text": "Файл «{name}» уже существует в папке назначения.\nЗаменить его или сохранить новый файл под другим именем?",
+    "files_replace": "Заменить",
+    "files_rename_new": "Новое имя",
+    "files_skip": "Пропустить",
+    "files_rename_title": "Переименовать файл",
+    "files_rename_prompt": "Новое имя файла:",
+    "files_rename_many": "Переименовать {count} файлов?",
+    "files_detach_confirm": "Открепить выбранные файлы ({count})?\nФайлы, не прикреплённые к другим записям, будут удалены с диска.",
+    "files_add_error": "Не удалось прикрепить файлы:\n{error}",
+    "files_attached_info": "Прикреплено файлов: {count}",
+    "action_rename": "Переименовать",
+    "action_reveal": "Расположение файла",
+    "action_assign_evaluation": "Выставить оценку",
+    "dialog_assign_evaluation_title": "Выставить оценку",
+    "label_evaluation_value": "Оценка:",
+    "label_evaluation_date": "Дата выставления:",
+    "msg_evaluation_assigned": "Оценка выставлена для {count} записей.",
+    "settings_db_group": "База данных",
+    "settings_sqlite_file_dialog": "Файл базы данных SQLite",
+    "settings_sqlite_filter": "SQLite (*.db *.sqlite *.sqlite3)",
+    "settings_storage_label": "Путь к хранилищу:",
+    "settings_storage_dialog": "Директория хранилища",
+    "label_role": "Роль:",
+    "label_db_file": "Файл:",
+    "label_host": "Хост:",
+    "label_port": "Порт:",
+    "label_database": "БД:",
+    "label_user": "Пользователь:",
+    "label_password": "Пароль:",
+    "button_browse": "Обзор..."
   }
 }
