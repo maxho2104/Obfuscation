@@ -608,38 +608,34 @@ class MainWindow(QMainWindow):
             SettingsManager().save(self.settings)
 
     def _open_oshm(self) -> None:
-        """Открывает диалог ОШС."""
-        branch_id = self.settings.branch_id
-        if not branch_id:
-            if self.settings.role == Role.HEAD_OFFICE.value:
-                # В головном офисе можно выбрать филиал для просмотра
-                branch, ok = self._select_branch()
-                if not ok or not branch:
-                    return
-                branch_id = branch
-            else:
-                QMessageBox.warning(self, STRINGS.title_oshm, STRINGS.msg_no_branch_selected)
-                return
+        """Открывает диалог ОШС: головной офис видит все филиалы, филиал — себя."""
         is_head_office = self.settings.role == Role.HEAD_OFFICE.value
+        branch_id = self.settings.branch_id
+        if not is_head_office and not branch_id:
+            QMessageBox.warning(self, STRINGS.title_oshm, STRINGS.msg_no_branch_selected)
+            return
         dialog = OSHMDialog(
             self.db_manager.get_session(),
-            branch_id,
-            read_only=is_head_office,
+            branch_id=branch_id or None,
+            role=self.settings.role,
             parent=self,
         )
-        dialog.exec_()
-
-    def _select_branch(self) -> tuple:
-        """Показывает простой выбор филиала для головного офиса."""
-        from PyQt5.QtWidgets import QInputDialog
-        branches = self.db_manager.get_session().query(Branch).order_by(Branch.name).all()
-        items = [f"{b.id} — {b.name}" for b in branches]
-        text, ok = QInputDialog.getItem(
-            self, STRINGS.dialog_select_branch, STRINGS.label_branch, items, 0, False
+        # Кнопка «Статистика» на панели сведений: диалог закрывается,
+        # открывается вкладка статистики с выделенной строкой элемента
+        self._oshm_statistics_node = None
+        dialog.details_panel.statistics_requested.connect(
+            lambda node: self._on_oshm_statistics(dialog, node)
         )
-        if ok and text:
-            return text.split(" — ")[0], True
-        return None, ok
+        dialog.exec_()
+        if self._oshm_statistics_node is not None:
+            self.tabs.setCurrentWidget(self.statistics_tab)
+            self.statistics_tab.show_element(self._oshm_statistics_node)
+            self._oshm_statistics_node = None
+
+    def _on_oshm_statistics(self, dialog: OSHMDialog, node) -> None:
+        """Запоминает элемент ОШС для статистики и закрывает диалог."""
+        self._oshm_statistics_node = node
+        dialog.accept()
 
 
 def _changes_retention_days(settings: AppSettings) -> int:

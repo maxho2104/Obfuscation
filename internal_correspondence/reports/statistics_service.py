@@ -8,10 +8,11 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 from sqlalchemy.orm import Session
 
 from internal_correspondence.core.constants import EvaluationValue
-from internal_correspondence.core.domain_pack import enum_label
+from internal_correspondence.core.domain_pack import enum_label, enum_weight
 from internal_correspondence.core.enum_registry import pack_enum_display
 from internal_correspondence.orm.base import Base
 from internal_correspondence.orm.labels import entity_label
+from internal_correspondence.utils.string_resources import STRINGS
 
 # Типы периодов
 PERIOD_YEAR = "year"
@@ -27,6 +28,7 @@ PERIOD_LABELS = {
 }
 
 # Критерии подсчёта
+CRITERION_BRANCH = "branch"
 CRITERION_EMPLOYEE = "employee"
 CRITERION_DEPARTMENT = "department"
 CRITERION_WORKGROUP = "workgroup"
@@ -39,11 +41,43 @@ CRITERION_LABELS = {
     CRITERION_EMPLOYEE: "Сотрудники",
     CRITERION_DEPARTMENT: "Отделы",
     CRITERION_WORKGROUP: "Рабочие группы",
+    CRITERION_BRANCH: "Филиалы",
     CRITERION_CONSUMER: "Потребители",
     CRITERION_TASK: "Научные задачи",
     CRITERION_SOURCE: "Источники",
     CRITERION_EVALUATION: "Полученные оценки",
 }
+
+# Допустимые подкатегории: строки подкритерия группируются по строкам критерия
+SUBCRITERIA = {
+    CRITERION_BRANCH: (CRITERION_DEPARTMENT, CRITERION_WORKGROUP, CRITERION_EMPLOYEE),
+    CRITERION_DEPARTMENT: (CRITERION_WORKGROUP, CRITERION_EMPLOYEE),
+    CRITERION_WORKGROUP: (CRITERION_EMPLOYEE,),
+    CRITERION_TASK: (CRITERION_EMPLOYEE,),
+}
+
+
+def _parent_links(group_criterion: str, subcriterion: str, member: Any) -> List[Any]:
+    """Возвращает ключи групп, которым принадлежит элемент подкатегории."""
+    if subcriterion == CRITERION_EMPLOYEE:
+        if group_criterion == CRITERION_DEPARTMENT:
+            return [member.department_id]
+        if group_criterion == CRITERION_WORKGROUP:
+            return [member.working_group_id] if member.working_group_id else []
+        if group_criterion == CRITERION_BRANCH:
+            department = member.department
+            return [department.branch_id] if department is not None else []
+        if group_criterion == CRITERION_TASK:
+            return [task.id for task in member.tasks]
+    if subcriterion == CRITERION_WORKGROUP:
+        if group_criterion == CRITERION_DEPARTMENT:
+            return [member.department_id]
+        if group_criterion == CRITERION_BRANCH:
+            department = member.department
+            return [department.branch_id] if department is not None else []
+    if subcriterion == CRITERION_DEPARTMENT and group_criterion == CRITERION_BRANCH:
+        return [member.branch_id]
+    return []
 
 _MONTH_NAMES = (
     "Январь",
@@ -99,6 +133,7 @@ class StatisticsQuery:
     quarter: int = 1
     month: int = 1
     financial: bool = False
+    subcriterion: Optional[str] = None
 
 
 @dataclass
@@ -108,6 +143,9 @@ class StatisticsRow:
     label: str
     values: List[int] = field(default_factory=list)
     total: int = 0
+    key: Any = None
+    # Строка-итог группы (при выбранной подкатегории); под ней — её элементы
+    is_group: bool = False
 
 
 @dataclass
@@ -122,6 +160,7 @@ class StatisticsResult:
     grand_total: int
     month_columns: List[str] = field(default_factory=list)
     month_indices: List[int] = field(default_factory=list)
+    summary: Optional[str] = None
 
 
 def _month_period(year: int, month: int) -> Period:
@@ -274,6 +313,47 @@ class StatisticsService:
 
         documents = self._load_documents(query.model_class, search_period)
 
+        if query.subcriterion:
+            rows = self._count_grouped(documents, query, columns, search_period)
+        else:
+            rows = self._count_plain(documents, query, columns, search_period)
+
+        # Итоги считаются по строкам верхнего уровня: при группировке
+        # итоговые строки групп уже включают значения своих элементов
+        top_rows = [row for row in rows if row.is_group] or rows
+        totals_row = [
+            sum(row.values[index] for row in top_rows) for index in range(len(columns))
+        ]
+        grand_total = sum(row.total for row in top_rows)
+        month_indices = [
+            index for index, column in enumerate(columns) if column.label in _MONTH_NAMES
+        ]
+        month_columns = [columns[index].label for index in month_indices]
+
+        title = f"{entity_label(query.model_class, plural=True)}" f" — {CRITERION_LABELS.get(query.criterion, query.criterion)}"
+        if query.subcriterion:
+            title += f" / {CRITERION_LABELS.get(query.subcriterion, query.subcriterion)}"
+
+        return StatisticsResult(
+            title=title,
+            period_label=self._period_label(reporting, search_period),
+            columns=[column.label for column in columns],
+            rows=rows,
+            totals=totals_row,
+            grand_total=grand_total,
+            month_columns=month_columns,
+            month_indices=month_indices,
+            summary=self._evaluation_summary(documents, query, search_period),
+        )
+
+    def _count_plain(
+        self,
+        documents: List[Base],
+        query: StatisticsQuery,
+        columns: List[Period],
+        search_period: Period,
+    ) -> List[StatisticsRow]:
+        """Подсчёт без группировки: строка на каждое значение критерия."""
         counts: Dict[Any, List[int]] = {}
         totals: Dict[Any, int] = {}
         labels: Dict[Any, str] = {}
@@ -306,32 +386,124 @@ class StatisticsService:
                 totals[key] += 1
 
         rows = [
-            StatisticsRow(labels[key], list(counts[key]), totals[key])
+            StatisticsRow(labels[key], list(counts[key]), totals[key], key=key)
             for key in order
             if totals[key] > 0 or query.criterion == CRITERION_EVALUATION
         ]
         if query.criterion != CRITERION_EVALUATION:
             rows.sort(key=lambda row: row.label)
+        return rows
 
-        totals_row = [
-            sum(row.values[index] for row in rows) for index in range(len(columns))
-        ]
-        grand_total = sum(row.total for row in rows)
-        month_indices = [
-            index for index, column in enumerate(columns) if column.label in _MONTH_NAMES
-        ]
-        month_columns = [columns[index].label for index in month_indices]
+    def _count_grouped(
+        self,
+        documents: List[Base],
+        query: StatisticsQuery,
+        columns: List[Period],
+        search_period: Period,
+    ) -> List[StatisticsRow]:
+        """Подсчёт с подкатегорией: элементы сгруппированы по значениям критерия.
 
-        return StatisticsResult(
-            title=f"{entity_label(query.model_class, plural=True)}"
-            f" — {CRITERION_LABELS.get(query.criterion, query.criterion)}",
-            period_label=self._period_label(reporting, search_period),
-            columns=[column.label for column in columns],
-            rows=rows,
-            totals=totals_row,
-            grand_total=grand_total,
-            month_columns=month_columns,
-            month_indices=month_indices,
+        Итог группы — сумма значений её элементов.
+        """
+        groups: Dict[Any, Dict[str, Any]] = {}
+
+        for document in documents:
+            document_date = self._document_date(document)
+            if document_date is None or not search_period.contains(document_date):
+                continue
+            group_targets = self._criterion_targets(document, query.criterion)
+            group_keys = {key for key, _label in group_targets}
+            for key, label in group_targets:
+                if key not in groups:
+                    groups[key] = {
+                        "label": label,
+                        "counts": [0] * len(columns),
+                        "total": 0,
+                        "members": {},
+                    }
+            counted: set = set()
+            for member in self._criterion_objects(document, query.subcriterion):
+                member_key, member_label = self._object_key_label(
+                    query.subcriterion, member
+                )
+                if member_key in counted:
+                    continue
+                parents = [
+                    key
+                    for key in _parent_links(
+                        query.criterion, query.subcriterion, member
+                    )
+                    if key in group_keys
+                ]
+                if not parents:
+                    continue
+                counted.add(member_key)
+                for parent in parents:
+                    group = groups[parent]
+                    members = group["members"]
+                    if member_key not in members:
+                        members[member_key] = {
+                            "label": member_label,
+                            "counts": [0] * len(columns),
+                            "total": 0,
+                        }
+                    entry = members[member_key]
+                    for index, column in enumerate(columns):
+                        if column.contains(document_date):
+                            entry["counts"][index] += 1
+                            group["counts"][index] += 1
+                    entry["total"] += 1
+                    group["total"] += 1
+
+        rows: List[StatisticsRow] = []
+        for key in sorted(groups, key=lambda item: groups[item]["label"]):
+            group = groups[key]
+            if group["total"] == 0:
+                continue
+            rows.append(
+                StatisticsRow(
+                    group["label"], group["counts"], group["total"],
+                    key=key, is_group=True,
+                )
+            )
+            members = group["members"]
+            for member_key in sorted(members, key=lambda item: members[item]["label"]):
+                member = members[member_key]
+                if member["total"] == 0:
+                    continue
+                rows.append(
+                    StatisticsRow(
+                        member["label"], member["counts"], member["total"],
+                        key=member_key,
+                    )
+                )
+        return rows
+
+    def _evaluation_summary(
+        self,
+        documents: List[Base],
+        query: StatisticsQuery,
+        search_period: Period,
+    ) -> Optional[str]:
+        """Средний балл последних оценок документов периода (по весам пакета)."""
+        if query.criterion != CRITERION_EVALUATION:
+            return None
+        weights = []
+        for document in documents:
+            document_date = self._document_date(document)
+            if document_date is None or not search_period.contains(document_date):
+                continue
+            evaluation = document.latest_evaluation
+            if evaluation is None:
+                continue
+            code = pack_enum_display("evaluation_value", evaluation.value)
+            weight = enum_weight("evaluation_value", code)
+            if weight is not None:
+                weights.append(weight)
+        if not weights:
+            return None
+        return STRINGS.stats_avg_score.format(
+            value=f"{sum(weights) / len(weights):.2f}"
         )
 
     def available_period_years(
@@ -380,6 +552,12 @@ class StatisticsService:
 
     def _criterion_targets(self, document: Base, criterion: str) -> List[Tuple[Any, str]]:
         """Возвращает пары (ключ, подпись) для критерия подсчёта."""
+        if criterion == CRITERION_BRANCH:
+            branch = getattr(document, "branch", None)
+            if branch is None:
+                return []
+            return [(branch.id, branch.short_name or branch.name)]
+
         if criterion == CRITERION_EMPLOYEE:
             return [
                 (employee.id, employee.display_name())
@@ -421,6 +599,28 @@ class StatisticsService:
             return [(int(evaluation.value), enum_label("evaluation_value", code))]
 
         return []
+
+    @staticmethod
+    def _criterion_objects(document: Base, criterion: str) -> List[Any]:
+        """Возвращает объекты-элементы критерия (для подсчёта с подкатегорией)."""
+        if criterion == CRITERION_EMPLOYEE:
+            return list(document.employees)
+        if criterion == CRITERION_DEPARTMENT:
+            return list(document.participating_departments)
+        if criterion == CRITERION_WORKGROUP:
+            return list(document.participating_workgroups)
+        return []
+
+    @staticmethod
+    def _object_key_label(criterion: str, obj: Any) -> Tuple[Any, str]:
+        """Возвращает пару (ключ, подпись) объекта-элемента подкритерия."""
+        if criterion == CRITERION_EMPLOYEE:
+            return obj.id, obj.display_name()
+        if criterion == CRITERION_DEPARTMENT:
+            return obj.id, obj.short_name or obj.name
+        if criterion == CRITERION_WORKGROUP:
+            return obj.id, obj.name
+        return None, str(obj)
 
     @staticmethod
     def _source_label(source: Any) -> str:
