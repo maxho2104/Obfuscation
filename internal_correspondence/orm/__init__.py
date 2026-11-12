@@ -3,6 +3,7 @@
 from internal_correspondence.orm.base import Base, TimestampMixin, VersionedMixin
 from internal_correspondence.orm.models import (
     AcademicTitle,
+    AddedTask,
     Branch,
     Change,
     Consumer,
@@ -27,6 +28,7 @@ __all__ = [
     "TimestampMixin",
     "VersionedMixin",
     "AcademicTitle",
+    "AddedTask",
     "Branch",
     "Change",
     "Consumer",
