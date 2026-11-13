@@ -5,15 +5,15 @@
 Назначения хранятся отдельно от документов и участвуют в delta-обмене
 как tracked-сущность.
 
-Одновременно удаляется устаревшая связь «задача — сотрудник»
-(``task_employees``): распределение задач теперь описывается назначениями
-на узлы, а не прямым списком сотрудников.
+Историческая связь «задача — сотрудник» (``task_employees``) сохраняется
+для панели ОШС и статистики по исполнителям; распределение задач по
+иерархии ведётся через ``added_tasks``.
 
 Данные не переносятся: старые связи задач с сотрудниками не имеют
 однозначного соответствия новой иерархии.
 
 Revision ID: f3b1c9d2e4a7
-Revises: c4a8f1b2d3e4
+Revises: b1d2e3f4a5c6
 Create Date: 2026-11-12 22:40:00.000000
 
 """
@@ -25,7 +25,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "f3b1c9d2e4a7"
-down_revision: Union[str, None] = "c4a8f1b2d3e4"
+down_revision: Union[str, None] = "b1d2e3f4a5c6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -39,9 +39,6 @@ def upgrade() -> None:
         sa.Column("node_type", sa.String(length=20), nullable=False),
         sa.Column("node_id", sa.String(length=50), nullable=False),
         sa.Column("change_id", sa.Integer(), nullable=True),
-        sa.Column("row_version", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.Column("updated_at", sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(
             ["task_id"], ["scientific_tasks.id"], ondelete="CASCADE"
         ),
@@ -60,23 +57,10 @@ def upgrade() -> None:
     op.create_index(
         "ix_added_tasks_node", "added_tasks", ["node_type", "node_id"], unique=False
     )
-    op.drop_table("task_employees")
 
 
 def downgrade() -> None:
-    """Удаляет назначения и восстанавливает task_employees."""
-    op.create_table(
-        "task_employees",
-        sa.Column("task_id", sa.String(length=50), nullable=False),
-        sa.Column("employee_id", sa.UUID(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["employee_id"], ["employees.id"], ondelete="CASCADE"
-        ),
-        sa.ForeignKeyConstraint(
-            ["task_id"], ["scientific_tasks.id"], ondelete="CASCADE"
-        ),
-        sa.PrimaryKeyConstraint("task_id", "employee_id"),
-    )
+    """Удаляет назначения."""
     op.drop_index("ix_added_tasks_node", table_name="added_tasks")
     op.drop_index("ix_added_tasks_task_id", table_name="added_tasks")
     op.drop_table("added_tasks")

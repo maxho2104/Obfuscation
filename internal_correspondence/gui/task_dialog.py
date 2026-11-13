@@ -19,7 +19,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from internal_correspondence.core.domain_pack import enum_labels
+from internal_correspondence.core.constants import ScientificTaskType
+from internal_correspondence.core.domain_pack import enum_code_of, enum_label
 from internal_correspondence.orm.labels import field_form_label
 from internal_correspondence.orm.models import ScientificTask
 from internal_correspondence.utils.string_resources import STRINGS
@@ -50,8 +51,14 @@ class ScientificTaskDialog(QDialog):
         self.id_edit.setMaxLength(50)
         self.name_edit = QLineEdit()
         self.type_combo = QComboBox()
-        for code, label in enum_labels("scientific_task_type").items():
-            self.type_combo.addItem(f"{label} ({code})", code)
+        for member in ScientificTaskType:
+            key = member.name.lower()
+            try:
+                code = enum_code_of("scientific_task_type", key)
+            except ValueError:
+                continue
+            label = enum_label("scientific_task_type", code)
+            self.type_combo.addItem(f"{label} ({code})", int(member))
 
         self.start_edit = QDateEdit()
         self.start_edit.setCalendarPopup(True)
@@ -110,7 +117,7 @@ class ScientificTaskDialog(QDialog):
     def _load(self, task: ScientificTask) -> None:
         self.id_edit.setText(task.id)
         self.name_edit.setText(task.name)
-        index = self.type_combo.findData(task.type)
+        index = self.type_combo.findData(int(task.type))
         if index >= 0:
             self.type_combo.setCurrentIndex(index)
         self.start_edit.setDate(_to_qdate(task.start_date))

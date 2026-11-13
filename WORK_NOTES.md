@@ -329,6 +329,48 @@
 - Автоматический тест именно Qt-перетаскивания (покрыты MIME-данные и логика
   приёма; сам жест мышью проверяется вручную).
 
+---
+
+## 2026-11-13 — Слияние main и test, исправление регрессий
+
+### Что сделано
+- `git fetch origin --prune`: `origin/main` = 62174bc (PR #6 from test),
+  `origin/test` = 3153545. Локальный `main` был на a638288, `test` — на 3a57502.
+- `git checkout main`, `git pull --ff-only origin main` — fast-forward до 62174bc.
+  `git merge test` сообщил «Already up to date»: main уже содержал test через PR #6.
+  Локальный `test` обновлён до `origin/test` (3153545).
+- После слияния полный прогон тестов выявил несовместимости с изменениями main
+  (IntEnum, удаление `VersionedMixin`/`TimestampMixin`, `TaskEntityLink`,
+  `task_employee_association`).
+
+### Исправления
+- **`orm/models.py`:** `AddedTask` больше не наследует удалённый `VersionedMixin`
+  (`class AddedTask(Base, ChangeTrackedMixin)`); восстановлены
+  `task_employee_association`, `Employee.tasks`, `ScientificTask.employees` —
+  на них опираются панель ОШС и статистика main. Восстановлен `TaskEntityLink`
+  (`task_entity_links`) для совместимости с `orm/__init__.py` и тестами main.
+- **`alembic/versions/f3b1c9d2e4a7_task_distribution.py`:** `down_revision`
+  переведён с c4a8f1b2d3e4 на b1d2e3f4a5c6 (устранён второй head); убраны
+  колонки `row_version/created_at/updated_at` и удаление `task_employees`.
+  Единственный head — `f3b1c9d2e4a7`.
+- **`services/reference_service.py`:** `ScientificTaskService._as_task_type`
+  принимает `ScientificTaskType`, int, код пакета, метку или имя; тип хранится
+  как IntEnum.
+- **`gui/task_dialog.py`:** комбобокс типа заполняется `int(member)` и
+  восстанавливает значение через `findData(int(task.type))`.
+- **`tests/test_task_distribution.py`:** фикстура создаёт отдел/сотрудника/
+  группу с явными `branch_id`/`department_id` и промежуточными `flush()`
+  (change tracking не видит FK, выставленный через связь до flush).
+- **`scripts_dev/test_migration_task_distribution.py`:** проверяет ревизию
+  `b1d2e3f4a5c6`, отсутствие `row_version` и сохранение `task_employees`.
+
+### Проверка
+- `pytest tests -q` — **253 passed** (62,73 с).
+- `scripts_dev/test_migration_task_distribution.py` — upgrade/downgrade/повторный
+  upgrade OK; `alembic heads` — единственный `f3b1c9d2e4a7`.
+- `py_compile` изменённых модулей; импорт `gui.application` — OK.
+
+
 ## 2026-11-11 — Удаление миксинов VersionedMixin и TimestampMixin
 
 ### Изменения

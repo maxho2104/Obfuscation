@@ -56,15 +56,20 @@ def _setup_org(session):
         short_name="Ф-1",
         territorial_unit_id="MSK",
     )
-    department = Department(name="Отдел 1", branch=branch)
+    session.add_all([unit, branch])
+    session.flush()
+    department = Department(name="Отдел 1", branch_id=branch.id)
+    session.add(department)
+    session.flush()
     employee = Employee(
         last_name="Иванов",
         first_name="Иван",
-        department=department,
+        department_id=department.id,
     )
-    group = WorkingGroup(name="Группа 1", department=department)
-    employee.working_group = group
-    session.add_all([unit, branch, department, employee, group])
+    group = WorkingGroup(name="Группа 1", department_id=department.id)
+    session.add_all([employee, group])
+    session.flush()
+    employee.working_group_id = group.id
     session.commit()
     return unit, branch, department, employee, group
 

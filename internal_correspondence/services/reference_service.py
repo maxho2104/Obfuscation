@@ -3,7 +3,8 @@
 from datetime import date, datetime
 from typing import Any, Dict, Optional
 
-from internal_correspondence.core.domain_pack import enum_codes
+from internal_correspondence.core.constants import ScientificTaskType
+from internal_correspondence.core.domain_pack import enum_code_of, enum_label
 from internal_correspondence.orm.models import (
     AcademicTitle,
     Branch,
@@ -98,11 +99,7 @@ class ScientificTaskService(BaseService[ScientificTask]):
         if not name:
             raise ScientificTaskError("Не указано наименование задачи.")
 
-        task_type = str(data.get("type") or "").strip()
-        if task_type not in enum_codes("scientific_task_type"):
-            raise ScientificTaskError(
-                f"Неизвестный тип задачи «{task_type}»."
-            )
+        task_type = self._as_task_type(data.get("type"))
 
         start = self._as_date(data.get("start_date"), "начала")
         if start is None:
@@ -139,6 +136,36 @@ class ScientificTaskService(BaseService[ScientificTask]):
             "partial_threshold": partial,
             "full_threshold": full,
         }
+
+    @staticmethod
+    def _as_task_type(value: Any) -> ScientificTaskType:
+        """Приводит тип задачи к перечислению.
+
+        Принимает член перечисления, числовое значение, код пакета
+        (например, «ОЗ») или его русскую метку.
+        """
+        if isinstance(value, ScientificTaskType):
+            return value
+        if isinstance(value, int) and not isinstance(value, bool):
+            try:
+                return ScientificTaskType(value)
+            except ValueError as error:
+                raise ScientificTaskError(
+                    f"Неизвестный тип задачи «{value}»."
+                ) from error
+
+        text = str(value or "").strip()
+        for member in ScientificTaskType:
+            key = member.name.lower()
+            try:
+                code = enum_code_of("scientific_task_type", key)
+            except ValueError:
+                code = ""
+            label = enum_label("scientific_task_type", code) if code else ""
+            if text in {code, label, member.name, str(member.value)}:
+                return member
+
+        raise ScientificTaskError(f"Неизвестный тип задачи «{text}».")
 
     @staticmethod
     def _as_date(value: Any, label: str) -> Optional[date]:

@@ -130,6 +130,16 @@ telegram_file_association = Table(
     Column("file_id", PGUUID(as_uuid=True), ForeignKey("file_records.id", ondelete="CASCADE"), primary_key=True),
 )
 
+# Связь "Научная задача - Сотрудник" (N-N).
+# Сохранена для совместимости с панелью ОШС и статистикой по исполнителям;
+# распределение задач по иерархии ведётся через AddedTask.
+task_employee_association = Table(
+    "task_employees",
+    Base.metadata,
+    Column("task_id", String(50), ForeignKey("scientific_tasks.id", ondelete="CASCADE"), primary_key=True),
+    Column("employee_id", PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), primary_key=True),
+)
+
 # Связь "Научный материал - Научная задача" (N-N)
 material_task_association = Table(
     "material_tasks",
@@ -548,6 +558,11 @@ class Employee(Base, ChangeTrackedMixin):
     workgroup_start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Начало работы в рабочей группе", "short": "Начало в группе"})
     workgroup_end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Конец работы в рабочей группе", "short": "Конец в группе"})
 
+    tasks: Mapped[List["ScientificTask"]] = relationship(
+        "ScientificTask",
+        secondary=task_employee_association,
+        back_populates="employees",
+    )
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
         secondary=material_employee_association,
@@ -607,6 +622,11 @@ class ScientificTask(Base, ChangeTrackedMixin):
         back_populates="task",
         cascade="all, delete-orphan",
     )
+    employees: Mapped[List["Employee"]] = relationship(
+        "Employee",
+        secondary=task_employee_association,
+        back_populates="tasks",
+    )
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
         secondary=material_task_association,
@@ -619,7 +639,7 @@ class ScientificTask(Base, ChangeTrackedMixin):
     )
 
 
-class AddedTask(Base, ChangeTrackedMixin, VersionedMixin):
+class AddedTask(Base, ChangeTrackedMixin):
     """Назначение научной задачи узлу иерархии.
 
     Узел задаётся парой ``node_type``/``node_id``. Полиморфная ссылка выбрана
@@ -659,6 +679,45 @@ class AddedTask(Base, ChangeTrackedMixin, VersionedMixin):
         "ScientificTask",
         back_populates="added_tasks",
         info={"label": "Научная задача"},
+    )
+
+
+# -----------------------------------------------------------------------------
+# Связь задачи с сущностью (устаревшая закладка, сохранена для совместимости схемы)
+# -----------------------------------------------------------------------------
+
+class TaskEntityLink(Base):
+    """Связь научной задачи с сущностью через имя класса и строковый PK.
+
+    Таблица сохранена для совместимости с существующей схемой и миграцией
+    ``f8cc27a9d0e1``; распределение задач ведётся через :class:`AddedTask`.
+    """
+    __entity_label__ = "Связь задачи с сущностью"
+    __entity_label_plural__ = "Связи задач с сущностями"
+    __field_labels__ = {"id": "Идентификатор"}
+
+    __tablename__ = "task_entity_links"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+        info={"label": "Идентификатор"},
+    )
+    task_id: Mapped[str] = mapped_column(
+        ForeignKey("scientific_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        info={"label": "Научная задача"},
+    )
+    entity_name: Mapped[str] = mapped_column(
+        String(100), nullable=False, info={"label": "Сущность"}
+    )
+    entity_pk: Mapped[str] = mapped_column(
+        String(255), nullable=False, info={"label": "Ключ сущности"}
+    )
+
+    __table_args__ = (
+        Index("ix_task_entity_links_entity", "entity_name", "entity_pk"),
     )
 
 
