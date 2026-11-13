@@ -12,6 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt5.QtCore import QDate
 from PyQt5.QtWidgets import QApplication
 
+from internal_correspondence.core.constants import MaterialType
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.gui.filter_dialog import AddFilterDialog, FilterDialog
 from internal_correspondence.gui.filter_model import (
@@ -54,9 +55,9 @@ def db_with_materials(tmp_path: Path):
         session.add(Branch(id="BR1", name="Филиал 1", short_name="Ф-1", territorial_unit_id="TU1"))
         session.commit()
         rows = [
-            ("Отчёт о воде", date(2024, 1, 15), "ДОК"),
-            ("Обзор отчётности", date(2025, 6, 1), "С"),
-            ("Методика измерений", date(2026, 1, 10), "ДОК"),
+            ("Отчёт о воде", date(2024, 1, 15), MaterialType.DOCUMENT),
+            ("Обзор отчётности", date(2025, 6, 1), MaterialType.MESSAGE),
+            ("Методика измерений", date(2026, 1, 10), MaterialType.DOCUMENT),
         ]
         for index, (name, outgoing_date, material_type) in enumerate(rows, start=1):
             session.add(

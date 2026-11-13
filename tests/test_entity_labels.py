@@ -24,7 +24,7 @@ from internal_correspondence.orm.labels import (
 )
 
 # Служебные поля, не отображаемые пользователю
-SERVICE_FIELDS = {"change_id", "row_version", "created_at", "updated_at"}
+SERVICE_FIELDS = {"change_id"}
 
 MODEL_CLASSES = [
     obj

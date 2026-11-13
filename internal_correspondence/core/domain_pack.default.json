@@ -37,21 +37,6 @@
         }
       ]
     },
-    "research_type": {
-      "label": "Тип научного изыскания",
-      "values": [
-        {
-          "key": "experimental",
-          "code": "Э",
-          "label": "Экспериментальный"
-        },
-        {
-          "key": "analytical",
-          "code": "А",
-          "label": "Аналитический"
-        }
-      ]
-    },
     "evaluation_value": {
       "label": "Значение оценки научного материала",
       "values": [
@@ -166,6 +151,30 @@
         },
         "changed_fields": {
           "label": "Изменённые переменные"
+        },
+        "operation_type": {
+          "label": "Тип операции"
+        },
+        "exported_at": {
+          "label": "Дата экспорта"
+        }
+      }
+    },
+    "TaskEntityLink": {
+      "label": "Связь задачи с сущностью",
+      "label_plural": "Связи задач с сущностями",
+      "fields": {
+        "id": {
+          "label": "Идентификатор"
+        },
+        "task_id": {
+          "label": "Научная задача"
+        },
+        "entity_name": {
+          "label": "Сущность"
+        },
+        "entity_pk": {
+          "label": "Ключ сущности"
         }
       }
     },
@@ -470,14 +479,17 @@
         "permit_number": {
           "label": "Номер разрешительного документа"
         },
+        "permit_date": {
+          "label": "Дата разрешительного документа"
+        },
         "cost": {
           "label": "Стоимость"
         },
         "comment": {
           "label": "Комментарий"
         },
-        "country_id": {
-          "label": "Страна"
+        "countries": {
+          "label": "Страны"
         },
         "consumer_id": {
           "label": "Потребитель"
@@ -487,6 +499,9 @@
         },
         "tasks": {
           "label": "Задачи"
+        },
+        "employees": {
+          "label": "Сотрудники"
         },
         "consumer": {
           "label": "Потребитель"
@@ -548,8 +563,8 @@
         "comment": {
           "label": "Комментарий"
         },
-        "country_id": {
-          "label": "Страна"
+        "countries": {
+          "label": "Страны"
         },
         "branch_id": {
           "label": "Филиал"
@@ -559,6 +574,9 @@
         },
         "report_addresses": {
           "label": "Адресация доклада"
+        },
+        "employees": {
+          "label": "Сотрудники"
         },
         "branch": {
           "label": "Филиал"
@@ -620,6 +638,9 @@
         "value": {
           "label": "Значение оценки"
         },
+        "date": {
+          "label": "Дата выставления"
+        },
         "evaluation_list_id": {
           "label": "Список оценок"
         },
@@ -651,6 +672,8 @@
     "button_edit": "Изменить",
     "button_delete": "Удалить",
     "dialog_settings_title": "Настройки",
+    "settings_changes_retention": "Срок хранения журнала изменений (дней):",
+    "settings_retention_forever": "бессрочно",
     "wizard_first_run_title": "Первый запуск",
     "wizard_db_title": "Подключение к базе данных",
     "wizard_db_subtitle": "Выберите тип базы данных и укажите параметры подключения.",
@@ -694,16 +717,27 @@
     "dialog_select_branch": "Выбор филиала",
     "label_branch": "Филиал:",
     "oshm_window_title": "ОШС филиала {branch_id}",
+    "oshm_tree_structure": "Штатная структура",
+    "oshm_tree_workgroups": "Рабочие группы",
     "oshm_col_element": "Элемент",
+    "oshm_select_branch_first": "Выберите филиал, в который нужно добавить отдел",
+    "oshm_tasks_section": "Назначенные задачи",
+    "picker_tasks_title": "Выбор задач",
+    "button_hide": "Скрыть",
+    "button_statistics": "Статистика",
+    "value_yes": "Да",
+    "value_no": "Нет",
     "oshm_col_status": "Статус",
     "status_active_m": "Действующий",
     "status_active_f": "Действующая",
     "status_inactive_dept": "Сокращён",
     "status_inactive_wg": "Упразднена",
     "status_inactive_emp": "Неактивный",
+    "status_inactive_via_dept": "Неактивный (отдел сокращён)",
     "action_add_entity": "Добавить {entity}",
     "action_toggle_hide": "Скрыть/показать",
     "msg_delete_element_confirm": "Удалить выбранный элемент?",
+    "msg_delete_elements_confirm": "Вы действительно хотите удалить выбранные записи ({count})?",
     "oshm_new_m": "Новый {title}",
     "oshm_new_f": "Новая {title}",
     "button_clear_dates": "Очистить даты",
@@ -725,6 +759,17 @@
     "chart_by_months": "{title}: по месяцам",
     "chart_no_data": "Нет данных для отображения",
     "axis_count": "Количество",
+    "label_subcategory": "Подкатегория:",
+    "subcategory_none": "—",
+    "label_chart_type": "Тип графика:",
+    "chart_type_bars": "Столбцы",
+    "chart_type_lines": "Линии",
+    "chart_type_pie": "Круговая",
+    "chart_by_totals": "{title}: итоги периода",
+    "stats_avg_score": "Средний балл: {value}",
+    "button_export_excel": "Экспорт в Excel",
+    "dialog_save_excel": "Сохранить результат в Excel",
+    "file_filter_excel": "Файлы Excel (*.xlsx)",
     "button_refresh": "Обновить",
     "button_filter": "Фильтр",
     "button_filter_count": "Фильтр ({count})",
@@ -783,6 +828,64 @@
     "tooltip_file_missing": "Файл отсутствует в хранилище: {path}",
     "file_new_suffix": "(новый)",
     "dialog_select_files": "Выберите файлы",
-    "msg_detach_confirm": "Открепить выбранные файлы ({count})?"
+    "msg_detach_confirm": "Открепить выбранные файлы ({count})?",
+    "button_more": "Больше",
+    "button_less": "Меньше",
+    "tooltip_add_items": "Добавить записи",
+    "tooltip_remove_items": "Удалить выбранные записи",
+    "placeholder_search": "Поиск...",
+    "dialog_pick_title": "Выбор: {entity}",
+    "msg_required_field": "Не заполнено обязательное поле «{label}».",
+    "msg_invalid_field": "Поле «{label}» заполнено некорректно: {error}",
+    "msg_value_must_be_int": "ожидается целое число",
+    "msg_value_must_be_float": "ожидается число",
+    "msg_number_date_together": "номер и дата должны быть заполнены вместе",
+    "msg_duplicate_fields": "Запись с таким сочетанием полей ({fields}) уже существует.",
+    "msg_record_hidden_by_filters": "Запись сохранена, но не отображается в таблице: она не попадает под действующие фильтры.",
+    "dialog_add_filter_title": "Добавить фильтр",
+    "dialog_edit_filter_title": "Изменить фильтр",
+    "label_field": "Поле:",
+    "label_condition": "Условие:",
+    "label_value": "Значение:",
+    "placeholder_filter_value": "Введите значение",
+    "button_add_filter": "Добавить фильтр",
+    "filters_applied_caption": "Примененные фильтры:",
+    "filters_none": "Фильтры не заданы.",
+    "tooltip_remove_filter": "Удалить фильтр",
+    "files_label_material": "Файлы к научному материалу № {number} от {date}",
+    "files_label_telegram": "Файлы к телеграмме № {number} от {date}",
+    "files_no_selection": "Выберите запись, чтобы увидеть прикреплённые файлы.",
+    "files_no_outgoing": "У выбранной записи не заданы исходящий номер и дата. Прикрепление файлов невозможно.",
+    "files_copy_progress": "Копирование {name} из {source} в {target}",
+    "files_conflict_text": "Файл «{name}» уже существует в папке назначения.\nЗаменить его или сохранить новый файл под другим именем?",
+    "files_replace": "Заменить",
+    "files_rename_new": "Новое имя",
+    "files_skip": "Пропустить",
+    "files_rename_title": "Переименовать файл",
+    "files_rename_prompt": "Новое имя файла:",
+    "files_rename_many": "Переименовать {count} файлов?",
+    "files_detach_confirm": "Открепить выбранные файлы ({count})?\nФайлы, не прикреплённые к другим записям, будут удалены с диска.",
+    "files_add_error": "Не удалось прикрепить файлы:\n{error}",
+    "files_attached_info": "Прикреплено файлов: {count}",
+    "action_rename": "Переименовать",
+    "action_reveal": "Расположение файла",
+    "action_assign_evaluation": "Выставить оценку",
+    "dialog_assign_evaluation_title": "Выставить оценку",
+    "label_evaluation_value": "Оценка:",
+    "label_evaluation_date": "Дата выставления:",
+    "msg_evaluation_assigned": "Оценка выставлена для {count} записей.",
+    "settings_db_group": "База данных",
+    "settings_sqlite_file_dialog": "Файл базы данных SQLite",
+    "settings_sqlite_filter": "SQLite (*.db *.sqlite *.sqlite3)",
+    "settings_storage_label": "Путь к хранилищу:",
+    "settings_storage_dialog": "Директория хранилища",
+    "label_role": "Роль:",
+    "label_db_file": "Файл:",
+    "label_host": "Хост:",
+    "label_port": "Порт:",
+    "label_database": "БД:",
+    "label_user": "Пользователь:",
+    "label_password": "Пароль:",
+    "button_browse": "Обзор..."
   }
 }

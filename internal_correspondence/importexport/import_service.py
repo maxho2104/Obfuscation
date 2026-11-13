@@ -41,7 +41,7 @@ from internal_correspondence.services.task_distribution_service import (
 logger = get_logger("import_service")
 
 # Служебные поля, которые не импортируются из JSON
-_SERVICE_FIELDS = {"change_id", "row_version", "created_at", "updated_at"}
+_SERVICE_FIELDS = {"change_id"}
 
 
 class ImportService:
@@ -382,9 +382,6 @@ class ImportService:
         """Обновляет существующую сущность."""
         for name, value in self._model_kwargs(instance.__class__, data).items():
             setattr(instance, name, value)
-
-        if hasattr(instance, "row_version"):
-            instance.row_version = (instance.row_version or 0) + 1  # type: ignore[attr-defined]
 
     def _resolve_dependencies(
         self,

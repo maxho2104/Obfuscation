@@ -3,8 +3,9 @@
 import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
+from PyQt5.QtCore import QByteArray, Qt
 from PyQt5.QtWidgets import (
     QAction,
     QActionGroup,
@@ -20,9 +21,11 @@ from PyQt5.QtWidgets import (
 
 from internal_correspondence.core.constants import (
     BACKUPS_DIR,
+    DEFAULT_CHANGES_RETENTION_DAYS,
     LOGS_DIR,
     Role,
 )
+from internal_correspondence.core.enum_registry import pack_enum_display
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.core.domain_pack import (
     DomainPackError,
@@ -33,7 +36,12 @@ from internal_correspondence.core.domain_pack import (
 )
 from internal_correspondence.core.logging_config import configure_logging, get_logger
 from internal_correspondence.core.settings import AppSettings, SettingsManager
+from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
 from internal_correspondence.gui.document_list_widget import DocumentListWidget
+from internal_correspondence.gui.filter_model import (
+    deserialize_filters,
+    serialize_filters,
+)
 from internal_correspondence.gui.first_run_wizard import run_first_run_wizard
 from internal_correspondence.gui.i18n import install_translations
 from internal_correspondence.gui.oshm_dialog import OSHMDialog
@@ -72,7 +80,10 @@ from internal_correspondence.orm.models import (
     Telegram,
     TerritorialUnit,
 )
-from internal_correspondence.services.change_tracking import register_change_tracking
+from internal_correspondence.services.change_tracking import (
+    purge_expired_changes,
+    register_change_tracking,
+)
 from internal_correspondence.services.enum_validation import validate_enum_codes
 from internal_correspondence.services.reference_service import (
     AcademicTitleService,
@@ -89,9 +100,44 @@ from internal_correspondence.utils.string_resources import STRINGS, reload_strin
 logger = get_logger("application")
 
 
+def _parse_column_widths(raw: str) -> List[int]:
+    """Разбирает сохранённые ширины колонок из строки настроек."""
+    widths = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            widths.append(int(part))
+    return widths
+
+
 def _format_employees(employees) -> str:
     """Форматирует список причастных сотрудников для ячейки таблицы."""
     return ", ".join(employee.display_name() for employee in employees or [])
+
+
+def _format_material_type(value) -> str:
+    """Краткий код типа материала из пакета предметной области."""
+    return pack_enum_display("material_type", value)
+
+
+def _format_telegram_type(value) -> str:
+    """Краткий код типа телеграммы из пакета предметной области."""
+    return pack_enum_display("telegram_type", value)
+
+
+def _format_report_type(value) -> str:
+    """Краткий код типа доклада из пакета предметной области."""
+    return pack_enum_display("telegram_report_type", value)
+
+
+def _format_task_type(value) -> str:
+    """Краткий код типа задачи из пакета предметной области."""
+    return pack_enum_display("scientific_task_type", value)
+
+
+def _format_source_type(value) -> str:
+    """Краткий код типа источника из пакета предметной области."""
+    return pack_enum_display("source_type", value)
 
 
 def _format_departments(departments) -> str:
@@ -106,37 +152,97 @@ def _format_workgroups(workgroups) -> str:
     return ", ".join(workgroup.name for workgroup in workgroups or [])
 
 
-# Описания столбцов для таблицы научных материалов
-MATERIAL_COLUMNS = [
-    ColumnDef("type", width=80),
-    ColumnDef("outgoing_number", width=100),
-    ColumnDef("outgoing_date", width=100),
-    ColumnDef("name", width=250),
-    ColumnDef("evaluation_display", width=90),
-    ColumnDef("incoming_number", width=100),
-    ColumnDef("incoming_date", width=100),
-    ColumnDef("participating_employees", width=220, formatter=_format_employees),
-    ColumnDef("participating_departments", width=180, formatter=_format_departments),
-    ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
-    ColumnDef("branch.short_name", width=100),
-    ColumnDef("consumer.short_name", width=120),
-]
+def _format_countries(countries) -> str:
+    """Форматирует список стран происхождения данных для ячейки таблицы."""
+    return ", ".join(country.name for country in countries or [])
 
-# Описания столбцов для таблицы телеграмм
-TELEGRAM_COLUMNS = [
-    ColumnDef("type", width=80),
-    ColumnDef("outgoing_number", width=100),
-    ColumnDef("outgoing_date", width=100),
-    ColumnDef("name", width=300),
-    ColumnDef("evaluation_display", width=90),
-    ColumnDef("incoming_number", width=100),
-    ColumnDef("incoming_date", width=100),
-    ColumnDef("participating_employees", width=220, formatter=_format_employees),
-    ColumnDef("participating_departments", width=180, formatter=_format_departments),
-    ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
-    ColumnDef("report_type", width=100),
-    ColumnDef("branch.short_name", width=100),
-]
+
+def _format_addresses(addresses) -> str:
+    """Форматирует адресацию доклада («ИД+» через запятую)."""
+    from internal_correspondence.gui.edit_elements import format_report_addresses
+
+    return format_report_addresses(addresses or [])
+
+
+def _is_head_office(role: Optional[str]) -> bool:
+    """Проверяет, задана ли роль «головной офис»."""
+    return role == Role.HEAD_OFFICE.value
+
+
+def material_columns(role: Optional[str] = None) -> List[ColumnDef]:
+    """Возвращает описания столбцов таблицы научных материалов для роли.
+
+    Порядок и состав столбцов — по плану редактирования отображения:
+    для роли «филиал» дополнительно отделы и сотрудники, для роли
+    «головной офис» — филиал.
+    """
+    columns = [
+        ColumnDef("outgoing_number", width=100),
+        ColumnDef("outgoing_date", width=110),
+        ColumnDef("type", width=80, formatter=_format_material_type),
+        ColumnDef("name", width=250),
+        ColumnDef("countries", width=150, formatter=_format_countries),
+        ColumnDef("consumer.short_name", width=120),
+    ]
+    if _is_head_office(role):
+        columns.append(ColumnDef("branch.short_name", width=100))
+        columns.append(
+            ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups)
+        )
+    else:
+        columns.extend(
+            [
+                ColumnDef("participating_departments", width=180, formatter=_format_departments),
+                ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
+                ColumnDef("participating_employees", width=220, formatter=_format_employees),
+            ]
+        )
+    columns.extend(
+        [
+            ColumnDef("incoming_number", width=100),
+            ColumnDef("incoming_date", width=110),
+            ColumnDef("evaluation_display", width=90),
+        ]
+    )
+    return columns
+
+
+def telegram_columns(role: Optional[str] = None) -> List[ColumnDef]:
+    """Возвращает описания столбцов таблицы телеграмм для роли."""
+    columns = [
+        ColumnDef("outgoing_number", width=100),
+        ColumnDef("outgoing_date", width=110),
+        ColumnDef("type", width=80, formatter=_format_telegram_type),
+        ColumnDef("name", width=280),
+        ColumnDef("countries", width=150, formatter=_format_countries),
+        ColumnDef("report_addresses", width=160, formatter=_format_addresses),
+        ColumnDef("report_type", width=100, formatter=_format_report_type),
+    ]
+    if _is_head_office(role):
+        columns.append(ColumnDef("branch.short_name", width=100))
+    else:
+        columns.extend(
+            [
+                ColumnDef("participating_departments", width=180, formatter=_format_departments),
+                ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
+                ColumnDef("participating_employees", width=220, formatter=_format_employees),
+            ]
+        )
+    columns.extend(
+        [
+            ColumnDef("incoming_number", width=100),
+            ColumnDef("incoming_date", width=110),
+            ColumnDef("evaluation_display", width=90),
+        ]
+    )
+    return columns
+
+
+# Описания столбцов таблицы научных материалов (роль «филиал»)
+MATERIAL_COLUMNS = material_columns()
+
+# Описания столбцов для таблицы телеграмм (роль «филиал»)
+TELEGRAM_COLUMNS = telegram_columns()
 
 # Описания столбцов справочников
 TERRITORIAL_UNIT_COLUMNS = [
@@ -167,7 +273,7 @@ ACADEMIC_TITLE_COLUMNS = [
 SCIENTIFIC_TASK_COLUMNS = [
     ColumnDef("id", width=100),
     ColumnDef("name", width=300),
-    ColumnDef("type", width=80),
+    ColumnDef("type", width=80, formatter=_format_task_type),
     ColumnDef("start_date", width=100),
     ColumnDef("end_date", width=100),
 ]
@@ -185,7 +291,7 @@ LEADER_COLUMNS = [
 
 SOURCE_COLUMNS = [
     ColumnDef("id", width=100),
-    ColumnDef("type", width=100),
+    ColumnDef("type", width=100, formatter=_format_source_type),
     ColumnDef("comment", width=300),
 ]
 
@@ -206,14 +312,21 @@ def _ensure_app_dirs(app_dir: Path) -> None:
 class MainWindow(QMainWindow):
     """Главное окно приложения."""
 
-    def __init__(self, settings: AppSettings, db_manager: DatabaseManager) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        db_manager: DatabaseManager,
+        settings_manager: Optional[SettingsManager] = None,
+    ) -> None:
         super().__init__()
         self.settings = settings
         self.db_manager = db_manager
+        self._settings_manager = settings_manager or SettingsManager()
         self.setWindowTitle(STRINGS.app_title)
         self.setMinimumSize(1024, 768)
         self._setup_ui()
         self._setup_menu()
+        self._restore_ui_state()
 
     def _setup_ui(self) -> None:
         """Инициализирует интерфейс главного окна с вкладками."""
@@ -227,15 +340,17 @@ class MainWindow(QMainWindow):
             self.db_manager.get_session(),
             self.settings.storage_path_obj(),
             ScientificMaterial,
-            MATERIAL_COLUMNS,
+            material_columns(self.settings.role),
             self.settings.branch_id,
+            role=self.settings.role,
         )
         self.telegram_tab = DocumentListWidget(
             self.db_manager.get_session(),
             self.settings.storage_path_obj(),
             Telegram,
-            TELEGRAM_COLUMNS,
+            telegram_columns(self.settings.role),
             self.settings.branch_id,
+            role=self.settings.role,
         )
         self.statistics_tab = StatisticsWidget(
             self.db_manager.get_session(),
@@ -253,6 +368,46 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.statistics_tab, STRINGS.tab_statistics)
         layout.addWidget(self.tabs)
         self.setCentralWidget(container)
+
+        self.materials_tab.filtersChanged.connect(self._materials_filters_changed)
+        self.telegram_tab.filtersChanged.connect(self._telegram_filters_changed)
+
+        # Док-виджет прикреплённых файлов привязан к текущей записи вкладки
+        self.files_dock = AttachedFilesWidget(
+            self.db_manager.get_session(),
+            self.settings.storage_path_obj(),
+            self,
+        )
+        self.addDockWidget(Qt.RightDockWidgetArea, self.files_dock)
+        self.tabs.currentChanged.connect(lambda _index: self._sync_files_dock())
+        self.materials_tab.currentDocumentChanged.connect(
+            lambda document: self._files_document_changed(self.materials_tab, document)
+        )
+        self.telegram_tab.currentDocumentChanged.connect(
+            lambda document: self._files_document_changed(self.telegram_tab, document)
+        )
+        self._sync_files_dock()
+
+    def _files_document_changed(self, tab, document) -> None:
+        """Привязывает док файлов к записи, если её вкладка активна."""
+        if tab is self.tabs.currentWidget():
+            self.files_dock.set_document(document)
+
+    def _sync_files_dock(self) -> None:
+        """Обновляет док файлов при смене вкладки."""
+        tab = self.tabs.currentWidget()
+        if isinstance(tab, DocumentListWidget):
+            self.files_dock.set_document(tab.current_document())
+        else:
+            self.files_dock.set_document(None)
+
+    def _materials_filters_changed(self, filters) -> None:
+        """Запоминает фильтры материалов для сохранения при закрытии."""
+        self.settings.material_filters = serialize_filters(filters)
+
+    def _telegram_filters_changed(self, filters) -> None:
+        """Запоминает фильтры телеграмм для сохранения при закрытии."""
+        self.settings.telegram_filters = serialize_filters(filters)
 
     def _setup_menu(self) -> None:
         """Формирует главное меню приложения."""
@@ -381,7 +536,7 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         """Открывает диалог настроек."""
-        dialog = SettingsDialog(self.settings, self)
+        dialog = SettingsDialog(self.settings, self.db_manager, self)
         if dialog.exec_() == SettingsDialog.Accepted:
             settings_manager = SettingsManager()
             settings_manager.save(self.settings)
@@ -391,13 +546,54 @@ class MainWindow(QMainWindow):
                 STRINGS.msg_settings_saved,
             )
 
+    def closeEvent(self, event) -> None:
+        """Сохраняет геометрию окна и ширины колонок при закрытии."""
+        self._save_ui_state()
+        super().closeEvent(event)
+
+    def _save_ui_state(self) -> None:
+        """Сохраняет геометрию окна и ширины колонок таблиц в настройки."""
+        self.settings.window_geometry = (
+            self.saveGeometry().toBase64().data().decode("ascii")
+        )
+        self.settings.material_column_widths = ",".join(
+            str(width) for width in self.materials_tab.column_widths()
+        )
+        self.settings.telegram_column_widths = ",".join(
+            str(width) for width in self.telegram_tab.column_widths()
+        )
+        self._settings_manager.save(self.settings)
+
+    def _restore_ui_state(self) -> None:
+        """Восстанавливает геометрию окна и ширины колонок из настроек."""
+        if self.settings.window_geometry:
+            self.restoreGeometry(
+                QByteArray.fromBase64(self.settings.window_geometry.encode("ascii"))
+            )
+        material_widths = _parse_column_widths(self.settings.material_column_widths)
+        if material_widths:
+            self.materials_tab.set_column_widths(material_widths)
+        telegram_widths = _parse_column_widths(self.settings.telegram_column_widths)
+        if telegram_widths:
+            self.telegram_tab.set_column_widths(telegram_widths)
+        self._restore_filters()
+
+    def _restore_filters(self) -> None:
+        """Восстанавливает фильтры таблиц из настроек (два набора раздельно)."""
+        self.materials_tab.set_filters(
+            deserialize_filters(self.settings.material_filters, ScientificMaterial)
+        )
+        self.telegram_tab.set_filters(
+            deserialize_filters(self.settings.telegram_filters, Telegram)
+        )
+
     def _set_theme(self, theme_key: str) -> None:
         """Применяет тему оформления и сохраняет выбор в настройках."""
         if self.settings.theme == theme_key:
             return
         self.settings.theme = theme_key
         apply_theme(QApplication.instance(), theme_key)
-        SettingsManager().save(self.settings)
+        self._settings_manager.save(self.settings)
         # Перекрашиваем строки таблиц и графики
         self.materials_tab.refresh()
         self.telegram_tab.refresh()
@@ -408,7 +604,11 @@ class MainWindow(QMainWindow):
         """Формирует экспортный ZIP-архив."""
         session = self.db_manager.get_session()
         try:
-            service = ExportService(session, self.settings.storage_path_obj())
+            service = ExportService(
+                session,
+                self.settings.storage_path_obj(),
+                retention_days=_changes_retention_days(self.settings),
+            )
             output = service.export()
             session.commit()
             self.materials_tab.refresh()
@@ -534,38 +734,42 @@ class MainWindow(QMainWindow):
             SettingsManager().save(self.settings)
 
     def _open_oshm(self) -> None:
-        """Открывает диалог ОШС."""
-        branch_id = self.settings.branch_id
-        if not branch_id:
-            if self.settings.role == Role.HEAD_OFFICE.value:
-                # В головном офисе можно выбрать филиал для просмотра
-                branch, ok = self._select_branch()
-                if not ok or not branch:
-                    return
-                branch_id = branch
-            else:
-                QMessageBox.warning(self, STRINGS.title_oshm, STRINGS.msg_no_branch_selected)
-                return
+        """Открывает диалог ОШС: головной офис видит все филиалы, филиал — себя."""
         is_head_office = self.settings.role == Role.HEAD_OFFICE.value
+        branch_id = self.settings.branch_id
+        if not is_head_office and not branch_id:
+            QMessageBox.warning(self, STRINGS.title_oshm, STRINGS.msg_no_branch_selected)
+            return
         dialog = OSHMDialog(
             self.db_manager.get_session(),
-            branch_id,
-            read_only=is_head_office,
+            branch_id=branch_id or None,
+            role=self.settings.role,
             parent=self,
         )
-        dialog.exec_()
-
-    def _select_branch(self) -> tuple:
-        """Показывает простой выбор филиала для головного офиса."""
-        from PyQt5.QtWidgets import QInputDialog
-        branches = self.db_manager.get_session().query(Branch).order_by(Branch.name).all()
-        items = [f"{b.id} — {b.name}" for b in branches]
-        text, ok = QInputDialog.getItem(
-            self, STRINGS.dialog_select_branch, STRINGS.label_branch, items, 0, False
+        # Кнопка «Статистика» на панели сведений: диалог закрывается,
+        # открывается вкладка статистики с выделенной строкой элемента
+        self._oshm_statistics_node = None
+        dialog.details_panel.statistics_requested.connect(
+            lambda node: self._on_oshm_statistics(dialog, node)
         )
-        if ok and text:
-            return text.split(" — ")[0], True
-        return None, ok
+        dialog.exec_()
+        if self._oshm_statistics_node is not None:
+            self.tabs.setCurrentWidget(self.statistics_tab)
+            self.statistics_tab.show_element(self._oshm_statistics_node)
+            self._oshm_statistics_node = None
+
+    def _on_oshm_statistics(self, dialog: OSHMDialog, node) -> None:
+        """Запоминает элемент ОШС для статистики и закрывает диалог."""
+        self._oshm_statistics_node = node
+        dialog.accept()
+
+
+def _changes_retention_days(settings: AppSettings) -> int:
+    """Возвращает срок хранения записей Change в днях (<= 0 — бессрочно)."""
+    try:
+        return int(settings.changes_retention_days)
+    except (TypeError, ValueError):
+        return DEFAULT_CHANGES_RETENTION_DAYS
 
 
 def _load_or_create_settings(app_dir: Path) -> AppSettings:
@@ -617,6 +821,17 @@ def run_application(argv: List[str]) -> int:
         logger.exception("Ошибка инициализации БД")
         QMessageBox.critical(None, STRINGS.title_error, STRINGS.msg_db_error.format(error=exc))
         return 1
+
+    # Удаление устаревших записей Change по настройке срока хранения
+    try:
+        purge_session = db_manager.get_session()
+        try:
+            purge_expired_changes(purge_session, _changes_retention_days(settings))
+            purge_session.commit()
+        finally:
+            purge_session.close()
+    except Exception:  # pylint: disable=broad-except
+        logger.exception("Ошибка очистки устаревших записей Change")
 
     # Проверка кодов перечислений в БД на соответствие активному пакету
     try:

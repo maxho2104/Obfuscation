@@ -492,9 +492,9 @@ def _create_materials(
             if fake.boolean(chance_of_getting_true=60)
             else None,
             comment=fake.sentence(nb_words=12)[:300],
-            country_id=fake.random_element(countries).id
+            countries=[fake.random_element(countries)]
             if fake.boolean(chance_of_getting_true=50)
-            else None,
+            else [],
             consumer_id=fake.random_element(consumers).id
             if fake.boolean(chance_of_getting_true=60)
             else None,
@@ -559,9 +559,9 @@ def _create_telegrams(
             if fake.boolean(chance_of_getting_true=70)
             else None,
             comment=fake.sentence(nb_words=12)[:300],
-            country_id=fake.random_element(countries).id
+            countries=[fake.random_element(countries)]
             if fake.boolean(chance_of_getting_true=40)
-            else None,
+            else [],
             branch_id=branch.id,
             tasks=random.sample(
                 list(tasks), k=fake.random_int(1, min(2, len(tasks)))
@@ -611,7 +611,9 @@ def _create_evaluations(
             ),
         )
         for _ in range(fake.random_int(3, 8)):
-            evaluation = Evaluation(value=fake.random_element(values))
+            evaluation = Evaluation(
+                value=fake.random_element(values), date=evaluation_list.date
+            )
             for document in random.sample(
                 documents, k=min(len(documents), fake.random_int(1, 4))
             ):

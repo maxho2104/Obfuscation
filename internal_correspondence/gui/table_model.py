@@ -49,12 +49,15 @@ class SqlAlchemyTableModel(QAbstractTableModel):
         session: Session,
         model_class: Type[Base],
         columns: List[ColumnDef],
+        branch_id: Optional[str] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self.session = session
         self.model_class = model_class
         self.columns = columns
+        # Ограничение выборки филиалом (роль «филиал»): None — без ограничения
+        self._branch_id = branch_id
         # Заголовки без явного значения подставляются из метаданных модели
         self._headers = [
             column.header if column.header is not None
@@ -160,6 +163,41 @@ class SqlAlchemyTableModel(QAbstractTableModel):
             return self._items[row]
         return None
 
+    def pk_of(self, item: Base) -> Any:
+        """Возвращает значение первичного ключа записи."""
+        pk_column = sa_inspect(self.model_class).primary_key[0]
+        return getattr(item, pk_column.name)
+
+    def page_of(self, entity_pk: Any) -> Optional[int]:
+        """Возвращает номер страницы (1-based) с записью с данным ключом.
+
+        Учитывает фильтры, сортировку и ограничение филиалом; None —
+        записи в текущей выборке нет.
+        """
+        if self._can_use_db_pagination():
+            pk_column = sa_inspect(self.model_class).primary_key[0]
+            query = self.session.query(pk_column)
+            if self._branch_id is not None:
+                query = query.filter(self.model_class.branch_id == self._branch_id)
+            if self._order_by:
+                column = getattr(self.model_class, self._order_by)
+                query = query.order_by(desc(column) if self._order_desc else asc(column))
+            keys = [row[0] for row in query.all()]
+        else:
+            keys = [self.pk_of(item) for item in self._filtered_items()]
+        try:
+            index = keys.index(entity_pk)
+        except ValueError:
+            return None
+        return index // self._page_size + 1
+
+    def row_of(self, entity_pk: Any) -> Optional[int]:
+        """Возвращает индекс строки на текущей странице; None — записи нет."""
+        for row, item in enumerate(self._items):
+            if self.pk_of(item) == entity_pk:
+                return row
+        return None
+
     def refresh(self) -> None:
         """Обновляет данные модели из БД."""
         self.beginResetModel()
@@ -180,10 +218,15 @@ class SqlAlchemyTableModel(QAbstractTableModel):
     def _refresh_from_db(self) -> None:
         """Загружает одну страницу записей запросом с LIMIT/OFFSET."""
         query = self.session.query(self.model_class)
+        count_query = self.session.query(func.count()).select_from(self.model_class)
+        if self._branch_id is not None:
+            query = query.filter(self.model_class.branch_id == self._branch_id)
+            count_query = count_query.filter(
+                self.model_class.branch_id == self._branch_id
+            )
         if self._order_by:
             column = getattr(self.model_class, self._order_by)
             query = query.order_by(desc(column) if self._order_desc else asc(column))
-        count_query = self.session.query(func.count()).select_from(self.model_class)
         self._total = count_query.scalar() or 0
         offset = (self._page - 1) * self._page_size
         self._items = query.limit(self._page_size).offset(offset).all()
@@ -191,20 +234,14 @@ class SqlAlchemyTableModel(QAbstractTableModel):
     def _refresh_in_memory(self) -> None:
         """Загружает записи в память для фильтров по вычисляемым значениям."""
         query = self.session.query(self.model_class)
+        if self._branch_id is not None:
+            query = query.filter(self.model_class.branch_id == self._branch_id)
         db_order = bool(self._order_by) and self._is_mapped_column(self._order_by)
         if db_order:
             column = getattr(self.model_class, self._order_by)
             query = query.order_by(desc(column) if self._order_desc else asc(column))
 
-        all_items = query.all()
-        if self._filter_text:
-            all_items = [
-                item
-                for item in all_items
-                if self._filter_text.lower() in self._row_text(item).lower()
-            ]
-        if self._filters:
-            all_items = [item for item in all_items if self._matches_filters(item)]
+        all_items = self._filtered_items(query.all())
         if self._order_by and not db_order:
             sort_column = next(
                 (column for column in self.columns if column.name == self._order_by),
@@ -219,6 +256,24 @@ class SqlAlchemyTableModel(QAbstractTableModel):
         self._total = len(all_items)
         start = (self._page - 1) * self._page_size
         self._items = all_items[start : start + self._page_size]
+
+    def _filtered_items(self, items: Optional[List[Base]] = None) -> List[Base]:
+        """Применяет текстовый и структурированный фильтры к списку записей."""
+        if items is None:
+            query = self.session.query(self.model_class)
+            if self._branch_id is not None:
+                query = query.filter(self.model_class.branch_id == self._branch_id)
+            items = query.all()
+        all_items = list(items)
+        if self._filter_text:
+            all_items = [
+                item
+                for item in all_items
+                if self._filter_text.lower() in self._row_text(item).lower()
+            ]
+        if self._filters:
+            all_items = [item for item in all_items if self._matches_filters(item)]
+        return all_items
 
     def _is_mapped_column(self, name: str) -> bool:
         """Проверяет, является ли атрибут (включая вложенные) колонкой ORM."""
@@ -278,3 +333,21 @@ class SqlAlchemyTableModel(QAbstractTableModel):
             if not condition.matches(value, value_type):
                 return False
         return True
+
+
+class DocumentsTableModel(SqlAlchemyTableModel):
+    """Модель таблицы научных материалов и телеграмм.
+
+    Дополнительно к базовому поведению выделяет цветом записи без
+    входящего номера (менее ярко, чем неэкспортированные изменения).
+    """
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole) -> Any:
+        if role == Qt.BackgroundRole and index.isValid():
+            item = self._items[index.row()]
+            theme = current_theme()
+            if getattr(item, "change_id", None) is not None:
+                return theme.modified_row
+            if hasattr(item, "incoming_number") and not item.incoming_number:
+                return theme.no_incoming_row
+        return super().data(index, role)

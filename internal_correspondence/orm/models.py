@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     JSON,
     Numeric,
+    SmallInteger,
     String,
     Table,
     Text,
@@ -23,7 +24,17 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
 
-from internal_correspondence.orm.base import Base, TimestampMixin, VersionedMixin
+from internal_correspondence.core.constants import (
+    ChangeOperation,
+    EvaluationValue,
+    MaterialType,
+    ScientificTaskType,
+    SourceType,
+    TelegramReportType,
+    TelegramType,
+)
+from internal_correspondence.core.enum_registry import pack_enum_display
+from internal_correspondence.orm.base import Base, IntEnumType
 
 
 # -----------------------------------------------------------------------------
@@ -135,6 +146,22 @@ telegram_task_association = Table(
     Column("task_id", String(50), ForeignKey("scientific_tasks.id", ondelete="CASCADE"), primary_key=True),
 )
 
+# Связь "Научный материал - Страна" (N-N)
+material_country_association = Table(
+    "material_countries",
+    Base.metadata,
+    Column("material_id", PGUUID(as_uuid=True), ForeignKey("scientific_materials.id", ondelete="CASCADE"), primary_key=True),
+    Column("country_id", String(10), ForeignKey("countries.id", ondelete="CASCADE"), primary_key=True),
+)
+
+# Связь "Телеграмма - Страна" (N-N)
+telegram_country_association = Table(
+    "telegram_countries",
+    Base.metadata,
+    Column("telegram_id", PGUUID(as_uuid=True), ForeignKey("telegrams.id", ondelete="CASCADE"), primary_key=True),
+    Column("country_id", String(10), ForeignKey("countries.id", ondelete="CASCADE"), primary_key=True),
+)
+
 # Связь "Оценка - Научный материал" (N-N)
 evaluation_material_association = Table(
     "evaluation_materials",
@@ -156,7 +183,7 @@ evaluation_telegram_association = Table(
 # Изменение (Change)
 # -----------------------------------------------------------------------------
 
-class Change(Base, TimestampMixin):
+class Change(Base):
     """Запись об изменении сущности для механизма delta-tracking."""
     __entity_label__ = "Изменение"
     __entity_label_plural__ = "Изменения"
@@ -181,9 +208,23 @@ class Change(Base, TimestampMixin):
         info={"label": "Дата и время изменения"},
     )
     changed_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list, info={"label": "Изменённые переменные"})
+    operation_type: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        default=ChangeOperation.UPDATE.value,
+        info={"label": "Тип операции"},
+    )
+    exported_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        nullable=True,
+        info={"label": "Дата экспорта"},
+    )
 
     def __repr__(self) -> str:
-        return f"<Change {self.entity_name} pk={self.entity_pk} fields={self.changed_fields}>"
+        return (
+            f"<Change {self.entity_name} pk={self.entity_pk} "
+            f"op={self.operation_type} fields={self.changed_fields}>"
+        )
 
 
 class ChangeTrackedMixin:
@@ -208,7 +249,7 @@ class ChangeTrackedMixin:
 # Справочники
 # -----------------------------------------------------------------------------
 
-class TerritorialUnit(Base, ChangeTrackedMixin, VersionedMixin):
+class TerritorialUnit(Base, ChangeTrackedMixin):
     """Территориальная единица (область, край, город и т.д.)."""
     __entity_label__ = "Территориальная единица"
     __entity_label_plural__ = "Территориальные единицы"
@@ -226,7 +267,7 @@ class TerritorialUnit(Base, ChangeTrackedMixin, VersionedMixin):
     )
 
 
-class Branch(Base, ChangeTrackedMixin, VersionedMixin):
+class Branch(Base, ChangeTrackedMixin):
     """Филиал научной организации."""
     __entity_label__ = "Филиал"
     __entity_label_plural__ = "Филиалы"
@@ -264,7 +305,7 @@ class Branch(Base, ChangeTrackedMixin, VersionedMixin):
     )
 
 
-class Country(Base, ChangeTrackedMixin, VersionedMixin):
+class Country(Base, ChangeTrackedMixin):
     """Страна происхождения данных."""
     __entity_label__ = "Страна"
     __entity_label_plural__ = "Страны"
@@ -277,15 +318,17 @@ class Country(Base, ChangeTrackedMixin, VersionedMixin):
 
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
-        back_populates="country",
+        secondary=material_country_association,
+        back_populates="countries",
     )
     telegrams: Mapped[List["Telegram"]] = relationship(
         "Telegram",
-        back_populates="country",
+        secondary=telegram_country_association,
+        back_populates="countries",
     )
 
 
-class AcademicTitle(Base, ChangeTrackedMixin, VersionedMixin):
+class AcademicTitle(Base, ChangeTrackedMixin):
     """Научное звание сотрудника."""
     __entity_label__ = "Научное звание"
     __entity_label_plural__ = "Научные звания"
@@ -305,7 +348,7 @@ class AcademicTitle(Base, ChangeTrackedMixin, VersionedMixin):
     )
 
 
-class Consumer(Base, ChangeTrackedMixin, VersionedMixin):
+class Consumer(Base, ChangeTrackedMixin):
     """Подразделение головного офиса или сторонняя организация, выставляющая оценки."""
     __entity_label__ = "Потребитель"
     __entity_label_plural__ = "Потребители"
@@ -323,7 +366,7 @@ class Consumer(Base, ChangeTrackedMixin, VersionedMixin):
     )
 
 
-class Source(Base, ChangeTrackedMixin, VersionedMixin):
+class Source(Base, ChangeTrackedMixin):
     """Источник данных, положенных в основу научного материала."""
     __entity_label__ = "Источник"
     __entity_label_plural__ = "Источники"
@@ -332,7 +375,9 @@ class Source(Base, ChangeTrackedMixin, VersionedMixin):
     __tablename__ = "sources"
 
     id: Mapped[str] = mapped_column(String(50), primary_key=True, info={"label": "Индекс"})
-    type: Mapped[str] = mapped_column(String(50), nullable=False, info={"label": "Тип"})
+    type: Mapped[SourceType] = mapped_column(
+        IntEnumType(SourceType), nullable=False, info={"label": "Тип"}
+    )
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
 
     materials: Mapped[List["ScientificMaterial"]] = relationship(
@@ -347,7 +392,7 @@ class Source(Base, ChangeTrackedMixin, VersionedMixin):
     )
 
 
-class Leader(Base, ChangeTrackedMixin, VersionedMixin):
+class Leader(Base, ChangeTrackedMixin):
     """Должность руководителя, которому докладываются телеграммы."""
     __entity_label__ = "Руководитель"
     __entity_label_plural__ = "Руководители"
@@ -369,7 +414,7 @@ class Leader(Base, ChangeTrackedMixin, VersionedMixin):
 # Организационно-штатная структура (ОШС)
 # -----------------------------------------------------------------------------
 
-class Department(Base, ChangeTrackedMixin, VersionedMixin):
+class Department(Base, ChangeTrackedMixin):
     """Отдел филиала."""
     __entity_label__ = "Отдел"
     __entity_label_plural__ = "Отделы"
@@ -413,7 +458,7 @@ class Department(Base, ChangeTrackedMixin, VersionedMixin):
     )
 
 
-class WorkingGroup(Base, ChangeTrackedMixin, VersionedMixin):
+class WorkingGroup(Base, ChangeTrackedMixin):
     """Рабочая группа, к работе в которой привлекаются сотрудники."""
     __entity_label__ = "Рабочая группа"
     __entity_label_plural__ = "Рабочие группы"
@@ -454,7 +499,7 @@ class WorkingGroup(Base, ChangeTrackedMixin, VersionedMixin):
     )
 
 
-class Employee(Base, ChangeTrackedMixin, VersionedMixin):
+class Employee(Base, ChangeTrackedMixin):
     """Сотрудник филиала."""
     __entity_label__ = "Сотрудник"
     __entity_label_plural__ = "Сотрудники"
@@ -538,7 +583,7 @@ class Employee(Base, ChangeTrackedMixin, VersionedMixin):
 # Научная задача
 # -----------------------------------------------------------------------------
 
-class ScientificTask(Base, ChangeTrackedMixin, VersionedMixin):
+class ScientificTask(Base, ChangeTrackedMixin):
     """Научная задача, формулируемая руководством."""
     __entity_label__ = "Научная задача"
     __entity_label_plural__ = "Научные задачи"
@@ -548,7 +593,9 @@ class ScientificTask(Base, ChangeTrackedMixin, VersionedMixin):
 
     id: Mapped[str] = mapped_column(String(50), primary_key=True, info={"label": "Код"})
     name: Mapped[str] = mapped_column(String(500), nullable=False, info={"label": "Наименование"})
-    type: Mapped[str] = mapped_column(String(50), nullable=False, info={"label": "Тип"})
+    type: Mapped[ScientificTaskType] = mapped_column(
+        IntEnumType(ScientificTaskType), nullable=False, info={"label": "Тип"}
+    )
     start_date: Mapped[date] = mapped_column(Date, nullable=False, info={"label": "Начало действия", "short": "Начало"})
     end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Конец действия", "short": "Окончание"})
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
@@ -619,7 +666,7 @@ class AddedTask(Base, ChangeTrackedMixin, VersionedMixin):
 # Файл
 # -----------------------------------------------------------------------------
 
-class FileRecord(Base, ChangeTrackedMixin, VersionedMixin):
+class FileRecord(Base, ChangeTrackedMixin):
     """Прикреплённый файл."""
     __entity_label__ = "Файл"
     __entity_label_plural__ = "Файлы"
@@ -699,21 +746,12 @@ class EvaluationMixin:
 
     @property
     def latest_evaluation(self) -> Optional["Evaluation"]:
-        """Возвращает последнюю оценку документа по дате списка оценок."""
-        evaluations = [
-            evaluation
-            for evaluation in self.evaluations
-            if evaluation.evaluation_list is not None
-        ]
-        if not evaluations:
+        """Возвращает последнюю оценку документа по дате выставления."""
+        if not self.evaluations:
             return None
         return max(
-            evaluations,
-            key=lambda evaluation: (
-                evaluation.evaluation_list.date,
-                evaluation.evaluation_list.number or "",
-                str(evaluation.id),
-            ),
+            self.evaluations,
+            key=lambda evaluation: (evaluation.date, str(evaluation.id)),
         )
 
     @property
@@ -737,16 +775,20 @@ class EvaluationMixin:
         if documents_count <= 0:
             return ""
         if documents_count == 1:
-            return evaluation.value
+            return pack_enum_display("evaluation_value", evaluation.value)
         share = 1.0 / documents_count
-        return f"{share:.2f}".replace(".", ",") + f" {evaluation.value}"
+        return (
+            f"{share:.2f}".replace(".", ",")
+            + " "
+            + pack_enum_display("evaluation_value", evaluation.value)
+        )
 
 
 # -----------------------------------------------------------------------------
 # Научный материал
 # -----------------------------------------------------------------------------
 
-class ScientificMaterial(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMixin, EvaluationMixin):
+class ScientificMaterial(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationMixin):
     """Передаваемый/принимаемый научный материал."""
     __entity_label__ = "Научный материал"
     __entity_label_plural__ = "Научные материалы"
@@ -758,7 +800,9 @@ class ScientificMaterial(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMi
     __tablename__ = "scientific_materials"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    type: Mapped[str] = mapped_column(String(50), nullable=False, info={"label": "Тип"})
+    type: Mapped[MaterialType] = mapped_column(
+        IntEnumType(MaterialType), nullable=False, info={"label": "Тип"}
+    )
     outgoing_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, info={"label": "Исходящий номер", "short": "Исх. номер", "required": True})
     outgoing_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата исходящего номера", "short": "Дата исх.", "required": True})
     name: Mapped[str] = mapped_column(String(500), nullable=False, info={"label": "Наименование"})
@@ -767,18 +811,9 @@ class ScientificMaterial(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMi
     serial_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Серийный номер"})
     release_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, info={"label": "Год выпуска"})
     permit_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Номер разрешительного документа"})
+    permit_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата разрешительного документа"})
     cost: Mapped[Optional[float]] = mapped_column(Numeric(15, 2), nullable=True, info={"label": "Стоимость"})
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
-
-    country_id: Mapped[Optional[str]] = mapped_column(
-        ForeignKey("countries.id", ondelete="SET NULL"),
-        nullable=True,
-        info={"label": "Страна"},
-    )
-    country: Mapped[Optional["Country"]] = relationship(
-        "Country",
-        back_populates="materials",
-    )
 
     consumer_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("consumers.id", ondelete="SET NULL"),
@@ -814,6 +849,7 @@ class ScientificMaterial(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMi
         "Employee",
         secondary=material_employee_association,
         back_populates="materials",
+        info={"label": "Сотрудники"},
     )
     workgroups: Mapped[List["WorkingGroup"]] = relationship(
         "WorkingGroup",
@@ -824,6 +860,12 @@ class ScientificMaterial(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMi
         "Source",
         secondary=material_source_association,
         back_populates="materials",
+    )
+    countries: Mapped[List["Country"]] = relationship(
+        "Country",
+        secondary=material_country_association,
+        back_populates="materials",
+        info={"label": "Страны"},
     )
     files: Mapped[List["FileRecord"]] = relationship(
         "FileRecord",
@@ -846,7 +888,7 @@ class ScientificMaterial(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMi
 # Телеграмма
 # -----------------------------------------------------------------------------
 
-class Telegram(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMixin, EvaluationMixin):
+class Telegram(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationMixin):
     """Передаваемая/принимаемая телеграмма."""
     __entity_label__ = "Телеграмма"
     __entity_label_plural__ = "Телеграммы"
@@ -858,24 +900,18 @@ class Telegram(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMixin, Evalu
     __tablename__ = "telegrams"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    type: Mapped[str] = mapped_column(String(50), nullable=False, info={"label": "Тип"})
+    type: Mapped[TelegramType] = mapped_column(
+        IntEnumType(TelegramType), nullable=False, info={"label": "Тип"}
+    )
     outgoing_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, info={"label": "Исходящий номер", "short": "Исх. номер", "required": True})
     outgoing_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата исходящего номера", "short": "Дата исх.", "required": True})
     name: Mapped[str] = mapped_column(String(500), nullable=False, info={"label": "Наименование (тема)", "short": "Наименование"})
     incoming_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, info={"label": "Входящий номер", "short": "Вх. номер"})
     incoming_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата входящего номера", "short": "Дата вх."})
-    report_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, info={"label": "Тип доклада"})
+    report_type: Mapped[Optional[TelegramReportType]] = mapped_column(
+        IntEnumType(TelegramReportType), nullable=True, info={"label": "Тип доклада"}
+    )
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
-
-    country_id: Mapped[Optional[str]] = mapped_column(
-        ForeignKey("countries.id", ondelete="SET NULL"),
-        nullable=True,
-        info={"label": "Страна"},
-    )
-    country: Mapped[Optional["Country"]] = relationship(
-        "Country",
-        back_populates="telegrams",
-    )
 
     branch_id: Mapped[str] = mapped_column(
         ForeignKey("branches.id", ondelete="RESTRICT"),
@@ -909,6 +945,7 @@ class Telegram(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMixin, Evalu
         "Employee",
         secondary=telegram_employee_association,
         back_populates="telegrams",
+        info={"label": "Сотрудники"},
     )
     workgroups: Mapped[List["WorkingGroup"]] = relationship(
         "WorkingGroup",
@@ -919,6 +956,12 @@ class Telegram(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMixin, Evalu
         "Source",
         secondary=telegram_source_association,
         back_populates="telegrams",
+    )
+    countries: Mapped[List["Country"]] = relationship(
+        "Country",
+        secondary=telegram_country_association,
+        back_populates="telegrams",
+        info={"label": "Страны"},
     )
     files: Mapped[List["FileRecord"]] = relationship(
         "FileRecord",
@@ -941,7 +984,7 @@ class Telegram(Base, ChangeTrackedMixin, VersionedMixin, ParticipantMixin, Evalu
 # Адресация доклада телеграмм
 # -----------------------------------------------------------------------------
 
-class ReportAddress(Base, ChangeTrackedMixin, VersionedMixin):
+class ReportAddress(Base, ChangeTrackedMixin):
     """Промежуточная таблица между телеграммой и адресатом доклада с датой доклада."""
     __entity_label__ = "Адресация доклада"
     __entity_label_plural__ = "Адресации доклада"
@@ -951,7 +994,7 @@ class ReportAddress(Base, ChangeTrackedMixin, VersionedMixin):
     __tablename__ = "report_addresses"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    report_date: Mapped[date] = mapped_column(Date, nullable=False, info={"label": "Дата доклада"})
+    report_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата доклада"})
 
     telegram_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("telegrams.id", ondelete="CASCADE"),
@@ -972,7 +1015,7 @@ class ReportAddress(Base, ChangeTrackedMixin, VersionedMixin):
 # Список оценок и оценка
 # -----------------------------------------------------------------------------
 
-class EvaluationList(Base, ChangeTrackedMixin, VersionedMixin):
+class EvaluationList(Base, ChangeTrackedMixin):
     """Документ, определяющий выставление оценок материалам/телеграммам."""
     __entity_label__ = "Список оценок"
     __entity_label_plural__ = "Списки оценок"
@@ -992,7 +1035,7 @@ class EvaluationList(Base, ChangeTrackedMixin, VersionedMixin):
     )
 
 
-class Evaluation(Base, ChangeTrackedMixin, VersionedMixin):
+class Evaluation(Base, ChangeTrackedMixin):
     """Оценка материалов/телеграмм потребителем."""
     __entity_label__ = "Оценка"
     __entity_label_plural__ = "Оценки"
@@ -1002,14 +1045,17 @@ class Evaluation(Base, ChangeTrackedMixin, VersionedMixin):
     __tablename__ = "evaluations"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    value: Mapped[str] = mapped_column(String(50), nullable=False, info={"label": "Значение оценки"})
+    value: Mapped[EvaluationValue] = mapped_column(
+        IntEnumType(EvaluationValue), nullable=False, info={"label": "Значение оценки"}
+    )
+    date: Mapped[date] = mapped_column(Date, nullable=False, info={"label": "Дата выставления"})
 
-    evaluation_list_id: Mapped[uuid.UUID] = mapped_column(
+    evaluation_list_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("evaluation_lists.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         info={"label": "Список оценок"},
     )
-    evaluation_list: Mapped["EvaluationList"] = relationship(
+    evaluation_list: Mapped[Optional["EvaluationList"]] = relationship(
         "EvaluationList",
         back_populates="evaluations",
     )

@@ -13,6 +13,7 @@
 import logging
 from typing import Any, Dict
 
+from sqlalchemy import UniqueConstraint
 from sqlalchemy import inspect as sa_inspect
 
 from internal_correspondence.core.domain_pack import get_domain_pack
@@ -108,6 +109,24 @@ def field_required(model_class: type, field_name: str) -> bool:
     if "required" in info:
         return bool(info["required"])
     return not column.nullable
+
+
+def field_unique(model_class: type, field_name: str) -> bool:
+    """Проверяет, входит ли колонка в ограничение уникальности.
+
+    Учитываются составные ``UniqueConstraint`` таблицы и ``unique=True``
+    одиночных колонок.
+    """
+    mapper = sa_inspect(model_class)
+    column = mapper.columns.get(field_name)
+    if column is None:
+        return False
+    if column.unique:
+        return True
+    for constraint in mapper.persist_selectable.constraints:
+        if isinstance(constraint, UniqueConstraint) and column.name in constraint.columns:
+            return True
+    return False
 
 
 def field_form_label(model_class: type, field_name: str) -> str:

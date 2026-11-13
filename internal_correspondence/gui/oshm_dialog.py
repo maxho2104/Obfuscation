@@ -1,10 +1,21 @@
-"""Диалог организационно-штатной структуры (ОШС)."""
+"""Диалог организационно-штатной структуры (ОШС).
+
+Форма строится от элемента, от которого открыто приложение: для филиала —
+от его собственного узла, для головного офиса — от узла «Головной офис»
+со всеми филиалами внутри (режим просмотра). Два дерева одно под другим:
+штатная структура (отделы и сотрудники) и рабочие группы с их составом.
+По двойному щелчку на элементе справа выдвигается панель с его данными
+и назначенными задачами (для сотрудника).
+Реализованы множественный выбор, кнопки «+»/«−», контекстное меню,
+drag&drop переподчинение сотрудников и подсветка неактивных элементов.
+"""
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 from uuid import UUID
 
-from PyQt5.QtCore import QDate, Qt
+from PyQt5.QtCore import QDate, Qt, pyqtSignal
+from PyQt5.QtGui import QBrush, QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -13,17 +24,23 @@ from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
+from internal_correspondence.core.constants import Role
 from internal_correspondence.core.logging_config import get_logger
+from internal_correspondence.gui.oshm_details_panel import ElementDetailsPanel
 from internal_correspondence.orm.labels import (
     entity_label,
     field_form_label,
@@ -39,71 +56,249 @@ from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("oshm_dialog")
 
+# Цвет неактивных (скрытых) элементов дерева
+INACTIVE_COLOR = QColor(150, 150, 150)
+
+# Полезная нагрузка узла дерева: (тип узла, строковый идентификатор)
+NodeRef = Tuple[str, str]
+
+# Тип корневого узла головного офиса
+NODE_HEAD_OFFICE = "head_office"
+
+
+class OSHMTreeWidget(QTreeWidget):
+    """Дерево ОШС с drag&drop переподчинением сотрудников.
+
+    Стандартное перемещение узлов отключено: перенос обрабатывается
+    диалогом через сигнал ``nodes_dropped`` (перетаскиваемые узлы и цель).
+    """
+
+    nodes_dropped = pyqtSignal(list, object)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setDragDropMode(QAbstractItemView.DragDrop)
+        self.setDefaultDropAction(Qt.IgnoreAction)
+        self.setHeaderLabels([STRINGS.oshm_col_element])
+
+    def dropEvent(self, event) -> None:
+        """Перехватывает перенос: передаёт узлы и цель диалогу."""
+        target_item = self.itemAt(event.pos())
+        payloads = [item.data(0, Qt.UserRole) for item in self.selectedItems()]
+        target = target_item.data(0, Qt.UserRole) if target_item is not None else None
+        if payloads:
+            self.nodes_dropped.emit(payloads, target)
+        event.ignore()
+
 
 class OSHMDialog(QDialog):
-    """Диалог редактирования организационно-штатной структуры филиала."""
+    """Диалог просмотра и редактирования ОШС.
 
-    def __init__(self, session, branch_id: str, read_only: bool = False, parent=None) -> None:
+    Деревья строятся от элемента, от которого открыто приложение:
+    филиал видит и редактирует только свою структуру, головной офис
+    видит все филиалы и редактирует структуру (отделы, рабочие группы),
+    но не записи о сотрудниках.
+    """
+
+    def __init__(
+        self,
+        session,
+        branch_id: Optional[str] = None,
+        role: str = Role.BRANCH.value,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.session = session
+        self.role = role
+        self.is_head_office = role == Role.HEAD_OFFICE.value
+        # Головной офис редактирует структуру (отделы, рабочие группы),
+        # но не записи о людях — сотрудников ведёт сам филиал
+        self.can_edit_people = not self.is_head_office
         self.branch_id = branch_id
-        self.read_only = read_only
-        self.setWindowTitle(STRINGS.oshm_window_title.format(branch_id=branch_id))
-        self.setMinimumSize(700, 500)
+        self._active_tree: Optional[OSHMTreeWidget] = None
+        self.setWindowTitle(STRINGS.title_oshm)
+        self.setMinimumSize(700, 600)
         self._setup_ui()
         self._load_data()
+
+    # ------------------------------------------------------------------
+    # Построение интерфейса
+    # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabels([STRINGS.oshm_col_element, STRINGS.oshm_col_status])
-        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.tree.customContextMenuRequested.connect(self._show_context_menu)
-        self.tree.itemDoubleClicked.connect(self._edit_item)
-        layout.addWidget(self.tree)
+        # Два дерева одно под другим
+        splitter = QSplitter(Qt.Vertical)
+
+        structure_widget = QWidget()
+        structure_layout = QVBoxLayout(structure_widget)
+        structure_layout.setContentsMargins(0, 0, 0, 0)
+        structure_layout.addWidget(QLabel(STRINGS.oshm_tree_structure))
+        self.tree_structure = self._create_tree()
+        structure_layout.addWidget(self.tree_structure)
+        splitter.addWidget(structure_widget)
+
+        workgroups_widget = QWidget()
+        workgroups_layout = QVBoxLayout(workgroups_widget)
+        workgroups_layout.setContentsMargins(0, 0, 0, 0)
+        workgroups_layout.addWidget(QLabel(STRINGS.oshm_tree_workgroups))
+        self.tree_workgroups = self._create_tree()
+        workgroups_layout.addWidget(self.tree_workgroups)
+        splitter.addWidget(workgroups_widget)
+
+        splitter.setSizes([350, 350])
+
+        # Справа — выдвижная панель сведений об элементе (двойной щелчок)
+        self.details_panel = ElementDetailsPanel(self.session, self)
+        self.details_panel.hide_requested.connect(self._hide_details)
+        self.details_panel.edit_requested.connect(self._edit_node)
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.addWidget(splitter)
+        main_splitter.addWidget(self.details_panel)
+        main_splitter.setSizes([700, 340])
+        layout.addWidget(main_splitter)
+        self.details_panel.hide()
+
+        # Кнопки добавления и скрытия
+        buttons_row = QHBoxLayout()
+        self.add_btn = QPushButton("+")
+        self.add_btn.setToolTip(STRINGS.button_add)
+        self.add_btn.clicked.connect(self._add_clicked)
+        self.toggle_btn = QPushButton("−")
+        self.toggle_btn.setToolTip(STRINGS.action_toggle_hide)
+        self.toggle_btn.clicked.connect(self._toggle_selected)
+        buttons_row.addWidget(self.add_btn)
+        buttons_row.addWidget(self.toggle_btn)
+        buttons_row.addStretch()
+        layout.addLayout(buttons_row)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Close)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
 
-    def _load_data(self) -> None:
-        self.tree.clear()
-        branch = self.session.get(Branch, self.branch_id)
-        if branch is None:
+    def _create_tree(self) -> OSHMTreeWidget:
+        """Создаёт настроенное дерево ОШС."""
+        tree = OSHMTreeWidget()
+        tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        tree.customContextMenuRequested.connect(self._show_context_menu)
+        tree.itemDoubleClicked.connect(
+            lambda item, _column, tree=tree: self._show_details(item, tree)
+        )
+        tree.itemSelectionChanged.connect(lambda tree=tree: self._activate_tree(tree))
+        tree.nodes_dropped.connect(
+            lambda payloads, target, tree=tree: self._on_nodes_dropped(
+                tree, payloads, target
+            )
+        )
+        return tree
+
+    def _activate_tree(self, tree: OSHMTreeWidget) -> None:
+        """Запоминает дерево, с которым работает оператор."""
+        self._active_tree = tree
+
+    # ------------------------------------------------------------------
+    # Панель сведений об элементе
+    # ------------------------------------------------------------------
+
+    def _show_details(self, item: QTreeWidgetItem, tree: OSHMTreeWidget) -> None:
+        """Показывает справа панель сведений об элементе (двойной щелчок)."""
+        payload = item.data(0, Qt.UserRole)
+        if payload is None:
             return
+        self._activate_tree(tree)
+        tree.setCurrentItem(item)
+        if self.details_panel.show_node(payload, can_edit_people=self.can_edit_people):
+            self.details_panel.show()
 
-        branch_item = QTreeWidgetItem(self.tree, [branch.name, entity_label(Branch)])
-        branch_item.setData(0, Qt.UserRole, ("branch", branch.id))
-        branch_item.setExpanded(True)
+    def _hide_details(self) -> None:
+        """Скрывает панель сведений (кнопка «Скрыть»)."""
+        self.details_panel.hide()
 
+    def _refresh_details_panel(self) -> None:
+        """Обновляет панель после перестройки деревьев.
+
+        Если элемент был удалён, панель скрывается.
+        """
+        if self.details_panel.isHidden():
+            return
+        node = self.details_panel.current_node
+        if node is None:
+            return
+        if not self.details_panel.show_node(node, can_edit_people=self.can_edit_people):
+            self.details_panel.hide()
+
+    # ------------------------------------------------------------------
+    # Загрузка данных
+    # ------------------------------------------------------------------
+
+    def _load_data(self) -> None:
+        """Перестраивает оба дерева от корня текущей роли."""
+        self.tree_structure.clear()
+        self.tree_workgroups.clear()
+
+        if self.is_head_office:
+            root_s = self._add_node(
+                self.tree_structure, None, NODE_HEAD_OFFICE, "",
+                STRINGS.role_head_office,
+            )
+            root_w = self._add_node(
+                self.tree_workgroups, None, NODE_HEAD_OFFICE, "",
+                STRINGS.role_head_office,
+            )
+            branches = self.session.query(Branch).order_by(Branch.name).all()
+            for branch in branches:
+                self._add_branch_nodes(root_s, root_w, branch)
+        else:
+            branch = (
+                self.session.get(Branch, self.branch_id) if self.branch_id else None
+            )
+            if branch is None:
+                return
+            root_s = self._add_node(
+                self.tree_structure, None, "branch", branch.id, branch.name
+            )
+            root_w = self._add_node(
+                self.tree_workgroups, None, "branch", branch.id, branch.name
+            )
+            self._fill_branch(root_s, root_w, branch.id)
+        self._refresh_details_panel()
+
+    def _add_branch_nodes(
+        self,
+        structure_parent: QTreeWidgetItem,
+        workgroups_parent: QTreeWidgetItem,
+        branch: Branch,
+    ) -> None:
+        """Добавляет узел филиала и его структуру в оба дерева."""
+        node_s = self._add_node(
+            self.tree_structure, structure_parent, "branch", branch.id, branch.name
+        )
+        node_w = self._add_node(
+            self.tree_workgroups, workgroups_parent, "branch", branch.id, branch.name
+        )
+        self._fill_branch(node_s, node_w, branch.id)
+
+    def _fill_branch(
+        self,
+        structure_parent: QTreeWidgetItem,
+        workgroups_parent: QTreeWidgetItem,
+        branch_id: str,
+    ) -> None:
+        """Заполняет оба дерева содержимым филиала."""
         departments = (
             self.session.query(Department)
-            .filter(Department.branch_id == self.branch_id)
+            .filter(Department.branch_id == branch_id)
             .order_by(Department.name)
             .all()
         )
         for dept in departments:
-            dept_item = QTreeWidgetItem(
-                branch_item,
-                [dept.name, STRINGS.status_active_m if dept.active else STRINGS.status_inactive_dept],
+            # Дерево штатной структуры: отдел → сотрудники
+            dept_item = self._add_node(
+                self.tree_structure, structure_parent, "department",
+                dept.id, dept.name, active=dept.active,
             )
-            dept_item.setData(0, Qt.UserRole, ("department", str(dept.id)))
-            dept_item.setExpanded(True)
-
-            workgroups = (
-                self.session.query(WorkingGroup)
-                .filter(WorkingGroup.department_id == dept.id)
-                .order_by(WorkingGroup.name)
-                .all()
-            )
-            for wg in workgroups:
-                wg_item = QTreeWidgetItem(
-                    dept_item,
-                    [wg.name, STRINGS.status_active_f if wg.active else STRINGS.status_inactive_wg],
-                )
-                wg_item.setData(0, Qt.UserRole, ("workgroup", str(wg.id)))
-
             employees = (
                 self.session.query(Employee)
                 .filter(Employee.department_id == dept.id)
@@ -111,115 +306,260 @@ class OSHMDialog(QDialog):
                 .all()
             )
             for emp in employees:
-                emp_item = QTreeWidgetItem(
-                    dept_item,
-                    [emp.display_name(), STRINGS.status_active_m if emp.active else STRINGS.status_inactive_emp],
-                )
-                emp_item.setData(0, Qt.UserRole, ("employee", str(emp.id)))
+                self._add_employee_node(dept_item, emp, dept.active)
 
-    def _selected_node(self) -> Optional[tuple]:
-        item = self.tree.currentItem()
-        if item is None:
+            # Дерево рабочих групп: отдел → группа → состав группы
+            wg_dept_item = self._add_node(
+                self.tree_workgroups, workgroups_parent, "department",
+                dept.id, dept.name, active=dept.active,
+            )
+            workgroups = (
+                self.session.query(WorkingGroup)
+                .filter(WorkingGroup.department_id == dept.id)
+                .order_by(WorkingGroup.name)
+                .all()
+            )
+            for wg in workgroups:
+                wg_item = self._add_node(
+                    self.tree_workgroups, wg_dept_item, "workgroup",
+                    wg.id, wg.name, active=wg.active,
+                )
+                members = (
+                    self.session.query(Employee)
+                    .filter(Employee.working_group_id == wg.id)
+                    .order_by(Employee.last_name)
+                    .all()
+                )
+                for emp in members:
+                    self._add_employee_node(wg_item, emp, dept.active)
+
+    def _add_node(
+        self,
+        tree: OSHMTreeWidget,
+        parent_item: Optional[QTreeWidgetItem],
+        node_type: str,
+        node_id,
+        text: str,
+        active: bool = True,
+    ) -> QTreeWidgetItem:
+        """Добавляет узел дерева с полезной нагрузкой и подсветкой неактивных."""
+        if parent_item is None:
+            item = QTreeWidgetItem(tree, [text])
+            item.setExpanded(True)  # корень всегда развёрнут, остальное «выпадает»
+        else:
+            item = QTreeWidgetItem(parent_item, [text])
+        item.setData(0, Qt.UserRole, (node_type, str(node_id)))
+        flags = item.flags()
+        if node_type == "employee" and self.can_edit_people:
+            flags |= Qt.ItemIsDragEnabled
+            flags &= ~Qt.ItemIsDropEnabled
+        elif node_type in ("department", "workgroup"):
+            flags &= ~Qt.ItemIsDragEnabled
+            flags |= Qt.ItemIsDropEnabled
+        else:
+            flags &= ~Qt.ItemIsDragEnabled & ~Qt.ItemIsDropEnabled
+        item.setFlags(flags)
+        if not active:
+            item.setForeground(0, QBrush(INACTIVE_COLOR))
+        return item
+
+    def _add_employee_node(
+        self, parent_item: QTreeWidgetItem, emp: Employee, dept_active: bool
+    ) -> QTreeWidgetItem:
+        """Добавляет узел сотрудника; сотрудник сокращённого отдела — неактивен."""
+        return self._add_node(
+            self._tree_of(parent_item),
+            parent_item,
+            "employee",
+            emp.id,
+            emp.display_name(),
+            active=emp.active and dept_active,
+        )
+
+    @staticmethod
+    def _tree_of(item: QTreeWidgetItem) -> OSHMTreeWidget:
+        """Возвращает дерево, которому принадлежит узел."""
+        return item.treeWidget()
+
+    # ------------------------------------------------------------------
+    # Выбор и контекстное меню
+    # ------------------------------------------------------------------
+
+    def _selected_nodes(self) -> List[NodeRef]:
+        """Возвращает полезную нагрузку выбранных узлов активного дерева."""
+        if self._active_tree is None:
+            return []
+        return [
+            item.data(0, Qt.UserRole)
+            for item in self._active_tree.selectedItems()
+        ]
+
+    def _current_node(self) -> Optional[NodeRef]:
+        """Возвращает текущий узел активного дерева."""
+        if self._active_tree is None:
             return None
-        return item.data(0, Qt.UserRole)
+        item = self._active_tree.currentItem()
+        return item.data(0, Qt.UserRole) if item is not None else None
 
     def _show_context_menu(self, position) -> None:
-        if self.read_only:
+        tree = self._active_tree
+        if tree is None:
             return
-        item = self.tree.itemAt(position)
+        item = tree.itemAt(position)
         if item is None:
             return
-        self.tree.setCurrentItem(item)
-        node_type, node_id = item.data(0, Qt.UserRole)
+        tree.setCurrentItem(item)
+        selected = tree.selectedItems()
+        # Головной офис не редактирует людей
+        editable_types = ("department", "workgroup") + (
+            ("employee",) if self.can_edit_people else ()
+        )
 
         menu = QMenu()
-        if node_type == "branch":
-            add_dept = menu.addAction(
-                STRINGS.action_add_entity.format(entity=entity_label(Department).lower())
-            )
-            add_dept.triggered.connect(self._add_department)
-        elif node_type == "department":
+        if len(selected) > 1:
+            # Множественный выбор: групповые операции над редактируемыми узлами
+            if not any(
+                node.data(0, Qt.UserRole)[0] in editable_types for node in selected
+            ):
+                return
+            toggle = menu.addAction(STRINGS.action_toggle_hide)
+            toggle.triggered.connect(self._toggle_selected)
+            delete = menu.addAction(STRINGS.button_delete)
+            delete.triggered.connect(self._delete_selected)
+        else:
+            node_type, _node_id = item.data(0, Qt.UserRole)
+            if node_type == "branch":
+                add_dept = menu.addAction(
+                    STRINGS.action_add_entity.format(
+                        entity=entity_label(Department).lower()
+                    )
+                )
+                add_dept.triggered.connect(self._add_department)
+            elif node_type == "department":
+                add_wg = menu.addAction(
+                    STRINGS.action_add_entity.format(
+                        entity=entity_label(WorkingGroup).lower()
+                    )
+                )
+                add_wg.triggered.connect(self._add_workgroup)
+                if self.can_edit_people:
+                    add_emp = menu.addAction(
+                        STRINGS.action_add_entity.format(
+                            entity=entity_label(Employee).lower()
+                        )
+                    )
+                    add_emp.triggered.connect(self._add_employee)
+                menu.addSeparator()
+                edit = menu.addAction(STRINGS.button_edit)
+                edit.triggered.connect(self._edit_item)
+            elif node_type in editable_types:
+                edit = menu.addAction(STRINGS.button_edit)
+                edit.triggered.connect(self._edit_item)
+            if node_type in editable_types:
+                toggle = menu.addAction(STRINGS.action_toggle_hide)
+                toggle.triggered.connect(self._toggle_selected)
+                delete = menu.addAction(STRINGS.button_delete)
+                delete.triggered.connect(self._delete_selected)
+            if menu.isEmpty():
+                return
+        menu.exec_(tree.viewport().mapToGlobal(position))
+
+    # ------------------------------------------------------------------
+    # Добавление
+    # ------------------------------------------------------------------
+
+    def _add_clicked(self) -> None:
+        """Обрабатывает кнопку «+» с учётом выбранного узла."""
+        node = self._current_node()
+        if node is None or node[0] in ("branch", NODE_HEAD_OFFICE):
+            self._add_department()
+            return
+        if node[0] == "department":
+            menu = QMenu(self)
             add_wg = menu.addAction(
-                STRINGS.action_add_entity.format(entity=entity_label(WorkingGroup).lower())
+                STRINGS.action_add_entity.format(
+                    entity=entity_label(WorkingGroup).lower()
+                )
             )
-            add_wg.triggered.connect(self._add_workgroup)
-            add_emp = menu.addAction(
-                STRINGS.action_add_entity.format(entity=entity_label(Employee).lower())
-            )
-            add_emp.triggered.connect(self._add_employee)
-            menu.addSeparator()
-            edit_dept = menu.addAction(STRINGS.button_edit)
-            edit_dept.triggered.connect(self._edit_item)
-            hide_dept = menu.addAction(STRINGS.action_toggle_hide)
-            hide_dept.triggered.connect(self._toggle_department)
-            delete_dept = menu.addAction(STRINGS.button_delete)
-            delete_dept.triggered.connect(self._delete_item)
-        elif node_type == "workgroup":
-            edit_wg = menu.addAction(STRINGS.button_edit)
-            edit_wg.triggered.connect(self._edit_item)
-            toggle_wg = menu.addAction(STRINGS.action_toggle_hide)
-            toggle_wg.triggered.connect(self._toggle_workgroup)
-            delete_wg = menu.addAction(STRINGS.button_delete)
-            delete_wg.triggered.connect(self._delete_item)
-        elif node_type == "employee":
-            edit_emp = menu.addAction(STRINGS.button_edit)
-            edit_emp.triggered.connect(self._edit_item)
-            toggle_emp = menu.addAction(STRINGS.action_toggle_hide)
-            toggle_emp.triggered.connect(self._toggle_employee)
-            delete_emp = menu.addAction(STRINGS.button_delete)
-            delete_emp.triggered.connect(self._delete_item)
-        menu.exec_(self.tree.viewport().mapToGlobal(position))
+            add_emp = None
+            if self.can_edit_people:
+                add_emp = menu.addAction(
+                    STRINGS.action_add_entity.format(entity=entity_label(Employee).lower())
+                )
+            action = menu.exec_(self.add_btn.mapToGlobal(self.add_btn.rect().bottomLeft()))
+            if action is add_wg:
+                self._add_workgroup()
+            elif add_emp is not None and action is add_emp:
+                self._add_employee()
+
+    def _branch_id_for_add(self) -> Optional[str]:
+        """Филиал для нового отдела: выбранный узел филиала либо свой (роль филиала)."""
+        node = self._current_node()
+        if node is not None and node[0] == "branch":
+            return node[1]
+        if not self.is_head_office:
+            return self.branch_id
+        return None
 
     def _add_department(self) -> None:
-        dialog = DepartmentEditDialog(self.session, branch_id=self.branch_id, parent=self)
+        branch_id = self._branch_id_for_add()
+        if not branch_id:
+            QMessageBox.information(
+                self, STRINGS.title_oshm, STRINGS.oshm_select_branch_first
+            )
+            return
+        dialog = DepartmentEditDialog(
+            self.session, branch_id=branch_id, parent=self
+        )
         if dialog.exec_() == QDialog.Accepted:
-            try:
-                service = DepartmentService(self.session)
-                service.create(dialog.get_data())
-                self.session.commit()
-                self._load_data()
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.exception("Ошибка добавления отдела")
-                QMessageBox.critical(self, STRINGS.title_error, str(exc))
-                self.session.rollback()
+            self._apply(
+                lambda: DepartmentService(self.session).create(dialog.get_data()),
+                "Ошибка добавления отдела",
+            )
 
     def _add_workgroup(self) -> None:
-        node = self._selected_node()
+        node = self._current_node()
         if node is None or node[0] != "department":
             return
-        dialog = WorkingGroupEditDialog(self.session, department_id=UUID(node[1]), parent=self)
+        dialog = WorkingGroupEditDialog(
+            self.session, department_id=UUID(node[1]), parent=self
+        )
         if dialog.exec_() == QDialog.Accepted:
-            try:
-                service = WorkingGroupService(self.session)
-                service.create(dialog.get_data())
-                self.session.commit()
-                self._load_data()
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.exception("Ошибка добавления рабочей группы")
-                QMessageBox.critical(self, STRINGS.title_error, str(exc))
-                self.session.rollback()
+            self._apply(
+                lambda: WorkingGroupService(self.session).create(dialog.get_data()),
+                "Ошибка добавления рабочей группы",
+            )
 
     def _add_employee(self) -> None:
-        node = self._selected_node()
+        if not self.can_edit_people:
+            return
+        node = self._current_node()
         if node is None or node[0] != "department":
             return
-        dialog = EmployeeEditDialog(self.session, department_id=UUID(node[1]), parent=self)
+        dialog = EmployeeEditDialog(
+            self.session, department_id=UUID(node[1]), parent=self
+        )
         if dialog.exec_() == QDialog.Accepted:
-            try:
-                service = EmployeeService(self.session)
-                service.create(dialog.get_data())
-                self.session.commit()
-                self._load_data()
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.exception("Ошибка добавления сотрудника")
-                QMessageBox.critical(self, STRINGS.title_error, str(exc))
-                self.session.rollback()
+            self._apply(
+                lambda: EmployeeService(self.session).create(dialog.get_data()),
+                "Ошибка добавления сотрудника",
+            )
+
+    # ------------------------------------------------------------------
+    # Изменение, скрытие, удаление, drag&drop
+    # ------------------------------------------------------------------
 
     def _edit_item(self) -> None:
-        node = self._selected_node()
-        if node is None:
-            return
+        """Открывает редактирование текущего узла активного дерева."""
+        node = self._current_node()
+        if node is not None:
+            self._edit_node(node)
+
+    def _edit_node(self, node: NodeRef) -> None:
+        """Открывает диалог редактирования для указанного узла."""
         node_type, node_id = node
+        if node_type == "employee" and not self.can_edit_people:
+            return
         try:
             if node_type == "department":
                 obj = self.session.get(Department, UUID(node_id))
@@ -232,71 +572,110 @@ class OSHMDialog(QDialog):
                 dialog = EmployeeEditDialog(self.session, item=obj, parent=self)
             else:
                 return
-            if dialog.exec_() == QDialog.Accepted:
-                if node_type == "department":
-                    DepartmentService(self.session).update(obj, dialog.get_data())
-                elif node_type == "workgroup":
-                    WorkingGroupService(self.session).update(obj, dialog.get_data())
-                elif node_type == "employee":
-                    EmployeeService(self.session).update(obj, dialog.get_data())
-                self.session.commit()
-                self._load_data()
+            if dialog.exec_() != QDialog.Accepted:
+                return
+            if node_type == "department":
+                DepartmentService(self.session).update(obj, dialog.get_data())
+            elif node_type == "workgroup":
+                WorkingGroupService(self.session).update(obj, dialog.get_data())
+            else:
+                EmployeeService(self.session).update(obj, dialog.get_data())
+            self.session.commit()
+            self._load_data()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка редактирования элемента ОШС")
             QMessageBox.critical(self, STRINGS.title_error, str(exc))
             self.session.rollback()
 
-    def _toggle_department(self) -> None:
-        node = self._selected_node()
-        if node is None or node[0] != "department":
-            return
-        obj = self.session.get(Department, UUID(node[1]))
-        obj.active = not obj.active
-        self.session.commit()
-        self._load_data()
+    def _toggle_selected(self) -> None:
+        """Переключает признак активности у всех выбранных элементов."""
+        models = {
+            "department": Department,
+            "workgroup": WorkingGroup,
+            "employee": Employee,
+        }
+        changed = False
+        for node_type, node_id in self._selected_nodes():
+            if node_type == "employee" and not self.can_edit_people:
+                continue
+            model_class = models.get(node_type)
+            if model_class is None:
+                continue
+            obj = self.session.get(model_class, UUID(node_id))
+            if obj is not None:
+                obj.active = not obj.active
+                changed = True
+        if changed:
+            self.session.commit()
+            self._load_data()
 
-    def _toggle_workgroup(self) -> None:
-        node = self._selected_node()
-        if node is None or node[0] != "workgroup":
+    def _delete_selected(self) -> None:
+        """Удаляет выбранные элементы после подтверждения."""
+        nodes = [
+            node
+            for node in self._selected_nodes()
+            if node[0] in ("department", "workgroup", "employee")
+            and (node[0] != "employee" or self.can_edit_people)
+        ]
+        if not nodes:
             return
-        obj = self.session.get(WorkingGroup, UUID(node[1]))
-        obj.active = not obj.active
-        self.session.commit()
-        self._load_data()
-
-    def _toggle_employee(self) -> None:
-        node = self._selected_node()
-        if node is None or node[0] != "employee":
-            return
-        obj = self.session.get(Employee, UUID(node[1]))
-        obj.active = not obj.active
-        self.session.commit()
-        self._load_data()
-
-    def _delete_item(self) -> None:
-        node = self._selected_node()
-        if node is None:
-            return
-        node_type, node_id = node
-        reply = QMessageBox.question(
-            self, STRINGS.title_confirm, STRINGS.msg_delete_element_confirm
-        )
+        if len(nodes) == 1:
+            text = STRINGS.msg_delete_element_confirm
+        else:
+            text = STRINGS.msg_delete_elements_confirm.format(count=len(nodes))
+        reply = QMessageBox.question(self, STRINGS.title_confirm, text)
         if reply != QMessageBox.Yes:
             return
+        services = {
+            "department": (Department, DepartmentService),
+            "workgroup": (WorkingGroup, WorkingGroupService),
+            "employee": (Employee, EmployeeService),
+        }
+
+        def do_delete() -> None:
+            for node_type, node_id in nodes:
+                model_class, service_class = services[node_type]
+                obj = self.session.get(model_class, UUID(node_id))
+                if obj is not None:
+                    service_class(self.session).delete(obj)
+
+        self._apply(do_delete, "Ошибка удаления элемента ОШС")
+
+    def _on_nodes_dropped(
+        self,
+        tree: OSHMTreeWidget,
+        payloads: List[NodeRef],
+        target: Optional[NodeRef],
+    ) -> None:
+        """Обрабатывает drag&drop переподчинение сотрудников."""
+        if self.is_head_office or target is None:
+            return
+        employees = [payload for payload in payloads if payload[0] == "employee"]
+        if not employees:
+            return
+
+        def do_move() -> None:
+            for _node_type, node_id in employees:
+                employee = self.session.get(Employee, UUID(node_id))
+                if employee is None:
+                    continue
+                if tree is self.tree_structure and target[0] == "department":
+                    # Перевод сотрудника в другой отдел
+                    employee.department_id = UUID(target[1])
+                elif tree is self.tree_workgroups and target[0] == "workgroup":
+                    # Включение сотрудника в рабочую группу
+                    employee.working_group_id = UUID(target[1])
+
+        self._apply(do_move, "Ошибка переноса сотрудника")
+
+    def _apply(self, operation, error_message: str) -> None:
+        """Выполняет операцию с фиксацией транзакции и обработкой ошибок."""
         try:
-            if node_type == "department":
-                obj = self.session.get(Department, UUID(node_id))
-                DepartmentService(self.session).delete(obj)
-            elif node_type == "workgroup":
-                obj = self.session.get(WorkingGroup, UUID(node_id))
-                WorkingGroupService(self.session).delete(obj)
-            elif node_type == "employee":
-                obj = self.session.get(Employee, UUID(node_id))
-                EmployeeService(self.session).delete(obj)
+            operation()
             self.session.commit()
             self._load_data()
         except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("Ошибка удаления элемента ОШС")
+            logger.exception(error_message)
             QMessageBox.critical(self, STRINGS.title_error, str(exc))
             self.session.rollback()
 

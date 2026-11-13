@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import List, Optional, Type
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (
     QAbstractItemView,
@@ -11,28 +11,36 @@ from PyQt5.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
-    QSplitter,
     QTableView,
     QVBoxLayout,
     QWidget,
 )
 
-from internal_correspondence.core.constants import DEFAULT_PAGE_SIZE
+from internal_correspondence.core.constants import DEFAULT_PAGE_SIZE, Role
 from internal_correspondence.core.logging_config import get_logger
-from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
 from internal_correspondence.gui.document_dialogs import (
     MaterialEditDialog,
     TelegramEditDialog,
 )
 from internal_correspondence.gui.evaluation_delegate import EvaluationItemDelegate
+from internal_correspondence.gui.evaluation_dialog import EvaluationAssignDialog
 from internal_correspondence.gui.filter_dialog import FilterDialog
-from internal_correspondence.gui.table_model import ColumnDef, SqlAlchemyTableModel
+from internal_correspondence.gui.table_model import (
+    ColumnDef,
+    DocumentsTableModel,
+    SqlAlchemyTableModel,
+)
 from internal_correspondence.orm.base import Base
 from internal_correspondence.utils.string_resources import STRINGS
 from internal_correspondence.orm.labels import deletion_confirmation_text
-from internal_correspondence.orm.models import ScientificMaterial, Telegram
+from internal_correspondence.orm.models import (
+    Evaluation,
+    ScientificMaterial,
+    Telegram,
+)
 from internal_correspondence.services.document_service import (
     ScientificMaterialService,
     TelegramService,
@@ -44,6 +52,9 @@ logger = get_logger("document_list_widget")
 class DocumentListWidget(QWidget):
     """Универсальный виджет списка документов (материалов или телеграмм)."""
 
+    filtersChanged = pyqtSignal(list)
+    currentDocumentChanged = pyqtSignal(object)
+
     def __init__(
         self,
         session,
@@ -51,6 +62,7 @@ class DocumentListWidget(QWidget):
         model_class: Type[Base],
         columns: List[ColumnDef],
         branch_id: Optional[str],
+        role: Optional[str] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -59,6 +71,7 @@ class DocumentListWidget(QWidget):
         self.model_class = model_class
         self.columns = columns
         self.branch_id = branch_id
+        self.role = role
         self.is_material = model_class == ScientificMaterial
         self.service = (
             ScientificMaterialService(session, storage_root)
@@ -93,8 +106,6 @@ class DocumentListWidget(QWidget):
         layout.addLayout(toolbar)
 
         # Таблица
-        splitter = QSplitter(Qt.Vertical)
-
         self.table = QTableView()
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -102,14 +113,9 @@ class DocumentListWidget(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.doubleClicked.connect(self._edit)
-        splitter.addWidget(self.table)
-
-        self.files_widget = AttachedFilesWidget(self.storage_root)
-        self.files_widget.setMaximumHeight(150)
-        splitter.addWidget(self.files_widget)
-        splitter.setSizes([400, 150])
-
-        layout.addWidget(splitter)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._table_context_menu)
+        layout.addWidget(self.table)
 
         # Пагинация
         pagination = QHBoxLayout()
@@ -147,8 +153,10 @@ class DocumentListWidget(QWidget):
         pagination.addStretch()
         layout.addLayout(pagination)
 
-        self.table_model = SqlAlchemyTableModel(
-            self.session, self.model_class, self.columns
+        # Для роли «филиал» выборка ограничена его строками
+        model_branch = self.branch_id if self.role == Role.BRANCH.value else None
+        self.table_model = DocumentsTableModel(
+            self.session, self.model_class, self.columns, branch_id=model_branch
         )
         self.table.setModel(self.table_model)
         for idx, col in enumerate(self.columns):
@@ -184,6 +192,38 @@ class DocumentListWidget(QWidget):
         self.table_model.set_filters(filters)
         self._update_pagination()
         self._update_filter_button()
+        self.filtersChanged.emit(self.table_model.filters())
+
+    def current_filters(self) -> list:
+        """Возвращает применённые условия фильтрации."""
+        return self.table_model.filters()
+
+    def set_filters(self, filters) -> None:
+        """Применяет восстановленные из настроек условия фильтрации."""
+        self.table_model.set_filters(list(filters))
+        self._update_pagination()
+        self._update_filter_button()
+
+    def reveal_record(self, entity_pk) -> bool:
+        """Выделяет запись и показывает её страницу пагинации.
+
+        Возвращает False, если запись не попадает в текущую выборку
+        (действуют фильтры, исключающие её).
+        """
+        page = self.table_model.page_of(entity_pk)
+        if page is None:
+            return False
+        if page != self.table_model.page():
+            self.table_model.set_page(page)
+            self._update_pagination()
+        row = self.table_model.row_of(entity_pk)
+        if row is None:
+            return False
+        index = self.table_model.index(row, 0)
+        self.table.setCurrentIndex(index)
+        self.table.scrollTo(index, QAbstractItemView.PositionAtCenter)
+        self.table.selectRow(row)
+        return True
 
     def _update_filter_button(self) -> None:
         """Показывает количество применённых фильтров на кнопке."""
@@ -204,6 +244,16 @@ class DocumentListWidget(QWidget):
         self.table_model.refresh()
         self._update_pagination()
         self._update_filter_button()
+
+    def column_widths(self) -> List[int]:
+        """Возвращает текущие ширины колонок таблицы."""
+        return [self.table.columnWidth(i) for i in range(len(self.columns))]
+
+    def set_column_widths(self, widths: List[int]) -> None:
+        """Применяет сохранённые ширины колонок таблицы."""
+        for index, width in enumerate(widths):
+            if 0 <= index < len(self.columns) and width > 0:
+                self.table.setColumnWidth(index, width)
 
     def _update_pagination(self) -> None:
         total_pages = max(1, self.table_model.total_pages())
@@ -252,30 +302,44 @@ class DocumentListWidget(QWidget):
         return items[-1] if items else None
 
     def _on_selection_changed(self) -> None:
+        """Сообщает о смене текущей записи (для док-виджета файлов)."""
         items = self._selected_items()
+        document = None
         if len(items) == 1 and hasattr(items[0], "files"):
-            self.files_widget.set_files(list(items[0].files))
-        else:
-            self.files_widget.set_files([])
+            document = items[0]
+        self.currentDocumentChanged.emit(document)
+
+    def current_document(self) -> Optional[Base]:
+        """Возвращает текущую запись документа (для док-виджета файлов)."""
+        item = self._current_item()
+        if item is not None and hasattr(item, "files"):
+            return item
+        return None
 
     def _add(self) -> None:
         dialog = (
             MaterialEditDialog(
-                self.session, self.storage_root, branch_id=self.branch_id, parent=self
+                self.session,
+                branch_id=self.branch_id,
+                role=self.role,
+                parent=self,
             )
             if self.is_material
             else TelegramEditDialog(
-                self.session, self.storage_root, branch_id=self.branch_id, parent=self
+                self.session,
+                branch_id=self.branch_id,
+                role=self.role,
+                parent=self,
             )
         )
         if dialog.exec_() != dialog.Accepted:
             return
         try:
             data = dialog.get_data()
-            files = dialog.get_new_files()
-            self.service.create_with_files(data, files)
+            entity = self.service.create(data)
             self.session.commit()
             self.refresh()
+            self._reveal_after_save(entity)
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка создания документа")
             QMessageBox.critical(
@@ -290,17 +354,17 @@ class DocumentListWidget(QWidget):
         dialog = (
             MaterialEditDialog(
                 self.session,
-                self.storage_root,
                 material=item,
                 branch_id=item.branch_id,
+                role=self.role,
                 parent=self,
             )
             if self.is_material
             else TelegramEditDialog(
                 self.session,
-                self.storage_root,
                 telegram=item,
                 branch_id=item.branch_id,
+                role=self.role,
                 parent=self,
             )
         )
@@ -308,16 +372,69 @@ class DocumentListWidget(QWidget):
             return
         try:
             data = dialog.get_data()
-            files = dialog.get_new_files()
-            self.service.update_with_files(item, data, files)
+            self.service.update(item, data)
             self.session.commit()
             self.refresh()
+            self._reveal_after_save(item)
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка обновления документа")
             QMessageBox.critical(
                 self, STRINGS.title_error, STRINGS.msg_update_error.format(error=exc)
             )
             self.session.rollback()
+
+    def _reveal_after_save(self, entity) -> None:
+        """Выделяет сохранённую запись; при скрытии фильтрами — сообщает."""
+        pk = self.table_model.pk_of(entity)
+        if not self.reveal_record(pk):
+            QMessageBox.information(
+                self, STRINGS.title_attention, STRINGS.msg_record_hidden_by_filters
+            )
+
+    def _table_context_menu(self, position) -> None:
+        """Показывает контекстное меню таблицы документов."""
+        if not self._selected_items():
+            return
+        menu = QMenu(self)
+        assign_action = menu.addAction(STRINGS.action_assign_evaluation)
+        chosen = menu.exec_(self.table.viewport().mapToGlobal(position))
+        if chosen is assign_action:
+            self._assign_evaluation()
+
+    def _assign_evaluation(self) -> None:
+        """Выставляет одну ручную оценку всем выделенным записям."""
+        items = self._selected_items()
+        if not items:
+            return
+        dialog = EvaluationAssignDialog(self)
+        if dialog.exec_() != dialog.Accepted:
+            return
+        value, assigned_date = dialog.get_data()
+        try:
+            evaluation = Evaluation(
+                value=value,
+                date=assigned_date,
+            )
+            self.session.add(evaluation)
+            if self.is_material:
+                for item in items:
+                    evaluation.materials.append(item)
+            else:
+                for item in items:
+                    evaluation.telegrams.append(item)
+            self.session.commit()
+            self.refresh()
+            QMessageBox.information(
+                self,
+                STRINGS.dialog_assign_evaluation_title,
+                STRINGS.msg_evaluation_assigned.format(count=len(items)),
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception("Ошибка выставления оценки")
+            self.session.rollback()
+            QMessageBox.critical(
+                self, STRINGS.title_error, str(exc)
+            )
 
     def _delete(self) -> None:
         """Удаляет все выделенные записи после подтверждения."""

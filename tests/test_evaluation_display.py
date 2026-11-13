@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from internal_correspondence.core.constants import EvaluationValue
+from internal_correspondence.core.constants import (
+    EvaluationValue,
+    MaterialType,
+    TelegramType,
+)
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.orm.models import (
     Branch,
@@ -31,21 +35,21 @@ def _create_documents(session):
     session.commit()
 
     material_one = ScientificMaterial(
-        type="С",
+        type=MaterialType.MESSAGE,
         outgoing_number="M-1",
         outgoing_date=date(2024, 1, 1),
         name="Материал 1",
         branch_id="FIL001",
     )
     material_two = ScientificMaterial(
-        type="С",
+        type=MaterialType.MESSAGE,
         outgoing_number="M-2",
         outgoing_date=date(2024, 1, 2),
         name="Материал 2",
         branch_id="FIL001",
     )
     telegram = Telegram(
-        type="Т",
+        type=TelegramType.THEMATIC,
         outgoing_number="T-1",
         outgoing_date=date(2024, 1, 3),
         name="Телеграмма 1",
@@ -56,9 +60,11 @@ def _create_documents(session):
     return material_one, material_two, telegram
 
 
-def _add_evaluation(session, number: str, value_date: date, value: str, materials, telegrams):
+def _add_evaluation(session, number: str, value_date: date, value: EvaluationValue, materials, telegrams):
     evaluation_list = EvaluationList(number=number, date=value_date)
-    evaluation = Evaluation(value=value, materials=list(materials), telegrams=list(telegrams))
+    evaluation = Evaluation(
+        value=value, date=value_date, materials=list(materials), telegrams=list(telegrams)
+    )
     evaluation_list.evaluations.append(evaluation)
     session.add(evaluation_list)
     session.commit()
@@ -73,7 +79,7 @@ def test_evaluation_is_divided_between_documents(db_manager: DatabaseManager) ->
             session,
             "ОЦ-0001",
             date(2024, 2, 1),
-            "И",
+            EvaluationValue.INTERESTING,
             materials=[material_one, material_two],
             telegrams=[telegram],
         )
@@ -91,7 +97,7 @@ def test_latest_evaluation_is_used(db_manager: DatabaseManager) -> None:
             session,
             "ОЦ-0001",
             date(2024, 2, 1),
-            "И",
+            EvaluationValue.INTERESTING,
             materials=[material_one, material_two],
             telegrams=[telegram],
         )
@@ -99,7 +105,7 @@ def test_latest_evaluation_is_used(db_manager: DatabaseManager) -> None:
             session,
             "ОЦ-0002",
             date(2024, 3, 1),
-            "В",
+            EvaluationValue.IMPORTANT,
             materials=[material_one],
             telegrams=[],
         )
@@ -107,7 +113,44 @@ def test_latest_evaluation_is_used(db_manager: DatabaseManager) -> None:
         assert material_one.evaluation_display == "В"
         assert material_two.evaluation_display == "0,33 И"
         assert telegram.evaluation_display == "0,33 И"
-        assert material_one.latest_evaluation.value == "В"
+        assert material_one.latest_evaluation.value == EvaluationValue.IMPORTANT
+
+
+def test_manual_evaluation_without_list_is_used(db_manager: DatabaseManager) -> None:
+    """Оценка без списка оценок участвует в отображении (ручное выставление)."""
+    with db_manager.get_session() as session:
+        material_one, _material_two, _telegram = _create_documents(session)
+        evaluation = Evaluation(
+            value=EvaluationValue.USEFUL,
+            date=date(2024, 4, 1),
+            materials=[material_one],
+        )
+        session.add(evaluation)
+        session.commit()
+
+        assert material_one.latest_evaluation is evaluation
+        assert material_one.evaluation_display == "П"
+
+
+def test_latest_evaluation_compares_evaluation_dates(db_manager: DatabaseManager) -> None:
+    """«Последняя» оценка определяется по дате выставления, а не списка."""
+    with db_manager.get_session() as session:
+        material_one, _material_two, _telegram = _create_documents(session)
+        older_list = EvaluationList(number="ОЦ-0001", date=date(2024, 5, 1))
+        older_evaluation = Evaluation(
+            value=EvaluationValue.INTERESTING, date=date(2024, 2, 1)
+        )
+        older_list.evaluations.append(older_evaluation)
+        material_one.evaluations.append(older_evaluation)
+        newer_evaluation = Evaluation(
+            value=EvaluationValue.IMPORTANT, date=date(2024, 3, 1)
+        )
+        material_one.evaluations.append(newer_evaluation)
+        session.add_all([older_list, material_one])
+        session.commit()
+
+        assert material_one.latest_evaluation is newer_evaluation
+        assert material_one.evaluation_display == "В"
 
 
 def test_evaluation_is_blank_when_missing(db_manager: DatabaseManager) -> None:
@@ -134,7 +177,7 @@ def test_evaluation_value_role_is_exposed_by_table_model(db_manager: DatabaseMan
             session,
             "ОЦ-0001",
             date(2024, 2, 1),
-            "П",
+            EvaluationValue.USEFUL,
             materials=[material_one],
             telegrams=[],
         )
@@ -146,7 +189,7 @@ def test_evaluation_value_role_is_exposed_by_table_model(db_manager: DatabaseMan
             if column.name == "evaluation_display"
         )
 
-        assert model.index(0, column_index).data(EVALUATION_VALUE_ROLE) == "П"
+        assert model.index(0, column_index).data(EVALUATION_VALUE_ROLE) == EvaluationValue.USEFUL
         assert model.index(0, column_index).data() == "П"
 
 

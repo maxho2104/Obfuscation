@@ -52,10 +52,18 @@ class EmployeePickerDialog(QDialog):
         layout.addWidget(self.buttons)
 
     def _load_employees(self) -> None:
-        """Загружает сотрудников филиала, исключая уже выбранных."""
-        query = self.session.query(Employee)
+        """Загружает действующих сотрудников действующих отделов филиала.
+
+        Неактивные сотрудники и сотрудники сокращённых отделов не доступны
+        для выбора (скрытие отдела влечёт скрытие всех его сотрудников).
+        """
+        query = (
+            self.session.query(Employee)
+            .join(Department)
+            .filter(Employee.active.is_(True), Department.active.is_(True))
+        )
         if self.branch_id:
-            query = query.join(Department).filter(Department.branch_id == self.branch_id)
+            query = query.filter(Department.branch_id == self.branch_id)
         if self.excluded_ids:
             query = query.filter(Employee.id.notin_(list(self.excluded_ids)))
         self._employees = query.order_by(
@@ -73,8 +81,6 @@ class EmployeePickerDialog(QDialog):
             text = employee.display_name()
             if department_label:
                 text = f"{text} — {department_label}"
-            if not employee.active:
-                text = f"{text} (неактивен)"
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, employee.id)
             self.list_widget.addItem(item)

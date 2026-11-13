@@ -6,6 +6,11 @@ from pathlib import Path
 import pytest
 
 from internal_correspondence.core.database import DatabaseManager
+from internal_correspondence.core.constants import (
+    MaterialType,
+    ScientificTaskType,
+    TelegramType,
+)
 from internal_correspondence.orm.models import (
     Branch,
     Change,
@@ -44,10 +49,10 @@ def base_records(db_manager: DatabaseManager) -> dict:
             Branch(id="F1", name="Филиал", short_name="Ф", territorial_unit_id="MSK")
         )
         task1 = ScientificTask(
-            id="T1", name="Задача 1", type="ОЗ", start_date=date(2026, 1, 1)
+            id="T1", name="Задача 1", type=ScientificTaskType.MAIN, start_date=date(2026, 1, 1)
         )
         task2 = ScientificTask(
-            id="T2", name="Задача 2", type="ОЗ", start_date=date(2026, 1, 1)
+            id="T2", name="Задача 2", type=ScientificTaskType.MAIN, start_date=date(2026, 1, 1)
         )
         leader = Leader(id="НГ", active=True)
         session.add_all([task1, task2, leader])
@@ -60,7 +65,7 @@ def test_material_tasks_many_to_many(db_manager: DatabaseManager, base_records) 
     task1, task2 = base_records["tasks"]
     with db_manager.get_session() as session:
         material = ScientificMaterial(
-            type="С",
+            type=MaterialType.MESSAGE,
             name="Материал",
             branch_id="F1",
             outgoing_date=date(2026, 3, 1),
@@ -85,7 +90,7 @@ def test_telegram_tasks_many_to_many(db_manager: DatabaseManager, base_records) 
     task1, task2 = base_records["tasks"]
     with db_manager.get_session() as session:
         telegram = Telegram(
-            type="ДК",
+            type=TelegramType.THEMATIC,
             name="Телеграмма",
             branch_id="F1",
             outgoing_date=date(2026, 3, 1),
@@ -104,7 +109,7 @@ def test_tasks_change_tracked(db_manager: DatabaseManager, base_records) -> None
     task1, _ = base_records["tasks"]
     with db_manager.get_session() as session:
         material = ScientificMaterial(
-            type="С",
+            type=MaterialType.MESSAGE,
             name="Материал",
             branch_id="F1",
             outgoing_date=date(2026, 3, 1),
@@ -128,7 +133,7 @@ def test_report_addresses_cascade_delete(
     leader = base_records["leader"]
     with db_manager.get_session() as session:
         telegram = Telegram(
-            type="ДК",
+            type=TelegramType.THEMATIC,
             name="Телеграмма",
             branch_id="F1",
             outgoing_date=date(2026, 3, 1),
@@ -155,7 +160,7 @@ def test_report_addresses_replace_orphans(
     leader = base_records["leader"]
     with db_manager.get_session() as session:
         telegram = Telegram(
-            type="ДК",
+            type=TelegramType.THEMATIC,
             name="Телеграмма",
             branch_id="F1",
             outgoing_date=date(2026, 3, 1),
@@ -174,6 +179,26 @@ def test_report_addresses_replace_orphans(
         assert remaining[0].id == second.id
 
 
+def test_report_date_may_be_empty(db_manager: DatabaseManager, base_records) -> None:
+    """Дата доклада может быть пустой: адресат назначен, но ещё не доложено."""
+    leader = base_records["leader"]
+    with db_manager.get_session() as session:
+        telegram = Telegram(
+            type=TelegramType.THEMATIC,
+            name="Телеграмма",
+            branch_id="F1",
+            outgoing_date=date(2026, 3, 1),
+            report_addresses=[
+                ReportAddress(leader_id=leader.id, report_date=None)
+            ],
+        )
+        session.add(telegram)
+        session.commit()
+
+        address = session.query(ReportAddress).one()
+        assert address.report_date is None
+
+
 def test_statistics_task_counts_document_in_each_task(
     db_manager: DatabaseManager, base_records
 ) -> None:
@@ -182,7 +207,7 @@ def test_statistics_task_counts_document_in_each_task(
     with db_manager.get_session() as session:
         session.add(
             ScientificMaterial(
-                type="С",
+                type=MaterialType.MESSAGE,
                 name="Материал",
                 branch_id="F1",
                 outgoing_date=date(2026, 3, 1),

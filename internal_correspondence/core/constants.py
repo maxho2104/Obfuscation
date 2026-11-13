@@ -1,6 +1,6 @@
 """Константы и перечисления приложения."""
 
-from enum import Enum
+from enum import Enum, IntEnum
 
 
 class Role(str, Enum):
@@ -10,67 +10,77 @@ class Role(str, Enum):
     BRANCH = "branch"
 
 
-class MaterialType(str, Enum):
-    """Тип научного материала."""
+class ChangeOperation(IntEnum):
+    """Тип операции над сущностью, фиксируемый в записи Change.
 
-    MESSAGE = "С"
-    DOCUMENT = "ДОК"
-    REFERENCE = "СПР"
-    PRODUCT_SAMPLE = "ОП"
-    TECHNICAL_DOCUMENT = "ТДОК"
-    REPORT = "Д"
+    Внутреннее техническое перечисление: хранится в БД и экспортных
+    файлах как целое число (0 — создание, 1 — изменение, 2 — удаление).
+    """
 
-
-class ResearchType(str, Enum):
-    """Тип научного изыскания."""
-
-    EXPERIMENTAL = "Э"
-    ANALYTICAL = "А"
+    CREATE = 0
+    UPDATE = 1
+    DELETE = 2
 
 
-class EvaluationValue(str, Enum):
-    """Значение оценки научного материала с весовым коэффициентом."""
+class MaterialType(IntEnum):
+    """Тип научного материала.
 
-    USELESS = "Б"
-    INTERESTING = "И"
-    USEFUL = "П"
-    IMPORTANT = "В"
+    Имена членов совпадают с ключами пакетного перечисления
+    ``material_type``; значения хранятся в БД как целые числа,
+    краткий текст («С», «ДОК»…) определяется пакетом предметной области.
+    """
+
+    MESSAGE = 0
+    DOCUMENT = 1
+    REFERENCE = 2
+    PRODUCT_SAMPLE = 3
+    TECHNICAL_DOCUMENT = 4
+    REPORT = 5
 
 
-class ScientificTaskType(str, Enum):
+class EvaluationValue(IntEnum):
+    """Значение оценки научного материала (вес — в пакете предметной области)."""
+
+    USELESS = 0
+    INTERESTING = 1
+    USEFUL = 2
+    IMPORTANT = 3
+
+
+class ScientificTaskType(IntEnum):
     """Тип научной задачи."""
 
-    MAIN = "ОЗ"
-    ADDITIONAL = "ДЗ"
+    MAIN = 0
+    ADDITIONAL = 1
 
 
-class TelegramType(str, Enum):
+class TelegramType(IntEnum):
     """Тип телеграммы."""
 
-    THEMATIC = "Т"
-    PROGRESS_REPORT = "ОХР"
-    RESULTS_REPORT = "ОДР"
+    THEMATIC = 0
+    PROGRESS_REPORT = 1
+    RESULTS_REPORT = 2
 
 
-class TelegramReportType(str, Enum):
+class TelegramReportType(IntEnum):
     """Тип доклада телеграммы."""
 
-    REPORTED = "ДР"
-    URGENTLY_REPORTED = "СДР"
+    REPORTED = 0
+    URGENTLY_REPORTED = 1
 
 
-class SourceType(str, Enum):
+class SourceType(IntEnum):
     """Тип источника научного материала."""
 
-    EXPERIMENTAL_EQUIPMENT = "ЭО"
-    SCIENTIFIC_WORK = "НТ"
+    EXPERIMENTAL_EQUIPMENT = 0
+    SCIENTIFIC_WORK = 1
 
-
-# Специальный маркер удаления в поле changed_fields таблицы changes
-DELETION_MARKER = "__DELETED__"
 
 # Имя INI-файла настроек
 CONFIG_FILE_NAME = "settings.ini"
+
+# Срок хранения записей Change (в днях) по умолчанию; <= 0 — бессрочно
+DEFAULT_CHANGES_RETENTION_DAYS = 30
 
 # Директории приложения
 LOGS_DIR = "Logs"
