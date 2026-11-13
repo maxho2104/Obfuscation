@@ -52,6 +52,7 @@ instance/
 Logs/
 Backups/
 Файловое хранилище/
+demo/
 *.db
 *.db-journal
 *.db-wal

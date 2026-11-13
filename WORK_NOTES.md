@@ -595,3 +595,23 @@
 
 ### Проверка
 - `pytest`: **213/213 passed**.
+
+
+### Слияние с main (2026-11-13, вечер) — PR #5
+- Подтянут `origin/main` (385a150) в `alex_develop`: fast-forward, конфликтов нет — наш предыдущий коммит уже вошёл в main через PR #4.
+- Новое из main: диалоги редактирования сущностей (`edit_elements.py`, `entity_edit_dialog.py`), диалог назначения оценок (`evaluation_dialog.py`), файловый сервис (`services/file_service.py`), расширенный виджет вложений, сохранение фильтров, обновления диалога настроек; миграция `b1d2e3f4a5c6_editing_dialogs_schema`.
+- Адаптация нашего кода не потребовалась. `pytest tests`: **242/242 passed**.
+- Внимание: демо-база `demo/demo.db` снова отстаёт от схемы (новая миграция) — перед следующим показом пересоздать `tests/seed_data.py --with-files`.
+
+
+### История участия в рабочих группах (2026-11-13, ночь)
+- **Модель (`orm/models.py`):** новая сущность `WorkGroupMembership` (таблица `workgroup_memberships`): UUID PK, сотрудник (FK CASCADE), рабочая группа (FK CASCADE), даты начала/окончания; `ChangeTrackedMixin`, таблица добавлена в `_TRACKED_TABLES`. У `Employee` убраны `working_group_id`/`workgroup_start_date`/`workgroup_end_date`; вместо них связь `workgroup_memberships`, свойства `current_membership` (незакрытая запись; при нескольких — самая поздняя) и `working_group` (вычислимое), методы `assign_working_group()` (закрывает активное участие датой начала нового, старое не затирается), `workgroup_on(дата)`. `WorkingGroup.employees` заменено на `memberships` + свойство `current_employees`. `participating_workgroups` документа берёт группу по участию, действовавшему на дату документа.
+- **Миграция `c7e2a1b9d3f5`:** создаёт таблицу, переносит каждому сотруднику текущую группу с датами в запись участия (UUID генерируются в Python, даты приводятся из строк SQLite), старые колонки удаляются. Downgrade возвращает колонки с самым поздним участием (история теряется — отмечено в докстринге). Проверка: `scripts_dev/test_migration_workgroup_memberships.py` (upgrade → downgrade → повторный upgrade).
+- **Сервисы (`reference_service.py`):** `EmployeeService.create/update` извлекают поля `working_group_id`/дат из словаря данных и применяют через участия: та же группа — обновление дат активной записи, другая группа — закрытие старой и открытие новой, пустая группа — закрытие активного участия.
+- **ОШС (`oshm_dialog.py`):** состав групп в дереве — по активным (незакрытым) участиям; drag&drop в группу вызывает `assign_working_group`; диалог сотрудника читает/пишет группу и даты через активное участие; метки полей берутся от `WorkGroupMembership`.
+- **Панель сведений (`oshm_details_panel.py`):** текущая группа и даты — из активного участия; прежние группы выводятся строками истории («прежняя группа», новая строка `oshm_membership_history`).
+- **Статистика:** подкатегория «Рабочие группы → Сотрудники» привязывает сотрудника к группе активного участия; причастные группы документов — по участиям на дату документа (см. модель).
+- **seed_data.py:** части сотрудников генерируется закрытое прежнее участие (история переводов); активное участие — с датой окончания только если она в прошлом.
+- **Пакет (`domain_pack.default.json`):** сущность `WorkGroupMembership` с метками полей; из `Employee` убраны `working_group_id`, `workgroup_start_date`, `workgroup_end_date`; секция strings регенерирована (190 ключей).
+- **Тесты:** новый `test_assign_working_group_keeps_history` (перевод закрывает участие, история и `workgroup_on` по датам); фикстуры `test_participants.py`, `test_oshm_dialog.py`, `test_statistics_service.py` переведены на участия.
+- README: раздел «Сотрудник» обновлён, добавлен раздел «Участие в рабочей группе», поведение ОШС дополнено. `pytest tests`: **243/243 passed**.

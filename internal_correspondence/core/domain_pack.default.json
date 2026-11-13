@@ -356,14 +356,26 @@
         "department_id": {
           "label": "Отдел"
         },
+        "id": {
+          "label": "Идентификатор"
+        }
+      }
+    },
+    "WorkGroupMembership": {
+      "label": "Участие в рабочей группе",
+      "label_plural": "Участия в рабочих группах",
+      "fields": {
+        "employee_id": {
+          "label": "Сотрудник"
+        },
         "working_group_id": {
           "label": "Рабочая группа"
         },
-        "workgroup_start_date": {
+        "start_date": {
           "label": "Начало работы в рабочей группе",
           "short": "Начало в группе"
         },
-        "workgroup_end_date": {
+        "end_date": {
           "label": "Конец работы в рабочей группе",
           "short": "Конец в группе"
         },
@@ -704,6 +716,7 @@
     "oshm_col_element": "Элемент",
     "oshm_select_branch_first": "Выберите филиал, в который нужно добавить отдел",
     "oshm_tasks_section": "Назначенные задачи",
+    "oshm_membership_history": "прежняя группа",
     "picker_tasks_title": "Выбор задач",
     "button_hide": "Скрыть",
     "button_statistics": "Статистика",

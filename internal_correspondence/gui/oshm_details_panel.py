@@ -37,6 +37,7 @@ from internal_correspondence.orm.models import (
     Department,
     Employee,
     ScientificTask,
+    WorkGroupMembership,
     WorkingGroup,
 )
 from internal_correspondence.utils.string_resources import STRINGS
@@ -298,18 +299,30 @@ class ElementDetailsPanel(QWidget):
             self._add_field(
                 field_label(Employee, "department_id"), employee.department.name
             )
-        if employee.working_group is not None:
+        membership = employee.current_membership
+        if membership is not None and membership.working_group is not None:
             self._add_field(
-                field_label(Employee, "working_group_id"),
-                employee.working_group.name,
+                field_label(WorkGroupMembership, "working_group_id"),
+                membership.working_group.name,
             )
             self._add_field(
-                field_label(Employee, "workgroup_start_date"),
-                _date_text(employee.workgroup_start_date),
+                field_label(WorkGroupMembership, "start_date"),
+                _date_text(membership.start_date),
             )
             self._add_field(
-                field_label(Employee, "workgroup_end_date"),
-                _date_text(employee.workgroup_end_date),
+                field_label(WorkGroupMembership, "end_date"),
+                _date_text(membership.end_date),
+            )
+        # История прежних участий (закрытые записи)
+        history = [
+            m for m in employee.workgroup_memberships
+            if m is not membership and m.working_group is not None
+        ]
+        for past in history:
+            period = f"{_date_text(past.start_date)} — {_date_text(past.end_date)}"
+            self._add_field(
+                f"{past.working_group.name} ({STRINGS.oshm_membership_history})",
+                period,
             )
         self._add_field(field_label(Employee, "active"), _bool_text(employee.active))
         self._fill_tasks(employee)

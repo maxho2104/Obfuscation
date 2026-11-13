@@ -31,6 +31,7 @@ from internal_correspondence.orm.models import (
     Source,
     Telegram,
     TerritorialUnit,
+    WorkGroupMembership,
     WorkingGroup,
 )
 from internal_correspondence.reports.statistics_service import (
@@ -85,7 +86,7 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
         last_name="Иванов",
         first_name="Иван",
         department_id=department.id,
-        working_group_id=workgroup.id,
+        workgroup_memberships=[WorkGroupMembership(working_group=workgroup)],
     )
     employee2 = Employee(
         id=None,

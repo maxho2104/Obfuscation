@@ -46,7 +46,13 @@ from internal_correspondence.orm.labels import (
     field_form_label,
     field_label,
 )
-from internal_correspondence.orm.models import Branch, Department, Employee, WorkingGroup
+from internal_correspondence.orm.models import (
+    Branch,
+    Department,
+    Employee,
+    WorkGroupMembership,
+    WorkingGroup,
+)
 from internal_correspondence.services.reference_service import (
     DepartmentService,
     EmployeeService,
@@ -326,7 +332,14 @@ class OSHMDialog(QDialog):
                 )
                 members = (
                     self.session.query(Employee)
-                    .filter(Employee.working_group_id == wg.id)
+                    .join(
+                        WorkGroupMembership,
+                        WorkGroupMembership.employee_id == Employee.id,
+                    )
+                    .filter(
+                        WorkGroupMembership.working_group_id == wg.id,
+                        WorkGroupMembership.end_date.is_(None),
+                    )
                     .order_by(Employee.last_name)
                     .all()
                 )
@@ -663,8 +676,11 @@ class OSHMDialog(QDialog):
                     # Перевод сотрудника в другой отдел
                     employee.department_id = UUID(target[1])
                 elif tree is self.tree_workgroups and target[0] == "workgroup":
-                    # Включение сотрудника в рабочую группу
-                    employee.working_group_id = UUID(target[1])
+                    # Включение в рабочую группу: прежнее участие закрывается,
+                    # новое открывается отдельной записью истории
+                    workgroup = self.session.get(WorkingGroup, UUID(target[1]))
+                    if workgroup is not None:
+                        employee.assign_working_group(workgroup)
 
         self._apply(do_move, "Ошибка переноса сотрудника")
 
@@ -784,14 +800,15 @@ class EmployeeEditDialog(QDialog):
                 idx = self.title_combo.findData(item.academic_title_id)
                 if idx >= 0:
                     self.title_combo.setCurrentIndex(idx)
-            if item.working_group_id:
-                idx = self.workgroup_combo.findData(str(item.working_group_id))
+            membership = item.current_membership
+            if membership is not None:
+                idx = self.workgroup_combo.findData(str(membership.working_group_id))
                 if idx >= 0:
                     self.workgroup_combo.setCurrentIndex(idx)
-            if item.workgroup_start_date:
-                self.workgroup_start_date.setDate(item.workgroup_start_date)
-            if item.workgroup_end_date:
-                self.workgroup_end_date.setDate(item.workgroup_end_date)
+                if membership.start_date:
+                    self.workgroup_start_date.setDate(membership.start_date)
+                if membership.end_date:
+                    self.workgroup_end_date.setDate(membership.end_date)
         self._update_date_fields_state()
 
     def _setup_ui(self) -> None:
@@ -824,9 +841,9 @@ class EmployeeEditDialog(QDialog):
         form.addRow(field_form_label(Employee, "middle_name"), self.middle_name)
         form.addRow(field_form_label(Employee, "position"), self.position)
         form.addRow(field_form_label(Employee, "academic_title_id"), self.title_combo)
-        form.addRow(field_form_label(Employee, "working_group_id"), self.workgroup_combo)
-        form.addRow(field_form_label(Employee, "workgroup_start_date"), self.workgroup_start_date)
-        form.addRow(field_form_label(Employee, "workgroup_end_date"), self.workgroup_end_date)
+        form.addRow(field_form_label(WorkGroupMembership, "working_group_id"), self.workgroup_combo)
+        form.addRow(field_form_label(WorkGroupMembership, "start_date"), self.workgroup_start_date)
+        form.addRow(field_form_label(WorkGroupMembership, "end_date"), self.workgroup_end_date)
         form.addRow("", self.clear_dates_btn)
         form.addRow("", self.active_check)
         layout.addLayout(form)

@@ -490,10 +490,20 @@ class WorkingGroup(Base, ChangeTrackedMixin):
         back_populates="workgroups",
     )
 
-    employees: Mapped[List["Employee"]] = relationship(
-        "Employee",
+    memberships: Mapped[List["WorkGroupMembership"]] = relationship(
+        "WorkGroupMembership",
         back_populates="working_group",
+        cascade="all, delete-orphan",
     )
+
+    @property
+    def current_employees(self) -> List["Employee"]:
+        """Сотрудники с активным (незакрытым) участием в группе."""
+        return [
+            membership.employee
+            for membership in self.memberships
+            if membership.end_date is None and membership.employee is not None
+        ]
 
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
@@ -505,6 +515,58 @@ class WorkingGroup(Base, ChangeTrackedMixin):
         secondary=telegram_workgroup_association,
         back_populates="workgroups",
     )
+
+
+class WorkGroupMembership(Base, ChangeTrackedMixin):
+    """Участие сотрудника в рабочей группе (запись истории переводов).
+
+    Перевод в новую группу не затирает прежнее участие: старая запись
+    закрывается датой окончания, новая открывается отдельной строкой.
+    Активным считается участие без даты окончания (у сотрудника оно одно).
+    """
+    __entity_label__ = "Участие в рабочей группе"
+    __entity_label_plural__ = "Участия в рабочих группах"
+    __field_labels__ = {"id": "Идентификатор"}
+
+
+    __tablename__ = "workgroup_memberships"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+        info={"label": "Сотрудник"},
+    )
+    working_group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("working_groups.id", ondelete="CASCADE"),
+        nullable=False,
+        info={"label": "Рабочая группа"},
+    )
+    start_date: Mapped[Optional[date]] = mapped_column(
+        Date, nullable=True,
+        info={"label": "Начало работы в рабочей группе", "short": "Начало"},
+    )
+    end_date: Mapped[Optional[date]] = mapped_column(
+        Date, nullable=True,
+        info={"label": "Конец работы в рабочей группе", "short": "Окончание"},
+    )
+
+    employee: Mapped["Employee"] = relationship(
+        "Employee",
+        back_populates="workgroup_memberships",
+    )
+    working_group: Mapped["WorkingGroup"] = relationship(
+        "WorkingGroup",
+        back_populates="memberships",
+    )
+
+    def is_active_on(self, value: date) -> bool:
+        """Проверяет, действует ли участие на указанную дату."""
+        if self.start_date is not None and value < self.start_date:
+            return False
+        if self.end_date is not None and value > self.end_date:
+            return False
+        return True
 
 
 class Employee(Base, ChangeTrackedMixin):
@@ -543,18 +605,55 @@ class Employee(Base, ChangeTrackedMixin):
         back_populates="employees",
     )
 
-    working_group_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        ForeignKey("working_groups.id", ondelete="SET NULL"),
-        nullable=True,
-        info={"label": "Рабочая группа"},
-    )
-    working_group: Mapped[Optional["WorkingGroup"]] = relationship(
-        "WorkingGroup",
-        back_populates="employees",
+    workgroup_memberships: Mapped[List["WorkGroupMembership"]] = relationship(
+        "WorkGroupMembership",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        order_by="WorkGroupMembership.start_date",
     )
 
-    workgroup_start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Начало работы в рабочей группе", "short": "Начало в группе"})
-    workgroup_end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Конец работы в рабочей группе", "short": "Конец в группе"})
+    @property
+    def current_membership(self) -> Optional["WorkGroupMembership"]:
+        """Активное (незакрытое) участие сотрудника в рабочей группе."""
+        active = [m for m in self.workgroup_memberships if m.end_date is None]
+        if not active:
+            return None
+        # При нескольких незакрытых участиях берём самое позднее по дате начала
+        return max(active, key=lambda m: (m.start_date or date.min, str(m.id)))
+
+    @property
+    def working_group(self) -> Optional["WorkingGroup"]:
+        """Рабочая группа активного участия сотрудника (None, если не включён)."""
+        membership = self.current_membership
+        return membership.working_group if membership is not None else None
+
+    def assign_working_group(
+        self,
+        workgroup: Optional["WorkingGroup"],
+        start_date: Optional[date] = None,
+    ) -> Optional["WorkGroupMembership"]:
+        """Переводит сотрудника в рабочую группу, закрывая прежнее участие.
+
+        Старое участие не удаляется, а закрывается датой окончания
+        (по умолчанию — датой начала нового участия или сегодняшним днём).
+        При ``workgroup=None`` текущее участие просто закрывается.
+        Возвращает новую запись участия (или None при исключении из группы).
+        """
+        closing_date = start_date or date.today()
+        current = self.current_membership
+        if current is not None:
+            if workgroup is not None and current.working_group_id == workgroup.id:
+                return current  # уже состоит в этой группе
+            if current.end_date is None:
+                current.end_date = closing_date
+        if workgroup is None:
+            return None
+        membership = WorkGroupMembership(
+            working_group=workgroup,
+            start_date=start_date or closing_date,
+        )
+        self.workgroup_memberships.append(membership)
+        return membership
 
     tasks: Mapped[List["ScientificTask"]] = relationship(
         "ScientificTask",
@@ -582,14 +681,15 @@ class Employee(Base, ChangeTrackedMixin):
         return f"{title}{self.last_name} {initials}".strip()
 
     def worked_in_workgroup_on(self, value: date) -> bool:
-        """Проверяет, работал ли сотрудник в рабочей группе на указанную дату."""
-        if self.working_group_id is None:
-            return False
-        if self.workgroup_start_date is not None and value < self.workgroup_start_date:
-            return False
-        if self.workgroup_end_date is not None and value > self.workgroup_end_date:
-            return False
-        return True
+        """Проверяет, работал ли сотрудник в какой-либо рабочей группе на дату."""
+        return any(m.is_active_on(value) for m in self.workgroup_memberships)
+
+    def workgroup_on(self, value: date) -> Optional["WorkingGroup"]:
+        """Возвращает рабочую группу, в которой сотрудник работал на дату."""
+        for membership in self.workgroup_memberships:
+            if membership.is_active_on(value):
+                return membership.working_group
+        return None
 
 
 # -----------------------------------------------------------------------------
@@ -740,10 +840,13 @@ class ParticipantMixin:
         workgroups = {}
         document_date = self.document_date
         for employee in self.employees:
-            workgroup = employee.working_group
+            # Группа берётся по записи участия, действовавшей на дату документа;
+            # без даты документа — по активному (текущему) участию.
+            if document_date is not None:
+                workgroup = employee.workgroup_on(document_date)
+            else:
+                workgroup = employee.working_group
             if workgroup is None:
-                continue
-            if document_date is not None and not employee.worked_in_workgroup_on(document_date):
                 continue
             workgroups[workgroup.id] = workgroup
         return sorted(workgroups.values(), key=lambda workgroup: workgroup.name)

@@ -17,6 +17,7 @@ from internal_correspondence.orm.models import (
     ScientificMaterial,
     Telegram,
     TerritorialUnit,
+    WorkGroupMembership,
     WorkingGroup,
 )
 
@@ -49,17 +50,25 @@ def _create_oshm(session):
         last_name="Иванов",
         first_name="Иван",
         department_id=department_one.id,
-        working_group_id=group_one.id,
-        workgroup_start_date=date(2024, 1, 1),
-        workgroup_end_date=date(2024, 12, 31),
+        workgroup_memberships=[
+            WorkGroupMembership(
+                working_group=group_one,
+                start_date=date(2024, 1, 1),
+                end_date=date(2024, 12, 31),
+            )
+        ],
     )
     employee_two = Employee(
         last_name="Петров",
         first_name="Пётр",
         department_id=department_two.id,
-        working_group_id=group_two.id,
-        workgroup_start_date=date(2023, 1, 1),
-        workgroup_end_date=date(2024, 5, 31),
+        workgroup_memberships=[
+            WorkGroupMembership(
+                working_group=group_two,
+                start_date=date(2023, 1, 1),
+                end_date=date(2024, 5, 31),
+            )
+        ],
     )
     session.add_all([employee_one, employee_two])
     session.commit()
@@ -117,15 +126,45 @@ def test_telegram_uses_incoming_date_when_outgoing_date_is_missing(
 
 
 def test_employee_workgroup_dates_are_optional(db_manager: DatabaseManager) -> None:
-    """Если даты работы не заданы, членство в группе считается действующим."""
+    """Если даты участия не заданы, членство в группе считается действующим."""
     with db_manager.get_session() as session:
         _branch, _dept_one, _dept_two, _group_one, _group_two, employee_one, _employee_two = _create_oshm(session)
-        employee_one.workgroup_start_date = None
-        employee_one.workgroup_end_date = None
+        membership = employee_one.workgroup_memberships[0]
+        membership.start_date = None
+        membership.end_date = None
         session.commit()
 
         assert employee_one.worked_in_workgroup_on(date(1900, 1, 1)) is True
         assert employee_one.worked_in_workgroup_on(date(2100, 1, 1)) is True
 
-        employee_one.working_group_id = None
+        employee_one.workgroup_memberships.clear()
+        session.commit()
         assert employee_one.worked_in_workgroup_on(date(2024, 6, 1)) is False
+
+
+def test_assign_working_group_keeps_history(db_manager: DatabaseManager) -> None:
+    """Перевод в новую группу закрывает прежнее участие, а не затирает его."""
+    with db_manager.get_session() as session:
+        _branch, _dept_one, _dept_two, group_one, group_two, employee_one, _employee_two = _create_oshm(session)
+        # У сотрудника уже есть закрытое участие в группе 1 (2024 год)
+        old_membership = employee_one.workgroup_memberships[0]
+
+        new_membership = employee_one.assign_working_group(group_two, start_date=date(2025, 1, 10))
+        session.commit()
+
+        # Старое участие не изменилось (оно и так было закрыто)
+        assert old_membership.working_group_id == group_one.id
+        assert old_membership.end_date == date(2024, 12, 31)
+        # Новое участие активно, прежняя группа видна в истории
+        assert employee_one.current_membership is new_membership
+        assert new_membership.end_date is None
+        assert len(employee_one.workgroup_memberships) == 2
+        assert employee_one.workgroup_on(date(2024, 6, 1)) == group_one
+        assert employee_one.workgroup_on(date(2025, 2, 1)) == group_two
+
+        # Повторный перевод закрывает активное участие датой начала нового
+        latest = employee_one.assign_working_group(group_one, start_date=date(2025, 3, 1))
+        session.commit()
+        assert new_membership.end_date == date(2025, 3, 1)
+        assert employee_one.current_membership is latest
+        assert len(employee_one.workgroup_memberships) == 3

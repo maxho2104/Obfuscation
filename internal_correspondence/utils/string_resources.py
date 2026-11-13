@@ -105,6 +105,7 @@ class AppStrings:
     oshm_col_element: str = "Элемент"
     oshm_select_branch_first: str = "Выберите филиал, в который нужно добавить отдел"
     oshm_tasks_section: str = "Назначенные задачи"
+    oshm_membership_history: str = "прежняя группа"
     picker_tasks_title: str = "Выбор задач"
     button_hide: str = "Скрыть"
     button_statistics: str = "Статистика"

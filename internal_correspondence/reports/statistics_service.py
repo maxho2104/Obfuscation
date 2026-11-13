@@ -63,7 +63,9 @@ def _parent_links(group_criterion: str, subcriterion: str, member: Any) -> List[
         if group_criterion == CRITERION_DEPARTMENT:
             return [member.department_id]
         if group_criterion == CRITERION_WORKGROUP:
-            return [member.working_group_id] if member.working_group_id else []
+            # Группа активного (незакрытого) участия сотрудника
+            membership = member.current_membership
+            return [membership.working_group_id] if membership is not None else []
         if group_criterion == CRITERION_BRANCH:
             department = member.department
             return [department.branch_id] if department is not None else []

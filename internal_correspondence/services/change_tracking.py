@@ -26,6 +26,7 @@ _TRACKED_TABLES = {
     "branches",
     "departments",
     "working_groups",
+    "workgroup_memberships",
     "academic_titles",
     "employees",
     "scientific_tasks",

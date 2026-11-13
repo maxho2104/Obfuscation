@@ -56,6 +56,7 @@ from internal_correspondence.orm.models import (  # noqa: E402
     Source,
     Telegram,
     TerritorialUnit,
+    WorkGroupMembership,
     WorkingGroup,
 )
 from internal_correspondence.services.change_tracking import (  # noqa: E402
@@ -391,19 +392,36 @@ def _create_oshm(
                     if group
                     else None
                 )
-                department.employees.append(
-                    Employee(
-                        last_name=last_name,
-                        first_name=first_name,
-                        middle_name=middle_name,
-                        position=random.choice(POSITIONS),
-                        active=fake.boolean(chance_of_getting_true=90),
-                        academic_title=title,
-                        working_group=group,
-                        workgroup_start_date=start if group else None,
-                        workgroup_end_date=end,
-                    )
+                employee = Employee(
+                    last_name=last_name,
+                    first_name=first_name,
+                    middle_name=middle_name,
+                    position=random.choice(POSITIONS),
+                    active=fake.boolean(chance_of_getting_true=90),
+                    academic_title=title,
                 )
+                if group is not None:
+                    # Части сотрудников добавляем закрытое прежнее участие —
+                    # история переводов между группами
+                    other_groups = [g for g in department.workgroups if g is not group]
+                    if other_groups and fake.boolean(chance_of_getting_true=30):
+                        prev_end = start - timedelta(days=1)
+                        prev_start = prev_end - timedelta(days=fake.random_int(90, 365))
+                        employee.workgroup_memberships.append(
+                            WorkGroupMembership(
+                                working_group=fake.random_element(other_groups),
+                                start_date=prev_start,
+                                end_date=prev_end,
+                            )
+                        )
+                    employee.workgroup_memberships.append(
+                        WorkGroupMembership(
+                            working_group=group,
+                            start_date=start,
+                            end_date=end if end is not None and end <= today else None,
+                        )
+                    )
+                department.employees.append(employee)
 
 
 def _pick_document_relations(
