@@ -370,6 +370,45 @@
   upgrade OK; `alembic heads` — единственный `f3b1c9d2e4a7`.
 - `py_compile` изменённых модулей; импорт `gui.application` — OK.
 
+---
+
+## 2026-11-13 — Проверка запуска и обновление рабочей БД
+
+### Симптом
+Запуск `main.py` завершался с кодом 1:
+- `sqlite3.OperationalError: no such column: changes.exported_at`;
+- `no such column: scientific_materials.permit_date`;
+- `validate_enum_codes`: `ValueError: invalid literal for int() with base 10: 'ТДОК'`.
+
+### Причина
+База `D:/Projects/Obfuscation/123.db` была создана старой версией через
+`create_all` и не имела таблицы `alembic_version`; схема отставала от моделей
+на несколько миграций (строковые коды перечислений, отсутствующие колонки).
+
+### Что сделано
+- Резервная копия: `D:/Projects/Obfuscation/123.db.bak-2026-11-13`.
+- Добавлен `scripts_dev/upgrade_real_db.py`: добавляет недостающие колонки
+  (`changes.operation_type/exported_at`, `scientific_materials.permit_date`,
+  `evaluations.date`), переносит маркер `__DELETED__` в `operation_type=2`,
+  переводит строковые коды перечислений в целые числа и ставит ревизию
+  `f3b1c9d2e4a7` (единственный head).
+- Рабочая БД обновлена; `alembic_version` = `f3b1c9d2e4a7`.
+
+### Проверка
+- `main.py` под `QT_QPA_PLATFORM=offscreen` запускается без ошибок в логе.
+- Дымовая проверка `MainWindow`: 4 вкладки, материалы — 40 (фильтр по
+  филиалу BR-001), телеграммы — 20, периодов задач — 2, корень дерева — 1.
+- В `Logs/app.log` после обновления нет `ERROR`/`WARNING`.
+- Предупреждения Qt об отсутствии каталога шрифтов относятся к offscreen-режиму
+  и на работу приложения не влияют.
+
+### Отложено
+- В БД остались старые колонки `row_version`, `created_at`, `updated_at`,
+  `country_id` — модели их не используют, на работу не влияют.
+- Полная история миграций на этой БД не проигрывалась (схема собрана старой
+  версией); для новых баз использовать `alembic upgrade head`.
+
+
 
 ## 2026-11-11 — Удаление миксинов VersionedMixin и TimestampMixin
 
