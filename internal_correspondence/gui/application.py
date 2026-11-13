@@ -58,6 +58,7 @@ from internal_correspondence.gui.reference_dialogs import (
 from internal_correspondence.gui.reference_editor import ReferenceEditorDialog
 from internal_correspondence.gui.settings_dialog import SettingsDialog
 from internal_correspondence.gui.statistics_widget import StatisticsWidget
+from internal_correspondence.gui.task_distribution_widget import TaskDistributionWidget
 from internal_correspondence.gui.table_model import ColumnDef
 from internal_correspondence.gui.theme import THEMES, apply_theme, current_theme
 from internal_correspondence.importexport.export_service import ExportService
@@ -355,9 +356,15 @@ class MainWindow(QMainWindow):
             self.db_manager.get_session(),
             self.settings.branch_id if self.settings.role == Role.BRANCH.value else None,
         )
+        self.tasks_tab = TaskDistributionWidget(
+            self.db_manager.get_session(),
+            self.settings.role,
+            self.settings.branch_id,
+        )
 
         self.tabs.addTab(self.materials_tab, entity_label(ScientificMaterial, plural=True))
         self.tabs.addTab(self.telegram_tab, entity_label(Telegram, plural=True))
+        self.tabs.addTab(self.tasks_tab, STRINGS.tab_tasks)
         self.tabs.addTab(self.statistics_tab, STRINGS.tab_statistics)
         layout.addWidget(self.tabs)
         self.setCentralWidget(container)
@@ -590,6 +597,7 @@ class MainWindow(QMainWindow):
         # Перекрашиваем строки таблиц и графики
         self.materials_tab.refresh()
         self.telegram_tab.refresh()
+        self.tasks_tab.apply_theme()
         self.statistics_tab.apply_theme()
 
     def _export(self) -> None:
@@ -645,6 +653,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, STRINGS.title_import, message)
             self.materials_tab.refresh()
             self.telegram_tab.refresh()
+            self.tasks_tab.refresh_all()
             self.statistics_tab.refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка импорта")

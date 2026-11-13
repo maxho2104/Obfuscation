@@ -29,6 +29,7 @@ _TRACKED_TABLES = {
     "academic_titles",
     "employees",
     "scientific_tasks",
+    "added_tasks",
     "countries",
     "consumers",
     "sources",

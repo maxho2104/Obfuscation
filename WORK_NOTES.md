@@ -233,6 +233,102 @@
 
 ---
 
+## 2026-11-12 — Модуль «Задачи»: распределение по иерархии организации
+
+### Изменения
+- **Спецификация:** `tasks.md` в корне — согласованная постановка v3 (иерархия с виртуальным
+  корнем «Организация» для ГО, группы под отделами, таблица `added_tasks`, периоды,
+  права, интерфейс, импорт/выгрузка по регионам).
+- **Модель (`orm/models.py`):** удалены `task_employee_association`,
+  `ScientificTask.employees` и `Employee.tasks`; добавлен `AddedTask` (`added_tasks`:
+  UUID PK, `task_id` FK CASCADE, `node_type`, `node_id`, unique-тройка, индексы) с
+  `ChangeTrackedMixin`/`VersionedMixin`; у `ScientificTask` — `added_tasks`
+  (cascade delete-orphan). `orm/__init__.py`, `_TRACKED_TABLES`, пакет предметной области
+  и секция `strings` обновлены.
+- **Миграция `alembic/versions/f3b1c9d2e4a7_task_distribution.py`:** создаёт `added_tasks`,
+  удаляет `task_employees`; downgrade пересоздаёт `task_employees`. Проверена скриптом
+  `scripts_dev/test_migration_task_distribution.py` (upgrade → downgrade → повторный upgrade).
+- **Сервисы:** `services/task_distribution_service.py` — `FinancialPeriod`, дерево узлов,
+  назначение/снятие с проверкой строгой иерархии, прав роли и потомков, автоназначение
+  региона филиалом, `add_region_assignments` для импорта; `ScientificTaskService` —
+  `create_task/update_task/delete_task` с валидацией кода, типа, дат и порогов.
+- **Импорт/экспорт:** `importexport/task_import.py` (upsert задач из листа «Научные задачи»),
+  `importexport/task_export.py` (один XLSX на регион), в `ImportService` — проверка узла
+  `AddedTask` (тип, существование/активность, область филиала, дубликат, импорт узла из
+  того же пакета).
+- **Интерфейс:** `gui/task_dialog.py`, `gui/task_table_model.py`,
+  `gui/task_distribution_widget.py`; вкладка «Задачи» между «Телеграммами» и «Статистикой»;
+  розовый цвет нераспределённых строк в `Theme`; ~30 строк в `AppStrings`; обновление
+  вкладки при импорте и смене темы.
+- **Документация:** README — сущность «Назначение задачи», раздел «Распределение научных
+  задач», особенности модуля.
+
+### Проверка
+- `pytest`: **158 passed** (включая новые `tests/test_task_distribution.py` — 7 тестов и
+  `tests/test_task_widget.py` — 1 дымовой тест).
+- `scripts_dev/test_migration_task_distribution.py`: upgrade/downgrade/повторный upgrade OK.
+- `python -m py_compile` изменённых модулей; импорт `gui.application` — OK.
+- `scripts_dev/update_pack_strings.py`: 147 ключей.
+
+### Отложено
+- Ленивое построение дерева (сейчас строится целиком; для ожидаемых объёмов приемлемо).
+- Привязка назначений к финансовому году не делается — назначение глобально для задачи.
+- Отдельная обработка удаления узлов ОШС (назначения на удалённые узлы не чистятся).
+- Драг-н-дроп реализован, но автоматическим тестом не покрыт.
+
+---
+
+## 2026-11-12 — Виртуальное окружение проекта
+
+### Изменения
+- Создано локальное окружение `.venv` (Python 3.15.2, pip 26.3); каталог уже в `.gitignore`.
+- Установлены зависимости из `requirements.txt` (PyQt5/PyQtChart, SQLAlchemy, Alembic, psycopg2-binary, openpyxl, python-docx, odfpy, PyInstaller, pytest, faker).
+
+### Проверка
+- `pip check` — No broken requirements found.
+- `pytest tests` — **159 passed**.
+- `scripts_dev/test_migration_task_distribution.py` — upgrade/downgrade/повторный upgrade OK.
+- Импорт `internal_correspondence.gui.application` и библиотек — OK.
+
+---
+
+## 2026-11-13 — Модуль «Задачи»: drag&drop, геометрия и состав групп по периоду
+
+### Изменения
+- **Drag&drop (`gui/task_table_model.py`, `gui/task_distribution_widget.py`):**
+  `TaskTableModel` отдаёт собственный MIME-тип
+  `application/x-internal-correspondence-task-ids` (`mimeTypes/mimeData/
+  supportedDragActions`); `_TaskTableView` переопределяет `dragEnterEvent`,
+  `dragMoveEvent` и `dropEvent`, принимая перетаскивание только из соседней
+  таблицы задач и только при наличии этого MIME-типа. Раньше drag не начинался:
+  базовый `QAbstractItemView` отклонял данные, так как модель не умела
+  `canDropMimeData`.
+- **Геометрия (`gui/task_distribution_widget.py`):** кнопки `>>>`/`<<<` вынесены
+  в фиксированную панель шириной 52 px внутри центральной области
+  (`middle + buttons`); `QSplitter` стал трёхпанельным (`tree | center | right`),
+  все панели несворачиваемые, у средней и правой задана минимальная ширина.
+  При изменении ширины средней колонки кнопки остаются прижатыми к правой
+  таблице, а правая таблица меняет ширину вместе с центральной панелью.
+- **Период и дерево (`services/task_distribution_service.py`):**
+  `build_tree(period)` строит дерево для выбранного финансового года и
+  сбрасывает кэш при смене периода; membership сотрудника в рабочей группе
+  определяется пересечением `[workgroup_start_date, workgroup_end_date]` с
+  `[period.start, period.end]` (а не только датой `today`). Вкладка перестраивает
+  дерево при смене периода и после создания/редактирования/удаления/импорта задач.
+  Неактивные сотрудники и упразднённые группы по-прежнему показываются серыми:
+  на них могут оставаться назначения, поэтому скрывать их нельзя.
+
+### Проверка
+- `pytest tests` — **162 passed** (добавлены тесты membership по периоду,
+  MIME-данных drag&drop и фиксированной ширины панели кнопок).
+- `scripts_dev/test_migration_task_distribution.py` — upgrade/downgrade/повторный
+  upgrade OK.
+- `python -m py_compile` изменённых модулей; импорт `gui.application` — OK.
+
+### Отложено
+- Автоматический тест именно Qt-перетаскивания (покрыты MIME-данные и логика
+  приёма; сам жест мышью проверяется вручную).
+
 ## 2026-11-11 — Удаление миксинов VersionedMixin и TimestampMixin
 
 ### Изменения

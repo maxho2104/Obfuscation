@@ -130,14 +130,6 @@ telegram_file_association = Table(
     Column("file_id", PGUUID(as_uuid=True), ForeignKey("file_records.id", ondelete="CASCADE"), primary_key=True),
 )
 
-# Связь "Научная задача - Сотрудник" (N-N)
-task_employee_association = Table(
-    "task_employees",
-    Base.metadata,
-    Column("task_id", String(50), ForeignKey("scientific_tasks.id", ondelete="CASCADE"), primary_key=True),
-    Column("employee_id", PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), primary_key=True),
-)
-
 # Связь "Научный материал - Научная задача" (N-N)
 material_task_association = Table(
     "material_tasks",
@@ -556,11 +548,6 @@ class Employee(Base, ChangeTrackedMixin):
     workgroup_start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Начало работы в рабочей группе", "short": "Начало в группе"})
     workgroup_end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Конец работы в рабочей группе", "short": "Конец в группе"})
 
-    tasks: Mapped[List["ScientificTask"]] = relationship(
-        "ScientificTask",
-        secondary=task_employee_association,
-        back_populates="employees",
-    )
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
         secondary=material_employee_association,
@@ -615,10 +602,10 @@ class ScientificTask(Base, ChangeTrackedMixin):
     partial_threshold: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True, info={"label": "Частичное решение"})
     full_threshold: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True, info={"label": "Полное решение"})
 
-    employees: Mapped[List["Employee"]] = relationship(
-        "Employee",
-        secondary=task_employee_association,
-        back_populates="tasks",
+    added_tasks: Mapped[List["AddedTask"]] = relationship(
+        "AddedTask",
+        back_populates="task",
+        cascade="all, delete-orphan",
     )
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
@@ -632,41 +619,46 @@ class ScientificTask(Base, ChangeTrackedMixin):
     )
 
 
-class TaskEntityLink(Base):
-    """Связь научной задачи с сущностью (филиал, отдел, рабочая группа, сотрудник).
+class AddedTask(Base, ChangeTrackedMixin, VersionedMixin):
+    """Назначение научной задачи узлу иерархии.
 
-    Закладка под механизм распределения научных задач: задача связывается
-    с произвольной сущностью через имя класса и строковое представление
-    её первичного ключа. Change-tracking и обмен будут подключены вместе
-    с механизмом распределения.
+    Узел задаётся парой ``node_type``/``node_id``. Полиморфная ссылка выбрана
+    осознанно: одна таблица обслуживает регионы, филиалы, отделы, рабочие
+    группы и сотрудников, а целостность узла проверяется сервисом.
     """
-    __entity_label__ = "Связь задачи с сущностью"
-    __entity_label_plural__ = "Связи задач с сущностями"
+    __entity_label__ = "Назначение задачи"
+    __entity_label_plural__ = "Назначения задач"
     __field_labels__ = {"id": "Идентификатор"}
 
-
-    __tablename__ = "task_entity_links"
-
-    id: Mapped[int] = mapped_column(
-        Integer,
-        primary_key=True,
-        autoincrement=True,
-        info={"label": "Идентификатор"},
+    __tablename__ = "added_tasks"
+    __table_args__ = (
+        UniqueConstraint("task_id", "node_type", "node_id", name="uix_added_task_node"),
+        Index("ix_added_tasks_node", "node_type", "node_id"),
     )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
     task_id: Mapped[str] = mapped_column(
+        String(50),
         ForeignKey("scientific_tasks.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
         info={"label": "Научная задача"},
     )
-    entity_name: Mapped[str] = mapped_column(
-        String(100), nullable=False, info={"label": "Сущность"}
+    node_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        info={"label": "Тип узла"},
     )
-    entity_pk: Mapped[str] = mapped_column(
-        String(255), nullable=False, info={"label": "Ключ сущности"}
+    node_id: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        info={"label": "Узел"},
     )
 
-    __table_args__ = (
-        Index("ix_task_entity_links_entity", "entity_name", "entity_pk"),
+    task: Mapped["ScientificTask"] = relationship(
+        "ScientificTask",
+        back_populates="added_tasks",
+        info={"label": "Научная задача"},
     )
 
 

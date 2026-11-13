@@ -145,6 +145,7 @@ class Theme:
         colors: Optional[Dict[str, QColor]] = None,
         disabled: Optional[Dict[str, QColor]] = None,
         stylesheet: str = "",
+        unassigned_row: Optional[QColor] = None,
     ) -> None:
         self.key = key
         self.label = label
@@ -152,6 +153,8 @@ class Theme:
         self.stripe = stripe
         # Фон записей с неэкспортированными изменениями
         self.modified_row = modified_row
+        # Фон нераспределённых задач в модуле «Задачи»
+        self.unassigned_row = unassigned_row or QColor("#F7C6D9")
         # Фон документов без входящего номера (менее яркий, чем modified_row)
         self.no_incoming_row = no_incoming_row or modified_row
         # Переопределения палитры: имя роли QPalette -> цвет
@@ -191,6 +194,7 @@ DARK_THEME = Theme(
     label="Тёмная тема",
     stripe=QColor("#3A3A3C"),
     modified_row=QColor("#7E6434"),
+    unassigned_row=QColor("#5A2A3A"),
     no_incoming_row=QColor("#2F3B4C"),
     colors={
         "Window": QColor("#2D2D30"),
