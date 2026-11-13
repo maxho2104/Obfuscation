@@ -289,3 +289,43 @@
 - `pytest tests` — **159 passed**.
 - `scripts_dev/test_migration_task_distribution.py` — upgrade/downgrade/повторный upgrade OK.
 - Импорт `internal_correspondence.gui.application` и библиотек — OK.
+
+---
+
+## 2026-11-13 — Модуль «Задачи»: drag&drop, геометрия и состав групп по периоду
+
+### Изменения
+- **Drag&drop (`gui/task_table_model.py`, `gui/task_distribution_widget.py`):**
+  `TaskTableModel` отдаёт собственный MIME-тип
+  `application/x-internal-correspondence-task-ids` (`mimeTypes/mimeData/
+  supportedDragActions`); `_TaskTableView` переопределяет `dragEnterEvent`,
+  `dragMoveEvent` и `dropEvent`, принимая перетаскивание только из соседней
+  таблицы задач и только при наличии этого MIME-типа. Раньше drag не начинался:
+  базовый `QAbstractItemView` отклонял данные, так как модель не умела
+  `canDropMimeData`.
+- **Геометрия (`gui/task_distribution_widget.py`):** кнопки `>>>`/`<<<` вынесены
+  в фиксированную панель шириной 52 px внутри центральной области
+  (`middle + buttons`); `QSplitter` стал трёхпанельным (`tree | center | right`),
+  все панели несворачиваемые, у средней и правой задана минимальная ширина.
+  При изменении ширины средней колонки кнопки остаются прижатыми к правой
+  таблице, а правая таблица меняет ширину вместе с центральной панелью.
+- **Период и дерево (`services/task_distribution_service.py`):**
+  `build_tree(period)` строит дерево для выбранного финансового года и
+  сбрасывает кэш при смене периода; membership сотрудника в рабочей группе
+  определяется пересечением `[workgroup_start_date, workgroup_end_date]` с
+  `[period.start, period.end]` (а не только датой `today`). Вкладка перестраивает
+  дерево при смене периода и после создания/редактирования/удаления/импорта задач.
+  Неактивные сотрудники и упразднённые группы по-прежнему показываются серыми:
+  на них могут оставаться назначения, поэтому скрывать их нельзя.
+
+### Проверка
+- `pytest tests` — **162 passed** (добавлены тесты membership по периоду,
+  MIME-данных drag&drop и фиксированной ширины панели кнопок).
+- `scripts_dev/test_migration_task_distribution.py` — upgrade/downgrade/повторный
+  upgrade OK.
+- `python -m py_compile` изменённых модулей; импорт `gui.application` — OK.
+
+### Отложено
+- Автоматический тест именно Qt-перетаскивания (покрыты MIME-данные и логика
+  приёма; сам жест мышью проверяется вручную).
+

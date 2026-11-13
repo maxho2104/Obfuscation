@@ -3,13 +3,16 @@
 from datetime import date
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from PyQt5.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PyQt5.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt
 from PyQt5.QtGui import QBrush
 
 from internal_correspondence.core.domain_pack import enum_label
 from internal_correspondence.gui.theme import current_theme
 from internal_correspondence.orm.labels import field_short_label
 from internal_correspondence.orm.models import ScientificTask
+
+# MIME-тип для перетаскивания задач между таблицами вкладки
+TASK_MIME_TYPE = "application/x-internal-correspondence-task-ids"
 
 # Поля таблицы и их ширины по умолчанию
 TASK_COLUMNS: Sequence[Tuple[str, int]] = (
@@ -138,6 +141,32 @@ class TaskTableModel(QAbstractTableModel):
             | Qt.ItemIsSelectable
             | Qt.ItemIsDragEnabled
         )
+
+    def mimeTypes(self) -> List[str]:  # noqa: N802
+        """Тип данных, который таблица отдаёт при перетаскивании."""
+        return [TASK_MIME_TYPE]
+
+    def mimeData(self, indexes):  # noqa: N802
+        """Сериализует коды перетаскиваемых задач (по одной строке на код)."""
+        task_ids: List[str] = []
+        for index in indexes:
+            if not index.isValid() or index.column() != 0:
+                continue
+            task = self.task_at(index.row())
+            if task is not None and task.id not in task_ids:
+                task_ids.append(task.id)
+        if not task_ids:
+            return None
+        mime = QMimeData()
+        mime.setData(TASK_MIME_TYPE, "\n".join(task_ids).encode("utf-8"))
+        mime.setText(", ".join(task_ids))
+        return mime
+
+    def supportedDragActions(self):  # noqa: N802
+        return Qt.MoveAction
+
+    def supportedDropActions(self):  # noqa: N802
+        return Qt.MoveAction
 
     def data(self, index: QModelIndex, role=Qt.DisplayRole):
         if not index.isValid() or not (0 <= index.row() < len(self._visible)):

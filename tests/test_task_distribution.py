@@ -232,6 +232,27 @@ def test_task_service_validates_dates_and_thresholds(
         assert task.end_date is None
 
 
+def test_group_membership_depends_on_selected_period(
+    db_manager: DatabaseManager,
+) -> None:
+    with db_manager.get_session() as session:
+        unit, branch, department, employee, group = _setup_org(session)
+        employee.workgroup_start_date = date(2025, 1, 1)
+        employee.workgroup_end_date = date(2025, 12, 31)
+        session.commit()
+
+        service = TaskDistributionService(session, Role.HEAD_OFFICE.value)
+        group_key = (NODE_WORKGROUP, str(group.id))
+
+        service.build_tree(FinancialPeriod(2024))
+        assert service.node(group_key) is not None
+        assert len(service.node(group_key).children) == 1
+
+        service.build_tree(FinancialPeriod(2026))
+        assert service.node(group_key) is not None
+        assert service.node(group_key).children == []
+
+
 def test_assignment_survives_export_and_import(
     db_manager: DatabaseManager, tmp_path: Path
 ) -> None:

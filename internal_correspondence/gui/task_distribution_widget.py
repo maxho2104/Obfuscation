@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
+    QSizePolicy,
     QSplitter,
     QTableView,
     QToolButton,
@@ -51,7 +52,10 @@ from internal_correspondence.services.task_distribution_service import (
     TaskDistributionService,
 )
 from internal_correspondence.gui.task_dialog import ScientificTaskDialog
-from internal_correspondence.gui.task_table_model import TaskTableModel
+from internal_correspondence.gui.task_table_model import (
+    TASK_MIME_TYPE,
+    TaskTableModel,
+)
 from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("task_distribution_widget")
@@ -72,6 +76,7 @@ class _TaskTableView(QTableView):
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDrop)
+        self.setDragDropOverwriteMode(False)
         self.setDefaultDropAction(Qt.MoveAction)
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -80,11 +85,32 @@ class _TaskTableView(QTableView):
         self.verticalHeader().setVisible(False)
         self.setSortingEnabled(True)
 
-    def dropEvent(self, event) -> None:  # noqa: N802
+    def _accepts_drag(self, event) -> bool:
+        """Проверяет, что перетаскивание пришло из соседней таблицы задач."""
         source = event.source()
         if source is None or source is self:
+            return False
+        return event.mimeData().hasFormat(TASK_MIME_TYPE)
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if self._accepts_drag(event):
+            event.setDropAction(Qt.MoveAction)
+            event.accept()
+            return
+        event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802
+        if self._accepts_drag(event):
+            event.setDropAction(Qt.MoveAction)
+            event.accept()
+            return
+        event.ignore()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        if not self._accepts_drag(event):
             event.ignore()
             return
+        source = event.source()
         model = source.model()
         selection = source.selectionModel()
         if selection is None or not hasattr(model, "tasks_at"):
@@ -96,7 +122,8 @@ class _TaskTableView(QTableView):
             event.ignore()
             return
         self.dropped.emit(tasks)
-        event.acceptProposedAction()
+        event.setDropAction(Qt.MoveAction)
+        event.accept()
 
 
 class TaskDistributionWidget(QWidget):
@@ -121,8 +148,8 @@ class TaskDistributionWidget(QWidget):
         self.selected_assignable = True
 
         self._build_ui()
-        self._populate_tree()
         self._reload_periods()
+        self._populate_tree()
         self._reload_all()
 
     # ------------------------------------------------------------------
@@ -162,6 +189,7 @@ class TaskDistributionWidget(QWidget):
         self._configure_table(self.middle_view)
 
         middle_panel = QWidget()
+        middle_panel.setMinimumWidth(260)
         middle_layout = QVBoxLayout(middle_panel)
         middle_layout.setContentsMargins(0, 0, 0, 0)
         middle_layout.addWidget(self.middle_label)
@@ -186,6 +214,7 @@ class TaskDistributionWidget(QWidget):
         self._configure_table(self.right_view)
 
         right_panel = QWidget()
+        right_panel.setMinimumWidth(260)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.addWidget(self.right_label)
@@ -207,23 +236,37 @@ class TaskDistributionWidget(QWidget):
         self.unassign_button.clicked.connect(self._unassign_selected)
 
         buttons = QWidget()
+        buttons.setFixedWidth(52)
+        buttons.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         buttons_layout = QVBoxLayout(buttons)
         buttons_layout.setContentsMargins(2, 0, 2, 0)
         buttons_layout.addStretch(1)
         buttons_layout.addWidget(self.assign_button)
         buttons_layout.addWidget(self.unassign_button)
         buttons_layout.addStretch(1)
+        self.buttons_panel = buttons
+
+        # Средняя таблица и кнопки — единая панель: при изменении ширины
+        # средней колонки кнопки остаются прижатыми к правой таблице,
+        # а не «отъезжают» от неё.
+        center_panel = QWidget()
+        center_layout = QHBoxLayout(center_panel)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(4)
+        center_layout.addWidget(middle_panel, 1)
+        center_layout.addWidget(buttons)
 
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.addWidget(self.tree)
-        self.splitter.addWidget(middle_panel)
-        self.splitter.addWidget(buttons)
+        self.splitter.addWidget(center_panel)
         self.splitter.addWidget(right_panel)
         self.splitter.setStretchFactor(0, 2)
         self.splitter.setStretchFactor(1, 3)
-        self.splitter.setStretchFactor(2, 0)
-        self.splitter.setStretchFactor(3, 3)
-        self.splitter.setSizes([280, 380, 52, 380])
+        self.splitter.setStretchFactor(2, 3)
+        self.splitter.setChildrenCollapsible(False)
+        for index in range(self.splitter.count()):
+            self.splitter.setCollapsible(index, False)
+        self.splitter.setSizes([280, 432, 380])
 
         self.create_button = QToolButton()
         self.create_button.setText(STRINGS.task_create)
@@ -269,7 +312,7 @@ class TaskDistributionWidget(QWidget):
         current_key = self.current_key()
         self.tree.blockSignals(True)
         self.tree.clear()
-        for root in self.service.build_tree():
+        for root in self.service.build_tree(self.current_period):
             self.tree.addTopLevelItem(self._make_item(root))
         self.tree.blockSignals(False)
         if current_key is not None:
@@ -330,6 +373,9 @@ class TaskDistributionWidget(QWidget):
 
     def _on_period_changed(self, _index: int) -> None:
         self.current_period = self.period_combo.currentData()
+        # Состав рабочих групп зависит от периода, поэтому дерево
+        # перестраивается до обновления таблиц.
+        self._populate_tree()
         self._reload_all()
 
     def _on_tree_current_changed(
@@ -358,8 +404,14 @@ class TaskDistributionWidget(QWidget):
         self.service = TaskDistributionService(
             self.session, self.role, self.branch_id
         )
-        self._populate_tree()
         self._reload_periods()
+        self._populate_tree()
+        self._reload_all()
+
+    def _refresh_after_data_change(self) -> None:
+        """Обновляет периоды, дерево и таблицы после правки задач."""
+        self._reload_periods()
+        self._populate_tree()
         self._reload_all()
 
     # ------------------------------------------------------------------
@@ -543,8 +595,7 @@ class TaskDistributionWidget(QWidget):
                     STRINGS.title_error,
                     STRINGS.task_assign_error.format(error=error),
                 )
-        self._reload_periods()
-        self._reload_all()
+        self._refresh_after_data_change()
 
     def _edit_current_middle(self, _index) -> None:
         self._edit_selected(self.middle_view)
@@ -569,8 +620,7 @@ class TaskDistributionWidget(QWidget):
             self.session.rollback()
             QMessageBox.warning(self, STRINGS.title_error, str(error))
             return
-        self._reload_periods()
-        self._reload_all()
+        self._refresh_after_data_change()
 
     def _delete_task(self, task: ScientificTask) -> None:
         if not self.is_head_office:
@@ -591,8 +641,7 @@ class TaskDistributionWidget(QWidget):
             self.session.rollback()
             QMessageBox.warning(self, STRINGS.title_error, str(error))
             return
-        self._reload_periods()
-        self._reload_all()
+        self._refresh_after_data_change()
 
     def _show_context_menu(self, view: QTableView, pos) -> None:
         tasks = self._selected_tasks(view)
@@ -658,8 +707,7 @@ class TaskDistributionWidget(QWidget):
                 result.errors[:20]
             )
         QMessageBox.information(self, STRINGS.title_import, message)
-        self._reload_periods()
-        self._reload_all()
+        self._refresh_after_data_change()
 
     def _export_tasks(self) -> None:
         regions = list(

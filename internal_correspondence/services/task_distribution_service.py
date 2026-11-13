@@ -129,6 +129,7 @@ class TaskDistributionService:
         self._assignments: Dict[str, Set[NodeKey]] = {}
         self._assignment_rows: Dict[Tuple[str, NodeKey], AddedTask] = {}
         self._period: Optional[FinancialPeriod] = None
+        self._tree_period: Optional[FinancialPeriod] = None
         self._region_id: Optional[str] = None
 
     # ------------------------------------------------------------------
@@ -165,10 +166,46 @@ class TaskDistributionService:
     # Дерево
     # ------------------------------------------------------------------
 
-    def build_tree(self) -> List[DistributionNode]:
-        """Строит корневые узлы дерева (для ГО — организация, для филиала — регион)."""
+    def build_tree(
+        self, period: Optional[FinancialPeriod] = None
+    ) -> List[DistributionNode]:
+        """Строит корневые узлы дерева для указанного финансового периода.
+
+        Состав рабочих групп зависит от периода: сотрудник показывается в
+        группе, если хотя бы часть времени его работы в группе пересекается
+        с выбранным финансовым годом.
+        """
+        if self._tree is not None and period != self._tree_period:
+            self._reset_tree()
+        self._tree_period = period
         self._ensure_tree()
         return self._tree or []
+
+    def _reset_tree(self) -> None:
+        """Сбрасывает построенное дерево и связанные с ним индексы."""
+        self._tree = None
+        self._nodes = {}
+        self._descendants = {}
+        self._branch_region = {}
+        self._department_branch = {}
+        self._group_department = {}
+        self._employee_department = {}
+        self._region_id = None
+
+    @staticmethod
+    def _worked_in_group_during(
+        employee: Employee, period: Optional[FinancialPeriod]
+    ) -> bool:
+        """Проверяет membership сотрудника в группе на выбранный период."""
+        if period is None:
+            return employee.worked_in_workgroup_on(date.today())
+        start = employee.workgroup_start_date
+        end = employee.workgroup_end_date
+        if start is not None and start > period.end:
+            return False
+        if end is not None and end < period.start:
+            return False
+        return True
 
     def _ensure_tree(self) -> None:
         if self._tree is not None:
@@ -234,8 +271,8 @@ class TaskDistributionService:
             employees_by_department.setdefault(employee.department_id, []).append(
                 employee
             )
-            if employee.working_group_id and employee.worked_in_workgroup_on(
-                date.today()
+            if employee.working_group_id and self._worked_in_group_during(
+                employee, self._tree_period
             ):
                 employees_by_group.setdefault(
                     employee.working_group_id, []
@@ -441,7 +478,7 @@ class TaskDistributionService:
 
     def tasks(self, period: FinancialPeriod) -> List[ScientificTask]:
         """Загружает задачи периода и доступные назначения."""
-        self._ensure_tree()
+        self.build_tree(period)
         stmt = (
             select(ScientificTask)
             .where(ScientificTask.start_date <= period.end)

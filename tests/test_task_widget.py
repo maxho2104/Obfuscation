@@ -74,3 +74,46 @@ def test_widget_builds_tree_and_tables(qt_app, db_manager: DatabaseManager) -> N
             widget.refresh_all()
         finally:
             widget.deleteLater()
+
+
+def test_buttons_pane_has_fixed_width(qt_app, db_manager: DatabaseManager) -> None:
+    from internal_correspondence.gui.task_distribution_widget import (
+        TaskDistributionWidget,
+    )
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        widget = TaskDistributionWidget(session, Role.HEAD_OFFICE.value)
+        try:
+            buttons = widget.buttons_panel
+            assert buttons.minimumWidth() == 52
+            assert buttons.maximumWidth() == 52
+            # Кнопки входят в центральную панель, а не в QSplitter.
+            assert widget.splitter.count() == 3
+            assert widget.splitter.isCollapsible(1) is False
+        finally:
+            widget.deleteLater()
+
+
+def test_task_model_provides_drag_mime_data(qt_app, db_manager: DatabaseManager) -> None:
+    from PyQt5.QtCore import QModelIndex
+
+    from internal_correspondence.gui.task_table_model import (
+        TASK_MIME_TYPE,
+        TaskTableModel,
+    )
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        task = session.query(ScientificTask).one()
+        model = TaskTableModel()
+        model.set_tasks([task])
+
+        mime = model.mimeData([model.index(0, 0)])
+        assert mime is not None
+        assert mime.hasFormat(TASK_MIME_TYPE)
+        assert bytes(mime.data(TASK_MIME_TYPE)).decode("utf-8") == "T1"
+        assert model.mimeTypes() == [TASK_MIME_TYPE]
+
+        invalid = model.mimeData([QModelIndex()])
+        assert invalid is None
