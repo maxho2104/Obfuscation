@@ -772,3 +772,32 @@
 
 ### Проверка
 - `pytest`: **213/213 passed**.
+
+---
+
+## 2026-11-14 — Модуль «Импорт оценок из текстового файла»
+
+### Изменения
+- **`internal_correspondence/text_import/`** (новый пакет): конфигурация, ошибки, модели схем/правил/результатов, чтение файла с автоопределением кодировки, разбор fixed/delimited, загрузка и автоопределение схем, декларативный матчер, репозиторий журнала/staging-строк, копирование файла в хранилище и оркестратор `Importer`.
+- **`internal_correspondence/services/evaluation_import_writer.py`** (новый): поиск/создание `EvaluationList` по номеру и дате, создание/обновление `Evaluation`, привязка к научному материалу или телеграмме.
+- **`internal_correspondence/gui/evaluation_import_dialog.py`** (новый): мастер из четырёх страниц (файл и документ, проверка строк, совпадения, результат), drag&drop, редактор схем и просмотр правил.
+- **`internal_correspondence/gui/application.py`**: пункты меню «Данные» → «Импорт оценок из файла...» и «Правила сопоставления» (только головной офис), передача `app_dir` в `MainWindow`.
+- **`internal_correspondence/utils/string_resources.py`**: строки модуля; секция `strings` пакета регенерирована (324 ключа).
+- **`internal_correspondence/core/domain_pack.py`**, **`domain_pack.default.json`**: директория `import` («Импорт»).
+- **`alembic/versions/a7d4e2f6b9c1_import_tables.py`** (новый): `import_log`, `import_rows`, представление `import_matches`, индексы; downgrade удаляет объекты.
+- **`schemes/evaluation_fixed.json`**, **`schemes/evaluation_delimited.json`**, **`matcher_rules.json`**: примеры схем и правил.
+- **`tests/test_text_import.py`**, **`tests/test_evaluation_import_dialog.py`**, **`scripts_dev/test_migration_import_tables.py`** (новые).
+- **`requirements.txt`**, **`pyproject.toml`**: зависимость `charset-normalizer`.
+- **`README.md`**: описание сущностей журнала/строк импорта, порядка работы и особенностей.
+
+### Проверка
+- `pytest tests`: **259 passed**; `tests/test_text_import.py` — 4 passed, `tests/test_evaluation_import_dialog.py` — 2 passed.
+- `scripts_dev/test_migration_import_tables.py`: upgrade/downgrade/повторный upgrade — OK.
+- `compileall` и импорт GUI — OK.
+- Рабочая БД `D:/Projects/Obfuscation/123.db` обновлена до `a7d4e2f6b9c1` (резервная копия `123.db.bak-import-2026-11-14`); проверены `import_log`, `import_rows` и представление `import_matches`.
+- Дымовая проверка `MainWindow` (роль головного офиса): 4 вкладки, пункты «Импорт оценок из файла...» и «Правила сопоставления» присутствуют.
+
+### Отложено
+- Автоматическая проверка кодировки на реальных файлах заказчика (нужны образцы).
+- Открытие журнала импорта из диалога показывает номер записи; отдельный просмотрщик журнала не реализован.
+- Импорт выполняется синхронно (по требованию), без фонового потока и прогрессбара.

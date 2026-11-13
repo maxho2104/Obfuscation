@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "name": "evaluation_delimited",
+  "description": "Пример схемы: разделитель ;. Код филиала состоит из трёх частей.",
+  "mode": "delimited",
+  "delimiter": ";",
+  "header_mode": "skip",
+  "fields": [
+    {"name": "branch_part_1", "type": "string", "required": true},
+    {"name": "branch_part_2", "type": "string", "required": true},
+    {"name": "branch_part_3", "type": "string", "required": true},
+    {"name": "outgoing_no", "type": "string", "required": true},
+    {"name": "year_month", "type": "string", "required": true},
+    {"name": "value", "type": "string", "required": false},
+    {"name": "evaluation_date", "type": "date", "date_format": "DD.MM.YYYY", "required": false}
+  ]
+}

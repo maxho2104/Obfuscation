@@ -38,6 +38,10 @@ from internal_correspondence.core.logging_config import configure_logging, get_l
 from internal_correspondence.core.settings import AppSettings, SettingsManager
 from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
 from internal_correspondence.gui.document_list_widget import DocumentListWidget
+from internal_correspondence.gui.evaluation_import_dialog import (
+    EvaluationImportDialog,
+    RulesViewerDialog,
+)
 from internal_correspondence.gui.filter_model import (
     deserialize_filters,
     serialize_filters,
@@ -95,6 +99,7 @@ from internal_correspondence.services.reference_service import (
     SourceService,
     TerritorialUnitService,
 )
+from internal_correspondence.text_import import ImporterConfig
 from internal_correspondence.utils.string_resources import STRINGS, reload_strings
 
 logger = get_logger("application")
@@ -317,11 +322,13 @@ class MainWindow(QMainWindow):
         settings: AppSettings,
         db_manager: DatabaseManager,
         settings_manager: Optional[SettingsManager] = None,
+        app_dir: Optional[Path] = None,
     ) -> None:
         super().__init__()
         self.settings = settings
         self.db_manager = db_manager
         self._settings_manager = settings_manager or SettingsManager()
+        self.app_dir = Path(app_dir) if app_dir is not None else Path(__file__).resolve().parent.parent.parent
         self.setWindowTitle(STRINGS.app_title)
         self.setMinimumSize(1024, 768)
         self._setup_ui()
@@ -484,6 +491,17 @@ class MainWindow(QMainWindow):
         import_actual_action = QAction(STRINGS.action_import_actual, self)
         import_actual_action.triggered.connect(self._import_actual_data)
         data_menu.addAction(import_actual_action)
+
+        data_menu.addSeparator()
+        import_evaluations_action = QAction(STRINGS.menu_import_evaluations, self)
+        import_evaluations_action.setEnabled(is_head_office)
+        import_evaluations_action.triggered.connect(self._import_evaluations)
+        data_menu.addAction(import_evaluations_action)
+        rules_action = QAction(STRINGS.import_rules_viewer, self)
+        rules_action.setEnabled(is_head_office)
+        rules_action.triggered.connect(self._view_import_rules)
+        data_menu.addAction(rules_action)
+        data_menu.addSeparator()
 
         # Меню "ОШС"
         oshm_action = QAction(STRINGS.action_oshm, self)
@@ -706,6 +724,35 @@ class MainWindow(QMainWindow):
         """Форматирует результаты импорта для сообщения."""
         return "\n".join(f"{sheet}: {count}" for sheet, count in results.items())
 
+    def _import_evaluations(self) -> None:
+        """Открывает мастер импорта оценок из текстового файла (только ГО)."""
+        if self.settings.role != Role.HEAD_OFFICE.value:
+            QMessageBox.warning(
+                self,
+                STRINGS.title_error,
+                STRINGS.msg_import_head_office_only,
+            )
+            return
+        config = ImporterConfig(
+            file_storage_dir=self.settings.storage_path_obj(),
+            schemes_dir=self.app_dir / "schemes",
+            matcher_rules_path=self.app_dir / "matcher_rules.json",
+            storage_subdir=dir_name("import"),
+        )
+        dialog = EvaluationImportDialog(config, self.db_manager.engine, self)
+        try:
+            dialog.exec_()
+        finally:
+            dialog.importer.close()
+        self.materials_tab.refresh()
+        self.telegram_tab.refresh()
+        self.statistics_tab.refresh()
+
+    def _view_import_rules(self) -> None:
+        """Показывает правила сопоставления строк с документами."""
+        dialog = RulesViewerDialog(self.app_dir / "matcher_rules.json", self)
+        dialog.exec_()
+
     def _export_domain_pack(self) -> None:
         """Выгружает активный пакет предметной области в JSON-файл."""
         path, _ = QFileDialog.getSaveFileName(
@@ -849,7 +896,7 @@ def run_application(argv: List[str]) -> int:
     except Exception:  # pylint: disable=broad-except
         logger.exception("Не удалось проверить коды перечислений в БД")
 
-    window = MainWindow(settings, db_manager)
+    window = MainWindow(settings, db_manager, app_dir=app_dir)
     window.show()
 
     return app.exec_()

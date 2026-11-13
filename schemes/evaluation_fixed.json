@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "evaluation_fixed",
+  "description": "Пример схемы: фиксированная ширина. Код филиала собирается из частей 1-2, 4 и 6-7.",
+  "mode": "fixed",
+  "header_mode": "skip",
+  "fields": [
+    {"name": "branch_part_1", "type": "string", "start": 1, "length": 2, "required": true},
+    {"name": "branch_part_2", "type": "string", "start": 4, "length": 1, "required": true},
+    {"name": "branch_part_3", "type": "string", "start": 6, "length": 2, "required": true},
+    {"name": "outgoing_no", "type": "string", "start": 8, "length": 10, "required": true},
+    {"name": "year_month", "type": "string", "start": 18, "length": 6, "required": true},
+    {"name": "value", "type": "string", "start": 24, "length": 1, "required": false},
+    {"name": "evaluation_date", "type": "date", "start": 25, "length": 10, "date_format": "DD.MM.YYYY", "required": false}
+  ]
+}
