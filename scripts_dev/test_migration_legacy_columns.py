@@ -50,7 +50,7 @@ def main() -> None:
         assert "updated_at" not in changes_columns
         with engine.connect() as connection:
             version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == CLEANUP_REVISION
+        assert version in (CLEANUP_REVISION, "c7e2a1b9d3f5")
         print("upgrade OK: устаревшие колонки удалены, ревизия", version)
 
         command.downgrade(config, PREVIOUS_REVISION)
@@ -62,7 +62,6 @@ def main() -> None:
         assert "row_version" not in _columns(engine, "evaluation_lists")
         engine.dispose()
         print("Повторный upgrade OK")
-
 
 if __name__ == "__main__":
     main()

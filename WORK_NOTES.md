@@ -932,3 +932,41 @@
 ### Отложено
 - Просмотр правил сопоставления из интерфейса удалён; файл `matcher_rules.json`
   остаётся для обратной совместимости и тестов.
+
+---
+
+## 2026-11-14 — Слияние с alex_develop: история участия в рабочих группах
+
+### Изменения
+- Ветка `alex_develop` (7708a19) слита с локальной `main` (3eb3282) в отдельном
+  worktree `D:\indus\obfs-merge-check`; конфликты только в `WORK_NOTES.md` и
+  `internal_correspondence/services/reference_service.py` (объединены импорты).
+- **`internal_correspondence/orm/models.py`:** `Employee.current_membership`
+  учитывает плановое окончание — участие действует, пока `start_date <= today`
+  и `end_date` пуст или не раньше сегодня. `assign_working_group()` закрывает
+  текущее участие датой перевода и запрещает начало нового раньше начала текущего.
+- **`internal_correspondence/services/reference_service.py`:** `EmployeeService._validate_period()`
+  не принимает окончание раньше начала (исключение из группы, изменение той же
+  группы, открытие нового участия).
+- **`internal_correspondence/reports/statistics_service.py`:** подкатегория
+  «Рабочие группы → Сотрудники» относит сотрудника к группе, действовавшей на дату
+  документа (`Employee.workgroup_on(document_date)`), а не к текущей.
+- **`internal_correspondence/services/task_distribution_service.py`:** при выборе
+  финансового периода учитываются все участия, пересекающиеся с периодом
+  (`_groups_during`), а не только текущее.
+- **`alembic/versions/c7e2a1b9d3f5_workgroup_memberships.py`:** перецеплена на
+  `d2f4a6c8e0b1` (единственная голова); `scripts_dev/test_migration_legacy_columns.py`
+  допускает её как head.
+- **`tests/test_statistics_service.py`:** историческая группа на дату документа.
+- **`tests/test_participants.py`:** плановое окончание и валидация дат.
+- **`tests/test_task_distribution.py`**, **`tests/test_task_widget.py`:** переведены
+  на `assign_working_group()`.
+
+### Проверка
+- `pytest tests`: **280 passed**.
+- Миграционные скрипты участий, legacy-колонок, импорта и задач — OK.
+- `alembic heads` — `c7e2a1b9d3f5`.
+
+### Отложено
+- Полная проверка приложения на реальной БД после слияния.
+- README обновлён по участию и исторической статистике.

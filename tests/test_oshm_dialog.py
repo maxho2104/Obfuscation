@@ -22,6 +22,7 @@ from internal_correspondence.orm.models import (
     Employee,
     ScientificTask,
     TerritorialUnit,
+    WorkGroupMembership,
     WorkingGroup,
 )
 from internal_correspondence.services.change_tracking import register_change_tracking
@@ -64,7 +65,8 @@ def oshm_data(db_manager: DatabaseManager) -> dict:
 
     emp1 = Employee(
         last_name="Иванов", first_name="Иван", department_id=dept_a.id,
-        working_group_id=workgroup.id, active=True,
+        workgroup_memberships=[WorkGroupMembership(working_group=workgroup)],
+        active=True,
     )
     emp2 = Employee(
         last_name="Петров", first_name="Пётр", department_id=dept_a.id, active=False
@@ -313,7 +315,8 @@ def test_drop_employee_to_workgroup(qt_app, db_manager, oshm_data) -> None:
         ("workgroup", str(workgroup.id)),
     )
     moved = db_manager.get_session().get(Employee, emp3.id)
-    assert moved.working_group_id == workgroup.id
+    assert moved.current_membership is not None
+    assert moved.current_membership.working_group_id == workgroup.id
     dialog.deleteLater()
 
 

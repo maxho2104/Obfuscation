@@ -69,7 +69,7 @@ def _setup_org(session):
     group = WorkingGroup(name="Группа 1", department_id=department.id)
     session.add_all([employee, group])
     session.flush()
-    employee.working_group_id = group.id
+    employee.assign_working_group(group, start_date=date(2025, 1, 1))
     session.commit()
     return unit, branch, department, employee, group
 
@@ -242,8 +242,9 @@ def test_group_membership_depends_on_selected_period(
 ) -> None:
     with db_manager.get_session() as session:
         unit, branch, department, employee, group = _setup_org(session)
-        employee.workgroup_start_date = date(2025, 1, 1)
-        employee.workgroup_end_date = date(2025, 12, 31)
+        membership = employee.current_membership
+        membership.start_date = date(2025, 1, 1)
+        membership.end_date = date(2025, 12, 31)
         session.commit()
 
         service = TaskDistributionService(session, Role.HEAD_OFFICE.value)

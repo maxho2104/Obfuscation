@@ -43,19 +43,25 @@ def _setup_data(session):
     branch = Branch(
         id="BR1", name="Филиал 1", short_name="Ф-1", territorial_unit_id="MSK"
     )
-    department = Department(name="Отдел 1", branch=branch)
+    session.add_all([unit, branch])
+    session.flush()
+    department = Department(name="Отдел 1", branch_id=branch.id)
+    session.add(department)
+    session.flush()
     employee = Employee(
-        last_name="Иванов", first_name="Иван", department=department
+        last_name="Иванов", first_name="Иван", department_id=department.id
     )
-    group = WorkingGroup(name="Группа 1", department=department)
-    employee.working_group = group
+    group = WorkingGroup(name="Группа 1", department_id=department.id)
+    session.add_all([employee, group])
+    session.flush()
+    employee.assign_working_group(group, start_date=date(2025, 1, 1))
     task = ScientificTask(
         id="T1",
         name="Задача 1",
         type=ScientificTaskType.MAIN.value,
         start_date=date(2026, 1, 10),
     )
-    session.add_all([unit, branch, department, employee, group, task])
+    session.add(task)
     session.commit()
 
 
