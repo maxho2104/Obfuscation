@@ -170,6 +170,28 @@ def parse_line(raw: str, scheme: LayoutScheme, fields: Sequence[FieldSpec]) -> D
     return data
 
 
+def split_fields(raw: str, scheme: LayoutScheme) -> List[str]:
+    """Делит строку на поля схемы без преобразования типов.
+
+    Используется для предпросмотра: даже проблемная строка должна быть
+    показана по столбцам, чтобы оператор видел, что именно он исправляет.
+    """
+    if scheme.mode == "fixed":
+        parts: List[str] = []
+        for item in scheme.fields:
+            if item.start is None:
+                parts.append("")
+                continue
+            begin = item.start - 1
+            end = len(raw) if item.length is None else begin + item.length
+            parts.append(raw[begin:end] if begin < len(raw) else "")
+        return parts
+    parts = raw.split(scheme.delimiter)
+    if len(parts) < len(scheme.fields):
+        parts.extend([""] * (len(scheme.fields) - len(parts)))
+    return parts[: len(scheme.fields)]
+
+
 def parse_rows(lines: Sequence[str], scheme: LayoutScheme) -> ValidationReport:
     errors = scheme.validate()
     if errors:

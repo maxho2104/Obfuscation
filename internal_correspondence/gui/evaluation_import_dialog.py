@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from PyQt5.QtCore import QDate, Qt
-from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtGui import QBrush, QColor, QDesktopServices
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -33,6 +33,7 @@ from PyQt5.QtWidgets import (
 from internal_correspondence.text_import import Importer, ImporterConfig
 from internal_correspondence.text_import.errors import ImporterError
 from internal_correspondence.text_import.models import LayoutScheme, MatchRule
+from internal_correspondence.text_import.parsing import parse_rows, split_fields
 from internal_correspondence.text_import.scheme import load_schemes
 from internal_correspondence.utils.string_resources import STRINGS
 
@@ -84,6 +85,7 @@ class EvaluationImportDialog(QDialog):
         file_row = QHBoxLayout()
         self.file_edit = QLineEdit()
         self.file_edit.setReadOnly(True)
+        self.file_edit.textChanged.connect(lambda _: self._update_nav())
         browse = QPushButton(STRINGS.import_choose_file)
         browse.clicked.connect(self._choose_file)
         file_row.addWidget(self.file_edit, 1)
@@ -108,9 +110,6 @@ class EvaluationImportDialog(QDialog):
         form.addRow(STRINGS.import_scheme, scheme_row)
         self.rule_combo = QComboBox()
         form.addRow(STRINGS.import_rule, self.rule_combo)
-        load = QPushButton(STRINGS.import_load)
-        load.clicked.connect(self._load_selected_file)
-        form.addRow("", load)
         return page
 
     def _build_check_page(self) -> QWidget:
@@ -130,10 +129,11 @@ class EvaluationImportDialog(QDialog):
         top.addWidget(validate)
         layout.addLayout(top)
         layout.addWidget(QLabel(STRINGS.import_preview))
-        self.preview_edit = QPlainTextEdit()
-        self.preview_edit.setReadOnly(True)
-        self.preview_edit.setMaximumHeight(180)
-        layout.addWidget(self.preview_edit)
+        self.preview_table = QTableWidget(0, 0)
+        self.preview_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.preview_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.preview_table.setMaximumHeight(180)
+        layout.addWidget(self.preview_table)
         layout.addWidget(QLabel(STRINGS.import_problems))
         self.problems_table = QTableWidget(0, 3)
         self.problems_table.setHorizontalHeaderLabels(
@@ -228,6 +228,7 @@ class EvaluationImportDialog(QDialog):
             self.rule_combo.addItem(rule.name, rule)
 
     def _on_scheme_changed(self) -> None:
+        self._refresh_preview()
         self._update_nav()
 
     # -- файл ---------------------------------------------------------------
@@ -240,20 +241,20 @@ class EvaluationImportDialog(QDialog):
         )
         if path:
             self.file_edit.setText(path)
-            self._load_selected_file()
+            self._update_nav()
 
-    def _load_selected_file(self) -> None:
+    def _load_selected_file(self) -> bool:
         path = self.file_edit.text().strip()
         if not path:
             self._choose_file()
-            return
+            return False
         try:
             info = self.importer.load_file(path, self.encoding_combo.currentData())
         except Exception as exc:  # noqa: BLE001
             self._show_error(exc)
-            return
+            return False
         self.file_edit.setText(str(info.path))
-        self.preview_edit.setPlainText("\n".join(info.lines[: self.config.preview_lines]))
+        self._refresh_preview()
         matches = self.importer.detect_schemes()
         matched = [item for item in matches if item.matched]
         if matched:
@@ -261,12 +262,42 @@ class EvaluationImportDialog(QDialog):
             if index >= 0:
                 self.scheme_combo.setCurrentIndex(index)
         self._update_nav()
+        return True
 
     def _reload_encoding(self) -> None:
         if self.file_edit.text().strip():
             self._load_selected_file()
 
     # -- проверка -----------------------------------------------------------
+    def _refresh_preview(self) -> None:
+        """Показывает начало файла, разбитое по полям выбранной схемы."""
+        info = self.importer.info
+        scheme = self._current_scheme()
+        self.preview_table.clear()
+        if info is None or scheme is None:
+            self.preview_table.setRowCount(0)
+            self.preview_table.setColumnCount(0)
+            return
+        self.preview_table.setColumnCount(len(scheme.fields))
+        self.preview_table.setHorizontalHeaderLabels([item.name for item in scheme.fields])
+        try:
+            report = parse_rows(info.lines, scheme)
+        except Exception:  # noqa: BLE001 - схема могла не подойти к файлу
+            self.preview_table.setRowCount(0)
+            return
+        rows = report.rows[: self.config.preview_lines]
+        self.preview_table.setRowCount(len(rows))
+        self.preview_table.setVerticalHeaderLabels([str(row.row_no) for row in rows])
+        problem_brush = QBrush(QColor("#F8D7DA"))
+        for index, row in enumerate(rows):
+            parts = split_fields(row.raw, scheme)
+            for column, value in enumerate(parts):
+                item = QTableWidgetItem(value)
+                if row.problem is not None:
+                    item.setBackground(problem_brush)
+                    item.setToolTip(f"{row.problem.code}: {row.problem.message}")
+                self.preview_table.setItem(index, column, item)
+
     def _current_scheme(self) -> Optional[LayoutScheme]:
         data = self.scheme_combo.currentData()
         return data if isinstance(data, LayoutScheme) else None
@@ -293,6 +324,7 @@ class EvaluationImportDialog(QDialog):
             self._show_error(exc)
             return
         self._fill_problems()
+        self._refresh_preview()
         self.match_counts.setText(
             STRINGS.import_counts.format(
                 total=report.total_lines,
@@ -365,6 +397,8 @@ class EvaluationImportDialog(QDialog):
             self._show_error(exc)
             return
         self._fill_problems()
+        self._refresh_preview()
+        self._update_nav()
 
     def _reject_row(self) -> None:
         row_no = self._selected_problem_row()
@@ -383,6 +417,7 @@ class EvaluationImportDialog(QDialog):
         except Exception as exc:  # noqa: BLE001
             self._show_error(exc)
         self._fill_problems()
+        self._refresh_preview()
 
     # -- сопоставление ------------------------------------------------------
     def _preview(self) -> None:
@@ -509,9 +544,7 @@ class EvaluationImportDialog(QDialog):
     def _go_next(self) -> None:
         index = self.stack.currentIndex()
         if index == 0:
-            if self.importer.info is None:
-                self._load_selected_file()
-            if self.importer.info is None:
+            if not self._load_selected_file():
                 return
             self.stack.setCurrentIndex(1)
         elif index == 1:
@@ -536,7 +569,7 @@ class EvaluationImportDialog(QDialog):
         self.back_button.setEnabled(index > 0)
         self.next_button.setVisible(index < 2)
         self.next_button.setEnabled(
-            (index == 0 and self.importer.info is not None)
+            (index == 0 and bool(self.file_edit.text().strip()))
             or (index == 1 and self.importer.report is not None)
         )
 
@@ -570,7 +603,7 @@ class EvaluationImportDialog(QDialog):
         path = Path(urls[0].toLocalFile())
         if path.is_file():
             self.file_edit.setText(str(path))
-            self._load_selected_file()
+            self._update_nav()
             event.acceptProposedAction()
 
 
