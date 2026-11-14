@@ -1,5 +1,6 @@
 """Модель QTableView для отображения данных SQLAlchemy."""
 
+from datetime import date, datetime
 from typing import Any, Callable, Dict, List, Optional, Type
 
 from PyQt5.QtCore import QAbstractTableModel, QModelIndex, Qt
@@ -312,6 +313,10 @@ class SqlAlchemyTableModel(QAbstractTableModel):
             return ""
         if isinstance(value, bool):
             return "Да" if value else "Нет"
+        if isinstance(value, datetime):
+            return value.strftime("%d.%m.%Y %H:%M")
+        if isinstance(value, date):
+            return value.strftime("%d.%m.%Y")
         return str(value)
 
     def _row_text(self, item: Base) -> str:

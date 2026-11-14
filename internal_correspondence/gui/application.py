@@ -112,6 +112,34 @@ def _parse_column_widths(raw: str) -> List[int]:
     return widths
 
 
+def _parse_bool(raw: str, default: bool) -> bool:
+    """Разбирает булево значение из строки настроек."""
+    raw = (raw or "").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return True
+    if raw in ("0", "false", "no"):
+        return False
+    return default
+
+
+def _parse_dock_area(raw: str) -> Optional[Qt.DockWidgetArea]:
+    """Разбирает сохранённую область стыковки дока (Qt.DockWidgetArea)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        area = Qt.DockWidgetArea(int(raw))
+    except (TypeError, ValueError):
+        return None
+    allowed = (
+        Qt.LeftDockWidgetArea,
+        Qt.RightDockWidgetArea,
+        Qt.TopDockWidgetArea,
+        Qt.BottomDockWidgetArea,
+    )
+    return area if area in allowed else None
+
+
 def _format_employees(employees) -> str:
     """Форматирует список причастных сотрудников для ячейки таблицы."""
     return ", ".join(employee.display_name() for employee in employees or [])
@@ -383,6 +411,7 @@ class MainWindow(QMainWindow):
             self,
         )
         self.addDockWidget(Qt.RightDockWidgetArea, self.files_dock)
+        self.files_dock.filesChanged.connect(self._on_files_changed)
         self.tabs.currentChanged.connect(lambda _index: self._sync_files_dock())
         self.materials_tab.currentDocumentChanged.connect(
             lambda document: self._files_document_changed(self.materials_tab, document)
@@ -396,6 +425,16 @@ class MainWindow(QMainWindow):
         """Привязывает док файлов к записи, если её вкладка активна."""
         if tab is self.tabs.currentWidget():
             self.files_dock.set_document(document)
+
+    def _on_files_changed(self, document_id) -> None:
+        """Обновляет подсветку строки после операций док-виджета с файлами.
+
+        Записи Change создаются в сессии док-виджета, поэтому табличная
+        модель перечитывает служебное состояние записи явно.
+        """
+        tab = self.tabs.currentWidget()
+        if isinstance(tab, DocumentListWidget):
+            tab.reload_document_state(document_id)
 
     def _sync_files_dock(self) -> None:
         """Обновляет док файлов при смене вкладки."""
@@ -521,6 +560,15 @@ class MainWindow(QMainWindow):
             theme_group.addAction(action)
             theme_menu.addAction(action)
 
+        # Показ/скрытие дока прикреплённых файлов (восстановление — в _restore_ui_state)
+        view_menu.addSeparator()
+        self.files_dock_action = QAction(STRINGS.menu_attached_files, self)
+        self.files_dock_action.setCheckable(True)
+        self.files_dock_action.setChecked(not self.files_dock.isHidden())
+        self.files_dock_action.toggled.connect(self.files_dock.setVisible)
+        self.files_dock.visibilityChanged.connect(self.files_dock_action.setChecked)
+        view_menu.addAction(self.files_dock_action)
+
     def _add_reference_action(
         self,
         menu: QMenu,
@@ -558,12 +606,12 @@ class MainWindow(QMainWindow):
             )
 
     def closeEvent(self, event) -> None:
-        """Сохраняет геометрию окна и ширины колонок при закрытии."""
+        """Сохраняет геометрию окна, ширины колонок и состояние дока файлов."""
         self._save_ui_state()
         super().closeEvent(event)
 
     def _save_ui_state(self) -> None:
-        """Сохраняет геометрию окна и ширины колонок таблиц в настройки."""
+        """Сохраняет геометрию окна, ширины колонок и состояние дока в настройки."""
         self.settings.window_geometry = (
             self.saveGeometry().toBase64().data().decode("ascii")
         )
@@ -573,14 +621,28 @@ class MainWindow(QMainWindow):
         self.settings.telegram_column_widths = ",".join(
             str(width) for width in self.telegram_tab.column_widths()
         )
+        self._save_files_dock_state()
         self._settings_manager.save(self.settings)
 
+    def _save_files_dock_state(self) -> None:
+        """Сохраняет видимость, область стыковки и геометрию дока файлов."""
+        dock = self.files_dock
+        self.settings.files_dock_visible = "false" if dock.isHidden() else "true"
+        # Плавающий док не привязан к области: запоминаем последнюю закреплённую
+        if not dock.isFloating():
+            self.settings.files_dock_area = str(int(self.dockWidgetArea(dock)))
+        self.settings.files_dock_floating = "true" if dock.isFloating() else "false"
+        self.settings.files_dock_geometry = (
+            dock.saveGeometry().toBase64().data().decode("ascii")
+        )
+
     def _restore_ui_state(self) -> None:
-        """Восстанавливает геометрию окна и ширины колонок из настроек."""
+        """Восстанавливает геометрию окна, колонки и состояние дока из настроек."""
         if self.settings.window_geometry:
             self.restoreGeometry(
                 QByteArray.fromBase64(self.settings.window_geometry.encode("ascii"))
             )
+        self._restore_files_dock_state()
         material_widths = _parse_column_widths(self.settings.material_column_widths)
         if material_widths:
             self.materials_tab.set_column_widths(material_widths)
@@ -588,6 +650,25 @@ class MainWindow(QMainWindow):
         if telegram_widths:
             self.telegram_tab.set_column_widths(telegram_widths)
         self._restore_filters()
+
+    def _restore_files_dock_state(self) -> None:
+        """Восстанавливает область, открепление и геометрию дока файлов."""
+        dock = self.files_dock
+        area = _parse_dock_area(self.settings.files_dock_area)
+        if area is not None:
+            self.addDockWidget(area, dock)
+        if _parse_bool(self.settings.files_dock_floating, False):
+            dock.setFloating(True)
+        if self.settings.files_dock_geometry:
+            dock.restoreGeometry(
+                QByteArray.fromBase64(
+                    self.settings.files_dock_geometry.encode("ascii")
+                )
+            )
+        visible = _parse_bool(self.settings.files_dock_visible, True)
+        dock.setVisible(visible)
+        # visibilityChanged не приходит, пока окно не показано: синхронизируем вручную
+        self.files_dock_action.setChecked(visible)
 
     def _restore_filters(self) -> None:
         """Восстанавливает фильтры таблиц из настроек (два набора раздельно)."""

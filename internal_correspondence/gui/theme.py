@@ -6,12 +6,19 @@
 гарантирует их перекраску. Таблицы и модели читают актуальную тему
 через ``current_theme()`` (цвета чередования строк и выделения
 неэкспортированных изменений).
+
+У тёмной темы дополнительно есть обход дефекта стиля Windows: уголок
+пересечения полос прокрутки (``QAbstractScrollArea::corner``) стиль
+игнорирует и рисует дефолтным светлым фоном. На каждую scroll-area
+ставится виджет-уголок с именем объекта, который красит таблица
+стилей темы (в светлой теме — палитра).
 """
 
 from typing import Dict, Optional
 
+from PyQt5.QtCore import QEvent, QObject
 from PyQt5.QtGui import QColor, QPalette
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QAbstractScrollArea, QApplication, QWidget
 
 # Таблица стилей тёмной темы: принудительная перекраска виджетов,
 # игнорирующих палитру (стиль Windows).
@@ -108,6 +115,7 @@ QScrollBar:vertical {
     background: #1E1E21;
     width: 12px;
     margin: 0;
+    border: none;
 }
 QScrollBar::handle:vertical {
     background: #4A4A4F;
@@ -115,11 +123,16 @@ QScrollBar::handle:vertical {
     border-radius: 6px;
 }
 QScrollBar::handle:vertical:hover { background: #5A5A5F; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+    background: transparent;
+    border: none;
+}
 QScrollBar:horizontal {
     background: #1E1E21;
     height: 12px;
     margin: 0;
+    border: none;
 }
 QScrollBar::handle:horizontal {
     background: #4A4A4F;
@@ -127,9 +140,49 @@ QScrollBar::handle:horizontal {
     border-radius: 6px;
 }
 QScrollBar::handle:horizontal:hover { background: #5A5A5F; }
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0;
+    background: transparent;
+    border: none;
+}
+QAbstractScrollArea::corner {
+    background: #1E1E21;
+}
+QWidget#scroll_area_corner {
+    background-color: #1E1E21;
+}
 QDialog { background-color: #2D2D30; }
 """
+
+# Имя объекта виджета-уголка пересечения полос прокрутки
+CORNER_WIDGET_NAME = "scroll_area_corner"
+
+
+class _ScrollCornerInstaller(QObject):
+    """Ставит виджет-уголок каждой scroll-area (обход дефекта стиля Windows).
+
+    Событие Polish приходит каждому виджету при стилизации/показе, поэтому
+    установка покрывает и виджеты, созданные после применения темы. Уже
+    заданный уголок (setCornerWidget) не затирается.
+    """
+
+    def eventFilter(self, watched: QObject, event) -> bool:
+        if event.type() == QEvent.Polish and isinstance(
+            watched, QAbstractScrollArea
+        ):
+            if watched.cornerWidget() is None:
+                corner = QWidget(watched)
+                corner.setObjectName(CORNER_WIDGET_NAME)
+                watched.setCornerWidget(corner)
+        return False
+
+
+def _ensure_corner_installer(app: QApplication) -> None:
+    """Подключает установщик уголков к приложению (однократно)."""
+    if getattr(app, "_scroll_corner_installer", None) is None:
+        installer = _ScrollCornerInstaller(app)
+        app.installEventFilter(installer)
+        app._scroll_corner_installer = installer
 
 
 class Theme:
@@ -169,6 +222,8 @@ class Theme:
         palette = self._build_palette(app)
         app.setPalette(palette)
         app.setStyleSheet(self.stylesheet)
+        if self.stylesheet:
+            _ensure_corner_installer(app)
 
     def _build_palette(self, app: QApplication) -> QPalette:
         """Формирует палитру на основе стандартной стиля."""

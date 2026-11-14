@@ -245,6 +245,25 @@ class DocumentListWidget(QWidget):
         self._update_pagination()
         self._update_filter_button()
 
+    def reload_document_state(self, document_id) -> None:
+        """Перечитывает служебное состояние записи (подсветка неэкспортированных изменений).
+
+        Операции с файлами выполняются док-виджетом в другой сессии, поэтому
+        кэш модели хранит устаревшее change_id до явного перечитывания.
+        Полный refresh не нужен: меняется только фон строки.
+        """
+        instance = self.session.get(self.model_class, document_id)
+        if instance is None:
+            return
+        self.session.expire(instance)
+        row = self.table_model.row_of(document_id)
+        if row is not None:
+            self.table_model.dataChanged.emit(
+                self.table_model.index(row, 0),
+                self.table_model.index(row, len(self.columns) - 1),
+                [Qt.BackgroundRole],
+            )
+
     def column_widths(self) -> List[int]:
         """Возвращает текущие ширины колонок таблицы."""
         return [self.table.columnWidth(i) for i in range(len(self.columns))]

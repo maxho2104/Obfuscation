@@ -139,6 +139,27 @@ def _linked_change(session: Session, instance: Base) -> Optional[Change]:
     )
 
 
+def _created_fields(instance: Base) -> Set[str]:
+    """Возвращает поля новой записи для Change: заполненные, обязательные и FK.
+
+    Внешние ключи и значения по умолчанию могут быть назначены в ходе
+    flush (синхронизация связей «родитель → потомок»), поэтому на момент
+    before_flush они ещё пусты, но обязаны получить значение к моменту
+    экспорта — иначе запись невосстановима на приёмной стороне.
+    """
+    fields: Set[str] = set()
+    for column in instance.__mapper__.columns:
+        if column.key in _SERVICE_FIELDS:
+            continue
+        if (
+            getattr(instance, column.key, None) is not None
+            or not column.nullable
+            or column.foreign_keys
+        ):
+            fields.add(column.key)
+    return fields
+
+
 def _mark_created(session: Session, instance: Base) -> None:
     """Создаёт или перезаписывает запись Change для нового объекта.
 
@@ -151,17 +172,14 @@ def _mark_created(session: Session, instance: Base) -> None:
     if not entity_pk:
         return
 
-    columns = {
-        name
-        for name in set(instance.__mapper__.columns.keys()) - _SERVICE_FIELDS
-        if getattr(instance, name, None) is not None
-    }
-    relationships = {
-        relationship.key
-        for relationship in _canonical_relationships(instance.__mapper__)
-        if getattr(instance, relationship.key, None)
-    }
-    fields_set = (columns | relationships) - _SERVICE_FIELDS
+    fields_set = (
+        _created_fields(instance)
+        | {
+            relationship.key
+            for relationship in _canonical_relationships(instance.__mapper__)
+            if getattr(instance, relationship.key, None)
+        }
+    ) - _SERVICE_FIELDS
     if not fields_set:
         return
 

@@ -50,6 +50,7 @@ class AppStrings:
     tab_statistics: str = "Статистика"
     menu_view: str = "Вид"
     menu_theme: str = "Оформление"
+    menu_attached_files: str = "Прикреплённые файлы"
     action_export: str = "Экспорт..."
     action_import: str = "Импорт..."
     action_import_primary: str = "Загрузка первичных данных..."
@@ -239,6 +240,9 @@ class AppStrings:
     msg_value_must_be_int: str = "ожидается целое число"
     msg_value_must_be_float: str = "ожидается число"
     msg_number_date_together: str = "номер и дата должны быть заполнены вместе"
+    label_outgoing_number_date: str = "Номер и дата исходящего документа"
+    label_incoming_number_date: str = "Номер и дата входящего документа"
+    label_permit_number_date: str = "Номер и дата разрешительного документа"
     msg_duplicate_fields: str = "Запись с таким сочетанием полей ({fields}) уже существует."
     msg_record_hidden_by_filters: str = (
         "Запись сохранена, но не отображается в таблице: "
