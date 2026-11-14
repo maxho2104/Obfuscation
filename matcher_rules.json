@@ -21,7 +21,7 @@
       "name": "branch_outgoing_telegram",
       "description": "Телеграмма: филиал + исходящий номер + год/месяц даты.",
       "entity": "telegram",
-      "composite_keys": ["branch_part_1", "branch_part_2", "branch_part_3"],
+      "composite_keys": ["branch_part_1", "branch_part_2"],
       "conditions": ["year_month_equal"],
       "lookup": {
         "table": "telegrams",

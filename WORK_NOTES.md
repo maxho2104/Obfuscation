@@ -826,3 +826,34 @@
 
 ### Проверка
 - `pytest tests`: **260 passed**.
+
+---
+
+## 2026-11-14 — Проверка импорта по реальному файлу и очистка устаревших колонок
+
+### Изменения
+- **`internal_correspondence/text_import/matcher.py`**: `_parse_year_month()` принимает
+  и `ГГГГММ`, и `ММГГГГ` (в файле заказчика период записан как `112025`).
+- **`alembic/versions/c8f1a3d5e7b9_cleanup_legacy_service_columns.py`** (новая миграция):
+  идемпотентно удаляет оставшиеся от старых баз `row_version` во всех таблицах и
+  `changes.created_at`/`updated_at`. Downgrade возвращает колонки с `DEFAULT 1`
+  (прежние значения не восстанавливаются — служебные).
+- **`scripts_dev/test_migration_legacy_columns.py`** (новый): имитирует старую схему,
+  проверяет upgrade/downgrade/повторный upgrade.
+- **`tests/test_text_import.py`**: параметризованный тест на оба порядка года-месяца.
+- **`schemes/evaluation_telegram_fixed.json`**, **`matcher_rules.json`**: схема и правило
+  для файла заказчика (филиал `BR` + номер, период `ММГГГГ`).
+- **`README.md`**: оба формата года-месяца и порядок обновления старых баз.
+
+### Проверка
+- `pytest tests`: **268 passed**.
+- `scripts_dev/test_migration_legacy_columns.py`: OK.
+- Реальная БД `D:/Projects/Obfuscation/123.db` обновлена до `c8f1a3d5e7b9`
+  (резервная копия `123.db.bak-legacy-cleanup-2026-11-14`).
+- Импорт файла `C:/Users/User/Documents/тест — копия.txt` в реальную БД:
+  `imported=2, matched=2`; созданы оценки `П` (2) для `ТЛГ-00008` от 21.12.2025 и
+  `И` (1) для `ТЛГ-00010` от 10.11.2026, список оценок `1` от 14.11.2026;
+  файл скопирован в `<хранилище>/Импорт`.
+
+### Отложено
+- Отдельный просмотрщик журнала импорта.

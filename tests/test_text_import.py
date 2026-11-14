@@ -20,6 +20,7 @@ from internal_correspondence.orm.models import (
     TerritorialUnit,
 )
 from internal_correspondence.text_import import Importer, ImporterConfig
+from internal_correspondence.text_import.matcher import _parse_year_month
 from internal_correspondence.text_import.models import FieldSpec, LayoutScheme
 from internal_correspondence.text_import.scheme import detect_schemes
 
@@ -215,3 +216,21 @@ def test_delimited_scheme_detection_and_cp1251(tmp_path: Path) -> None:
     info = importer.load_file(source)
     assert info.encoding.lower() in {"cp1251", "windows-1251"}
     importer.close()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("202603", (2026, 3)),
+        ("032026", (2026, 3)),
+        ("112025", (2025, 11)),
+        ("202511", (2025, 11)),
+        ("132025", None),
+        ("202513", None),
+        ("2026", None),
+        ("abcdef", None),
+    ],
+)
+def test_year_month_accepts_year_first_and_month_first(value: str, expected) -> None:
+    """Период в файле может быть как ГГГГММ, так и ММГГГГ."""
+    assert _parse_year_month(value) == expected

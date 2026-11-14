@@ -110,6 +110,19 @@ def _row_branch_code(rule: MatchRule, row: ParsedRow) -> str:
     return "-".join(parts)
 
 
+def _parse_year_month(value: str) -> Optional[Tuple[int, int]]:
+    """Разбирает ГГГГММ и ММГГГГ, возвращая (год, месяц)."""
+    if len(value) != 6 or not value.isdigit():
+        return None
+    year, month = int(value[:4]), int(value[4:])
+    if 1 <= month <= 12:
+        return year, month
+    month, year = int(value[:2]), int(value[2:])
+    if 1 <= month <= 12:
+        return year, month
+    return None
+
+
 class Matcher:
     """Сопоставляет разобранные строки с существующими документами."""
 
@@ -181,15 +194,12 @@ class Matcher:
                 base.reason = "key_empty"
                 results.append(base)
                 continue
-            if len(year_month) != 6 or not year_month.isdigit():
+            parsed_year_month = _parse_year_month(year_month)
+            if parsed_year_month is None:
                 base.reason = "year_month_invalid"
                 results.append(base)
                 continue
-            year, month = int(year_month[:4]), int(year_month[4:])
-            if not 1 <= month <= 12:
-                base.reason = "year_month_invalid"
-                results.append(base)
-                continue
+            year, month = parsed_year_month
             found = [
                 item
                 for item in candidates.get((branch_code, outgoing_no), [])
