@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "Эффект",
+  "description": "Фиксированная ширина 101 символ. Филиал, исходящий номер, отчётный месяц, вид оценки и эффект.",
+  "mode": "fixed",
+  "header_mode": "none",
+  "fields": [
+    {"name": "branch_part_1", "type": "string", "start": 1, "length": 2, "required": true},
+    {"name": "branch_part_2", "type": "string", "start": 4, "length": 1, "required": true},
+    {"name": "branch_part_3", "type": "string", "start": 6, "length": 2, "required": true},
+    {"name": "material_type", "type": "string", "start": 15, "length": 1},
+    {"name": "outgoing_no", "type": "string", "start": 17, "length": 13, "required": true},
+    {"name": "task_code", "type": "string", "start": 48, "length": 12},
+    {"name": "value", "type": "string", "start": 61, "length": 3},
+    {"name": "effect", "type": "number", "start": 65, "length": 9},
+    {"name": "evaluation_date", "type": "date", "start": 75, "length": 10, "date_format": "DD.MM.YYYY"},
+    {"name": "year_month", "type": "string", "start": 86, "length": 6, "required": true},
+    {"name": "their_no", "type": "string", "start": 93, "length": 9}
+  ]
+}

@@ -193,19 +193,29 @@ class TaskDistributionService:
         self._region_id = None
 
     @staticmethod
-    def _worked_in_group_during(
-        employee: Employee, period: Optional[FinancialPeriod]
-    ) -> bool:
-        """Проверяет membership сотрудника в группе на выбранный период."""
-        if period is None:
-            return employee.worked_in_workgroup_on(date.today())
-        start = employee.workgroup_start_date
-        end = employee.workgroup_end_date
-        if start is not None and start > period.end:
+    def _membership_overlaps(membership, period: FinancialPeriod) -> bool:
+        """Проверяет пересечение участия в группе с финансовым периодом."""
+        if membership.start_date is not None and membership.start_date > period.end:
             return False
-        if end is not None and end < period.start:
+        if membership.end_date is not None and membership.end_date < period.start:
             return False
         return True
+
+    def _groups_during(
+        self, employee: Employee, period: Optional[FinancialPeriod]
+    ) -> List[str]:
+        """Возвращает группы, в которых сотрудник состоял в выбранном периоде."""
+        if period is None:
+            current = employee.current_membership
+            return [str(current.working_group_id)] if current is not None else []
+        result: List[str] = []
+        for membership in employee.workgroup_memberships:
+            group_id = str(membership.working_group_id)
+            if group_id not in result and self._membership_overlaps(
+                membership, period
+            ):
+                result.append(group_id)
+        return result
 
     def _ensure_tree(self) -> None:
         if self._tree is not None:
@@ -271,12 +281,8 @@ class TaskDistributionService:
             employees_by_department.setdefault(employee.department_id, []).append(
                 employee
             )
-            if employee.working_group_id and self._worked_in_group_during(
-                employee, self._tree_period
-            ):
-                employees_by_group.setdefault(
-                    employee.working_group_id, []
-                ).append(employee)
+            for group_id in self._groups_during(employee, self._tree_period):
+                employees_by_group.setdefault(group_id, []).append(employee)
 
         def make_node(
             parent: Optional[DistributionNode],
@@ -325,7 +331,7 @@ class TaskDistributionService:
                     group.name,
                     active=bool(group.active),
                 )
-                for employee in employees_by_group.get(group.id, []):
+                for employee in employees_by_group.get(str(group.id), []):
                     make_node(
                         group_node,
                         NODE_EMPLOYEE,

@@ -772,3 +772,249 @@
 
 ### Проверка
 - `pytest`: **213/213 passed**.
+
+---
+
+## 2026-11-14 — Модуль «Импорт оценок из текстового файла»
+
+### Изменения
+- **`internal_correspondence/text_import/`** (новый пакет): конфигурация, ошибки, модели схем/правил/результатов, чтение файла с автоопределением кодировки, разбор fixed/delimited, загрузка и автоопределение схем, декларативный матчер, репозиторий журнала/staging-строк, копирование файла в хранилище и оркестратор `Importer`.
+- **`internal_correspondence/services/evaluation_import_writer.py`** (новый): поиск/создание `EvaluationList` по номеру и дате, создание/обновление `Evaluation`, привязка к научному материалу или телеграмме.
+- **`internal_correspondence/gui/evaluation_import_dialog.py`** (новый): мастер из четырёх страниц (файл и документ, проверка строк, совпадения, результат), drag&drop, редактор схем; просмотр правил позже убран из меню.
+- **`internal_correspondence/gui/application.py`**: пункт меню «Данные» → «Импорт оценок из файла...» (только головной офис), передача `app_dir` в `MainWindow`.
+- **`internal_correspondence/utils/string_resources.py`**: строки модуля; секция `strings` пакета регенерирована (324 ключа).
+- **`internal_correspondence/core/domain_pack.py`**, **`domain_pack.default.json`**: директория `import` («Импорт»).
+- **`alembic/versions/a7d4e2f6b9c1_import_tables.py`** (новый): `import_log`, `import_rows`, представление `import_matches`, индексы; downgrade удаляет объекты.
+- **`schemes/evaluation_fixed.json`**, **`schemes/evaluation_delimited.json`**, **`matcher_rules.json`**: примеры схем и правил.
+- **`tests/test_text_import.py`**, **`tests/test_evaluation_import_dialog.py`**, **`scripts_dev/test_migration_import_tables.py`** (новые).
+- **`requirements.txt`**, **`pyproject.toml`**: зависимость `charset-normalizer`.
+- **`README.md`**: описание сущностей журнала/строк импорта, порядка работы и особенностей.
+
+### Проверка
+- `pytest tests`: **259 passed**; `tests/test_text_import.py` — 4 passed, `tests/test_evaluation_import_dialog.py` — 2 passed.
+- `scripts_dev/test_migration_import_tables.py`: upgrade/downgrade/повторный upgrade — OK.
+- `compileall` и импорт GUI — OK.
+- Рабочая БД `D:/Projects/Obfuscation/123.db` обновлена до `a7d4e2f6b9c1` (резервная копия `123.db.bak-import-2026-11-14`); проверены `import_log`, `import_rows` и представление `import_matches`.
+- Дымовая проверка `MainWindow` (роль головного офиса): 4 вкладки, пункт «Импорт оценок из файла...» присутствует.
+
+### Отложено
+- Автоматическая проверка кодировки на реальных файлах заказчика (нужны образцы).
+- Открытие журнала импорта из диалога показывает номер записи; отдельный просмотрщик журнала не реализован.
+- Импорт выполняется синхронно (по требованию), без фонового потока и прогрессбара.
+
+---
+
+## 2026-11-14 — Предпросмотр импорта оценок по столбцам схемы
+
+### Изменения
+- **`internal_correspondence/gui/evaluation_import_dialog.py`**:
+  - поле предпросмотра заменено с `QPlainTextEdit` на `QTableWidget`: строки файла
+    разбиваются по полям выбранной схемы, заголовки столбцов — имена полей схемы,
+    номера строк — в вертикальном заголовке; проблемные строки подсвечены, причина
+    показывается в подсказке;
+  - предпросмотр обновляется при загрузке файла, смене схемы, проверке и после
+    исправления/отклонения строки;
+  - удалена кнопка «Загрузить» на первом шаге; загрузка файла выполняется кнопкой
+    «Далее» (выбор файла и drag&drop только заполняют путь);
+  - кнопка «Далее» активируется сразу после выбора пути к файлу.
+- **`internal_correspondence/text_import/parsing.py`**: добавлена `split_fields()` —
+  разбиение строки по полям схемы без преобразования типов (для предпросмотра
+  проблемных строк).
+- **`tests/test_evaluation_import_dialog.py`**: тест предпросмотра — заголовки из схемы,
+  подсветка/исправление проблемной строки, отсутствие кнопки «Загрузить».
+- **`README.md`**: уточнён порядок работы с предпросмотром.
+
+### Проверка
+- `pytest tests`: **260 passed**.
+
+---
+
+## 2026-11-14 — Проверка импорта по реальному файлу и очистка устаревших колонок
+
+### Изменения
+- **`internal_correspondence/text_import/matcher.py`**: `_parse_year_month()` принимает
+  и `ГГГГММ`, и `ММГГГГ` (в файле заказчика период записан как `112025`).
+- **`alembic/versions/c8f1a3d5e7b9_cleanup_legacy_service_columns.py`** (новая миграция):
+  идемпотентно удаляет оставшиеся от старых баз `row_version` во всех таблицах и
+  `changes.created_at`/`updated_at`. Downgrade возвращает колонки с `DEFAULT 1`
+  (прежние значения не восстанавливаются — служебные).
+- **`scripts_dev/test_migration_legacy_columns.py`** (новый): имитирует старую схему,
+  проверяет upgrade/downgrade/повторный upgrade.
+- **`tests/test_text_import.py`**: параметризованный тест на оба порядка года-месяца.
+- **`schemes/evaluation_telegram_fixed.json`**, **`matcher_rules.json`**: схема и правило
+  для файла заказчика (филиал `BR` + номер, период `ММГГГГ`).
+- **`README.md`**: оба формата года-месяца и порядок обновления старых баз.
+
+### Проверка
+- `pytest tests`: **268 passed**.
+- `scripts_dev/test_migration_legacy_columns.py`: OK.
+- Реальная БД `D:/Projects/Obfuscation/123.db` обновлена до `c8f1a3d5e7b9`
+  (резервная копия `123.db.bak-legacy-cleanup-2026-11-14`).
+- Импорт файла `C:/Users/User/Documents/тест — копия.txt` в реальную БД:
+  `imported=2, matched=2`; созданы оценки `П` (2) для `ТЛГ-00008` от 21.12.2025 и
+  `И` (1) для `ТЛГ-00010` от 10.11.2026, список оценок `1` от 14.11.2026;
+  файл скопирован в `<хранилище>/Импорт`.
+
+### Отложено
+- Отдельный просмотрщик журнала импорта.
+
+---
+
+## 2026-11-14 — Импорт оценок: автоопределение схемы, «Эффект» и статистика
+
+### Изменения
+- **`internal_correspondence/text_import/models.py`**: `LayoutScheme.record_length` и
+  `line_length`; тип поля `number`; `MatchResult.effect`; в `ImportCounts` добавлены
+  `evaluations_received`, `by_value`, `documents_reupdated`, `materials_reupdated`,
+  `telegrams_reupdated`.
+- **`internal_correspondence/text_import/scheme.py`**: `detect_scheme_by_length()` —
+  выбор схемы по длине строки (139/101) и разбор первых строк.
+- **`internal_correspondence/text_import/matcher.py`**: `match_auto()` ищет документ
+  одновременно в научных материалах и телеграммах по филиалу, исходящему номеру и
+  месяцу исходящей даты; добавлены `_auto_branch_code()` и `_auto_effect()`.
+- **`internal_correspondence/text_import/service.py`**: автоопределение схемы при загрузке,
+  импорт без выбора правила, статистика переоценки, имя копии файла с номером и датой
+  документа.
+- **`internal_correspondence/orm/models.py`**, **`alembic/versions/d2f4a6c8e0b1_evaluation_effect.py`**:
+  поле `Evaluation.effect` (`Numeric(15,2)`); миграция применена к рабочей БД.
+- **`internal_correspondence/services/evaluation_import_writer.py`**: сохранение эффекта
+  в оценке и в `ScientificMaterial.cost`; подсчёт переоценённых документов.
+- **`internal_correspondence/gui/evaluation_import_dialog.py`**: шаг 1 без выбора схемы и
+  правила, кнопки «Выбрать файл»/«Очистить»/«Создать новую схему»; предпросмотр по
+  столбцам; на шаге совпадений — «Есть оценка»/«Нет оценки» и русские причины; итоговая
+  статистика.
+- **`schemes/evaluation_data_139.json`**, **`schemes/effect_101.json`**: схемы форматов
+  «Оценочные данные» и «Эффект».
+- **`tests/test_text_import.py`**, **`tests/test_evaluation_import_dialog.py`**: тесты
+  автоопределения схемы, неоднозначного совпадения, эффекта и обновления стоимости,
+  автоопределения в диалоге.
+- **`README.md`**: новый порядок импорта, описание поля «Эффект» и статистики.
+
+### Проверка
+- `pytest tests`: **273 passed**.
+- `scripts_dev/test_migration_import_tables.py`: upgrade/downgrade/повторный upgrade OK,
+  колонка `evaluations.effect` присутствует.
+- `scripts_dev/update_pack_strings.py`: 351 ключ; `compileall` и импорт GUI — OK.
+- Рабочая БД `D:/Projects/Obfuscation/123.db` обновлена до `d2f4a6c8e0b1`
+  (резервная копия `123.db.bak-effect-2026-11-14`).
+
+### Отложено
+- Поле «Оценка_количество» сохраняется в staging, но в бизнес-логике пока не используется.
+- Отдельный просмотрщик журнала импорта.
+
+---
+
+## 2026-11-14 — Правки окна импорта оценок
+
+### Изменения
+- **`internal_correspondence/gui/evaluation_import_dialog.py`**:
+  - при выборе файла через диалог или drag&drop файл сразу загружается, поэтому подпись
+    «Схема:» обновляется без дополнительного нажатия «Далее»;
+  - окно при открытии занимает 40% ширины и 40% высоты доступной области экрана
+    и центрируется (`_apply_initial_geometry()`);
+  - в таблице совпадений столбец называется «Имеется оценка»; для существующей оценки
+    показывается её код (`П`, `И`, `Б`, `В`), для новой — «Нет оценки».
+- **`internal_correspondence/text_import/models.py`**, **`service.py`**: `MatchResult.existing_value`
+  заполняется кодом существующей оценки через `enum_codes("evaluation_value")`.
+- **`internal_correspondence/gui/application.py`**: из меню «Данные» удалён пункт
+  «Правила сопоставления» и метод `_view_import_rules()`; просмотр правил больше не
+  требуется, так как сопоставление автоматическое.
+- **`tests/test_evaluation_import_dialog.py`**: тесты обновления подписи схемы при выборе
+  файла, геометрии окна (40% и центр) и отображения кода существующей оценки.
+- **`README.md`**: уточнён столбец «Имеется оценка» и код оценки.
+
+### Проверка
+- `tests/test_evaluation_import_dialog.py`: 7 passed.
+- Полный `pytest tests`: 276 passed.
+- `compileall` и импорт GUI — OK.
+- `scripts_dev/update_pack_strings.py`: 351 ключ (значение `import_evaluation_presence` изменено).
+
+### Отложено
+- Просмотр правил сопоставления из интерфейса удалён; файл `matcher_rules.json`
+  остаётся для обратной совместимости и тестов.
+
+---
+
+## 2026-11-14 — Слияние с alex_develop: история участия в рабочих группах
+
+### Изменения
+- Ветка `alex_develop` (7708a19) слита с локальной `main` (3eb3282) в отдельном
+  worktree `D:\indus\obfs-merge-check`; конфликты только в `WORK_NOTES.md` и
+  `internal_correspondence/services/reference_service.py` (объединены импорты).
+- **`internal_correspondence/orm/models.py`:** `Employee.current_membership`
+  учитывает плановое окончание — участие действует, пока `start_date <= today`
+  и `end_date` пуст или не раньше сегодня. `assign_working_group()` закрывает
+  текущее участие датой перевода и запрещает начало нового раньше начала текущего.
+- **`internal_correspondence/services/reference_service.py`:** `EmployeeService._validate_period()`
+  не принимает окончание раньше начала (исключение из группы, изменение той же
+  группы, открытие нового участия).
+- **`internal_correspondence/reports/statistics_service.py`:** подкатегория
+  «Рабочие группы → Сотрудники» относит сотрудника к группе, действовавшей на дату
+  документа (`Employee.workgroup_on(document_date)`), а не к текущей.
+- **`internal_correspondence/services/task_distribution_service.py`:** при выборе
+  финансового периода учитываются все участия, пересекающиеся с периодом
+  (`_groups_during`), а не только текущее.
+- **`alembic/versions/c7e2a1b9d3f5_workgroup_memberships.py`:** перецеплена на
+  `d2f4a6c8e0b1` (единственная голова); `scripts_dev/test_migration_legacy_columns.py`
+  допускает её как head.
+- **`tests/test_statistics_service.py`:** историческая группа на дату документа.
+- **`tests/test_participants.py`:** плановое окончание и валидация дат.
+- **`tests/test_task_distribution.py`**, **`tests/test_task_widget.py`:** переведены
+  на `assign_working_group()`.
+
+### Проверка
+- `pytest tests`: **280 passed**.
+- Миграционные скрипты участий, legacy-колонок, импорта и задач — OK.
+- `alembic heads` — `c7e2a1b9d3f5`.
+- Рабочая БД `D:/Projects/Obfuscation/123.db` обновлена до `c7e2a1b9d3f5`
+  (резервная копия `123.db.bak-memberships-2026-11-14`); перенесено 28 участий
+  для 51 сотрудника, старые колонки `working_group_id`/дат удалены.
+- Дымовой запуск `MainWindow` (offscreen): 4 вкладки, дерево задач строится,
+  корень «Организация» с тремя регионами; ошибок в логе нет.
+
+### Отложено
+- README обновлён по участию и исторической статистике.
+
+---
+
+## 2026-11-14 — Зависимость Pillow
+
+### Изменения
+- `requirements.txt`, `pyproject.toml`: добавлен `Pillow>=10.0` — без него
+  библиотеки, читающие изображения (например, python-docx/openpyxl), падают с
+  `ImportError: You must install Pillow to fetch image objects`.
+
+### Проверка
+- В `.venv` установлен Pillow 13.0.0; `python -c "import PIL"` — OK.
+- `pip check` — No broken requirements found.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-14 — Документация схемы базы данных
+
+### Изменения
+- `scripts_dev/schema_docs/model.py`: интроспекция `Base.metadata` и Core-таблиц
+  импорта (40 таблиц), русские метки, домены, описания сущностей и полей,
+  перечень 17 ассоциативных таблиц.
+- `scripts_dev/schema_docs/diagrams.py`: пять диаграмм на Pillow без Graphviz —
+  обзор доменов, справочники/ОШС, документы, оценки/импорт, задачи/распределение.
+- `scripts_dev/schema_docs/docx_builder.py`: сборка DOCX (титул, содержание,
+  разделы по доменам, таблицы полей, связи, индексы, ассоциативные таблицы,
+  сводка внешних ключей, служебный раздел, порядок сопровождения); альбомные
+  страницы для диаграмм, повтор заголовков таблиц, запрет разрыва строк.
+- `scripts_dev/dump_schema.py`: CLI генерации `docs/database.docx` и диаграмм.
+
+### Проверка
+- Собрано 40 таблиц, 26 таблиц DOCX (23 бизнес-таблицы + 2 импорта + ассоциативные
+  и сводная), 5 диаграмм, 25 страниц.
+- PDF-версия проверена постранично: титул, содержание, обзор, справочники, ОШС,
+  документы, задачи, оценки, импорт, обмен, служебные объекты, ассоциативные
+  таблицы, внешние ключи, сопровождение.
+- `python -m compileall scripts_dev` — OK.
+
+### Отложено
+- Описания части полей оставлены «—»: они берутся из метаданных и дополняются
+  вручную в `scripts_dev/schema_docs/model.py` по мере необходимости.

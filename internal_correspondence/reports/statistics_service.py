@@ -57,13 +57,17 @@ SUBCRITERIA = {
 }
 
 
-def _parent_links(group_criterion: str, subcriterion: str, member: Any) -> List[Any]:
+def _parent_links(
+    group_criterion: str, subcriterion: str, member: Any, document_date: date
+) -> List[Any]:
     """Возвращает ключи групп, которым принадлежит элемент подкатегории."""
     if subcriterion == CRITERION_EMPLOYEE:
         if group_criterion == CRITERION_DEPARTMENT:
             return [member.department_id]
         if group_criterion == CRITERION_WORKGROUP:
-            return [member.working_group_id] if member.working_group_id else []
+            # Группа, в которой сотрудник состоял на дату документа
+            workgroup = member.workgroup_on(document_date)
+            return [workgroup.id] if workgroup is not None else []
         if group_criterion == CRITERION_BRANCH:
             department = member.department
             return [department.branch_id] if department is not None else []
@@ -431,7 +435,7 @@ class StatisticsService:
                 parents = [
                     key
                     for key in _parent_links(
-                        query.criterion, query.subcriterion, member
+                        query.criterion, query.subcriterion, member, document_date
                     )
                     if key in group_keys
                 ]

@@ -31,6 +31,7 @@ from internal_correspondence.orm.models import (
     Source,
     Telegram,
     TerritorialUnit,
+    WorkGroupMembership,
     WorkingGroup,
 )
 from internal_correspondence.reports.statistics_service import (
@@ -85,7 +86,7 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
         last_name="Иванов",
         first_name="Иван",
         department_id=department.id,
-        working_group_id=workgroup.id,
+        workgroup_memberships=[WorkGroupMembership(working_group=workgroup)],
     )
     employee2 = Employee(
         id=None,
@@ -506,6 +507,69 @@ def test_grouped_by_workgroup_and_employees(
     assert result.rows[0].is_group
     assert result.rows[0].total == 2
     assert result.rows[1].total == 2
+
+
+def test_grouped_by_workgroup_uses_group_on_document_date(
+    db_manager: DatabaseManager,
+) -> None:
+    """Исторический документ относится к группе, где сотрудник был на его дату."""
+    session = db_manager.get_session()
+    try:
+        session.add(TerritorialUnit(id="MSK", name="Москва"))
+        session.add(
+            Branch(id="F1", name="Филиал", short_name="Ф", territorial_unit_id="MSK")
+        )
+        department = Department(name="Отдел", branch_id="F1")
+        session.add(department)
+        session.flush()
+
+        group_one = WorkingGroup(name="Группа 1", department_id=department.id)
+        group_two = WorkingGroup(name="Группа 2", department_id=department.id)
+        employee = Employee(
+            last_name="Иванов", first_name="Иван", department_id=department.id
+        )
+        session.add_all([group_one, group_two, employee])
+        session.flush()
+
+        employee.assign_working_group(group_one, start_date=date(2026, 1, 1))
+        employee.current_membership.end_date = date(2026, 6, 30)
+        employee.assign_working_group(group_two, start_date=date(2026, 7, 1))
+
+        session.add_all(
+            [
+                ScientificMaterial(
+                    type=MaterialType.MESSAGE,
+                    outgoing_number="M-1",
+                    outgoing_date=date(2026, 3, 10),
+                    name="Материал 1",
+                    branch_id="F1",
+                    employees=[employee],
+                ),
+                ScientificMaterial(
+                    type=MaterialType.MESSAGE,
+                    outgoing_number="M-2",
+                    outgoing_date=date(2026, 9, 10),
+                    name="Материал 2",
+                    branch_id="F1",
+                    employees=[employee],
+                ),
+            ]
+        )
+        session.commit()
+
+        result = StatisticsService(session).calculate(
+            _query(criterion=CRITERION_WORKGROUP, subcriterion=CRITERION_EMPLOYEE)
+        )
+
+        assert [row.label for row in result.rows] == [
+            "Группа 1",
+            "Иванов И.",
+            "Группа 2",
+            "Иванов И.",
+        ]
+        assert [row.total for row in result.rows] == [1, 1, 1, 1]
+    finally:
+        session.close()
 
 
 def test_evaluation_summary_average(statistics_setup, db_manager: DatabaseManager) -> None:

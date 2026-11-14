@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "Оценочные данные",
+  "description": "Фиксированная ширина 139 символов. Филиал, исходящий номер, отчётный месяц, вид и дата оценки.",
+  "mode": "fixed",
+  "header_mode": "none",
+  "fields": [
+    {"name": "branch_part_1", "type": "string", "start": 1, "length": 2, "required": true},
+    {"name": "branch_part_2", "type": "string", "start": 4, "length": 1, "required": true},
+    {"name": "branch_part_3", "type": "string", "start": 6, "length": 2, "required": true},
+    {"name": "source_type", "type": "string", "start": 17, "length": 1},
+    {"name": "material_type", "type": "string", "start": 19, "length": 1},
+    {"name": "outgoing_no", "type": "string", "start": 21, "length": 13, "required": true},
+    {"name": "task_code", "type": "string", "start": 69, "length": 12},
+    {"name": "country", "type": "string", "start": 82, "length": 3},
+    {"name": "value", "type": "string", "start": 86, "length": 3},
+    {"name": "quantity", "type": "integer", "start": 90, "length": 1},
+    {"name": "evaluation_date", "type": "date", "start": 97, "length": 10, "date_format": "DD.MM.YYYY"},
+    {"name": "year_month", "type": "string", "start": 108, "length": 6, "required": true},
+    {"name": "group", "type": "string", "start": 115, "length": 1},
+    {"name": "collection", "type": "string", "start": 117, "length": 3},
+    {"name": "costs", "type": "number", "start": 131, "length": 9}
+  ]
+}
