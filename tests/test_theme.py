@@ -70,6 +70,41 @@ def test_both_themes_load_external_stylesheet(qt_app: QApplication) -> None:
     assert light_stylesheet != dark_stylesheet
 
 
+def test_dark_theme_styles_scroll_area_corner() -> None:
+    """Тёмная тема красит уголок пересечения полос прокрутки таблицы.
+
+    Без правила QAbstractScrollArea::corner стиль Windows рисует его
+    дефолтным светлым фоном — белый прямоугольник в тёмном интерфейсе.
+    Стиль Windows игнорирует и это правило, поэтому дополнительно есть
+    виджет-уголок с именем объекта (правило QWidget#scroll_area_corner)
+    и установщик таких виджетов (см. test_dark_theme_installs_corner_widget).
+    """
+    stylesheet = THEMES["dark"].stylesheet
+    assert "QAbstractScrollArea::corner" in stylesheet
+    corner_rule = stylesheet.split("QAbstractScrollArea::corner", 1)[1].split("}", 1)[0]
+    assert "#1E1E21" in corner_rule
+    named_rule = stylesheet.split("#scroll_area_corner", 1)[1].split("}", 1)[0]
+    assert "#1E1E21" in named_rule
+
+
+def test_dark_theme_installs_corner_widget(qt_app: QApplication) -> None:
+    """Тёмная тема ставит виджет-уголок каждой scroll-area (обход дефекта стиля Windows)."""
+    from PyQt5.QtWidgets import QTableView
+
+    from internal_correspondence.gui.theme import CORNER_WIDGET_NAME
+
+    apply_theme(qt_app, "dark")
+    view = QTableView()
+    view.show()
+    qt_app.processEvents()
+    corner = view.cornerWidget()
+    assert corner is not None
+    assert corner.objectName() == CORNER_WIDGET_NAME
+    view.close()
+
+    apply_theme(qt_app, "light")
+
+
 def test_theme_setting_roundtrip(tmp_path) -> None:
     """Выбор темы сохраняется в INI и читается обратно."""
     manager = SettingsManager(tmp_path)

@@ -137,6 +137,7 @@ DEFAULT_DIRECTORIES: Dict[str, str] = {
     "files": "Файлы",
     "templates": "Шаблоны",
     "export": "Экспорт",
+    "import": "Импорт",
     "material_files": "Научные материалы",
     "telegram_files": "Телеграммы",
 }

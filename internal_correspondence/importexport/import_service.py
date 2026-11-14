@@ -15,9 +15,28 @@ from internal_correspondence.core.constants import Role
 from internal_correspondence.core.domain_pack import dir_name, get_domain_pack
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.base import Base
-from internal_correspondence.orm.models import Change, FileRecord
+from internal_correspondence.orm.models import (
+    AddedTask,
+    Branch,
+    Change,
+    Department,
+    Employee,
+    FileRecord,
+    TerritorialUnit,
+    WorkingGroup,
+)
 from internal_correspondence.orm.utils import parse_primary_key, resolve_entity_class
 from internal_correspondence.services.change_tracking import clear_change
+from internal_correspondence.services.task_distribution_service import (
+    ASSIGNABLE_NODE_TYPES,
+    NODE_BRANCH,
+    NODE_DEPARTMENT,
+    NODE_EMPLOYEE,
+    NODE_ORGANIZATION,
+    NODE_REGION,
+    NODE_WORKGROUP,
+    TaskDistributionService,
+)
 
 logger = get_logger("import_service")
 
@@ -44,6 +63,7 @@ class ImportService:
         self._status: Dict[Tuple[str, str], str] = {}
         self._instances: Dict[Tuple[str, str], Base] = {}
         self._model_classes_cache: Optional[Dict[str, type]] = None
+        self._branch_scope: Optional[Set[Tuple[str, str]]] = None
 
     def import_archive(self, archive_path: Path) -> Dict[str, Any]:
         """Импортирует данные из ZIP-архива.
@@ -218,6 +238,9 @@ class ImportService:
 
         self._resolve_dependencies(entity_class, column_data, stack)
 
+        if entity_class is AddedTask:
+            self._validate_added_task(pk_values, column_data, stack)
+
         if instance is None:
             instance = self._create_entity(entity_class, pk_values, column_data)
         else:
@@ -229,6 +252,115 @@ class ImportService:
         clear_change(self.session, instance)
         self.session.flush()
         return instance
+
+    def _validate_added_task(
+        self,
+        pk_values: Any,
+        data: Dict[str, Any],
+        stack: Set[Tuple[str, str]],
+    ) -> None:
+        """Проверяет узел назначения и отсутствие дубликата тройки."""
+        node_type = data.get("node_type")
+        node_id = data.get("node_id")
+        if node_type is None or node_id is None:
+            return
+
+        node_type = str(node_type)
+        node_id = str(node_id)
+        if node_type == NODE_ORGANIZATION or node_type not in ASSIGNABLE_NODE_TYPES:
+            raise ValueError(f"Недопустимый тип узла назначения: {node_type}")
+
+        node = self._load_assignment_node(node_type, node_id)
+        if node is None:
+            node = self._import_assignment_node(node_type, node_id, stack)
+        if node is None:
+            raise ValueError(
+                f"Узел назначения {node_type} не найден: {node_id}"
+            )
+        if node_type in (NODE_DEPARTMENT, NODE_WORKGROUP, NODE_EMPLOYEE):
+            if not getattr(node, "active", True):
+                raise ValueError(
+                    f"Узел назначения {node_type} неактивен: {node_id}"
+                )
+
+        if self.role == Role.BRANCH.value and not self._assignment_in_scope(
+            node_type, node_id
+        ):
+            raise ValueError(
+                f"Узел назначения вне области филиала: {node_type} {node_id}"
+            )
+
+        duplicate = (
+            self.session.query(AddedTask)
+            .filter(
+                AddedTask.task_id == data.get("task_id"),
+                AddedTask.node_type == node_type,
+                AddedTask.node_id == node_id,
+            )
+            .first()
+        )
+        if duplicate is not None and str(duplicate.id) != str(pk_values):
+            raise ValueError(
+                "Назначение задачи этому узлу уже существует."
+            )
+
+    def _load_assignment_node(self, node_type: str, node_id: str) -> Optional[Base]:
+        """Загружает узел назначения по типу и идентификатору."""
+        classes = {
+            NODE_REGION: TerritorialUnit,
+            NODE_BRANCH: Branch,
+            NODE_DEPARTMENT: Department,
+            NODE_WORKGROUP: WorkingGroup,
+            NODE_EMPLOYEE: Employee,
+        }
+        entity_class = classes.get(node_type)
+        if entity_class is None:
+            return None
+        try:
+            pk = parse_primary_key(node_id, entity_class)
+        except (TypeError, ValueError):
+            return None
+        return self.session.get(entity_class, pk)
+
+    def _import_assignment_node(
+        self, node_type: str, node_id: str, stack: Set[Tuple[str, str]]
+    ) -> Optional[Base]:
+        """Создаёт отсутствующий узел назначения из того же пакета."""
+        entity_names = {
+            NODE_REGION: "TerritorialUnit",
+            NODE_BRANCH: "Branch",
+            NODE_DEPARTMENT: "Department",
+            NODE_WORKGROUP: "WorkingGroup",
+            NODE_EMPLOYEE: "Employee",
+        }
+        entity_name = entity_names.get(node_type)
+        if entity_name is None:
+            return None
+        key = (entity_name, node_id)
+        if key in stack:
+            return None
+        payload = self._payload.get(entity_name, {}).get(node_id)
+        if not payload or payload.get("deleted"):
+            return None
+        if self._apply_entry(entity_name, node_id, payload, stack) != "imported":
+            return None
+        self._branch_scope = None
+        return self._load_assignment_node(node_type, node_id)
+
+    def _assignment_in_scope(self, node_type: str, node_id: str) -> bool:
+        """Проверяет принадлежность узла региону филиала."""
+        if self._branch_scope is None:
+            service = TaskDistributionService(
+                self.session, self.role, self.branch_id
+            )
+            scope: Set[Tuple[str, str]] = set()
+            stack = list(service.build_tree())
+            while stack:
+                node = stack.pop()
+                scope.add(node.key)
+                stack.extend(node.children)
+            self._branch_scope = scope
+        return (node_type, node_id) in self._branch_scope
 
     def _create_entity(self, entity_class: type, pk_values: Any, data: Dict[str, Any]) -> Base:
         """Создаёт новую сущность с заданным первичным ключом."""

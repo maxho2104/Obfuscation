@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "name": "branch_outgoing_material",
+      "description": "Научный материал: филиал + исходящий номер + год/месяц даты.",
+      "entity": "material",
+      "composite_keys": ["branch_part_1", "branch_part_2"],
+      "conditions": ["year_month_equal"],
+      "lookup": {
+        "table": "scientific_materials",
+        "outgoing_no": "outgoing_no",
+        "year_month": "year_month",
+        "value": "value",
+        "evaluation_date": "evaluation_date"
+      },
+      "match": ["branch_id", "outgoing_number"],
+      "target": {"table": "evaluations"}
+    },
+    {
+      "name": "branch_outgoing_telegram",
+      "description": "Телеграмма: филиал + исходящий номер + год/месяц даты.",
+      "entity": "telegram",
+      "composite_keys": ["branch_part_1", "branch_part_2"],
+      "conditions": ["year_month_equal"],
+      "lookup": {
+        "table": "telegrams",
+        "outgoing_no": "outgoing_no",
+        "year_month": "year_month",
+        "value": "value",
+        "evaluation_date": "evaluation_date"
+      },
+      "match": ["branch_id", "outgoing_number"],
+      "target": {"table": "evaluations"}
+    }
+  ]
+}

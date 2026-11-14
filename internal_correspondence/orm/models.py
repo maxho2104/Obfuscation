@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import List, Optional
 
 from sqlalchemy import (
@@ -130,7 +131,9 @@ telegram_file_association = Table(
     Column("file_id", PGUUID(as_uuid=True), ForeignKey("file_records.id", ondelete="CASCADE"), primary_key=True),
 )
 
-# Связь "Научная задача - Сотрудник" (N-N)
+# Связь "Научная задача - Сотрудник" (N-N).
+# Сохранена для совместимости с панелью ОШС и статистикой по исполнителям;
+# распределение задач по иерархии ведётся через AddedTask.
 task_employee_association = Table(
     "task_employees",
     Base.metadata,
@@ -490,10 +493,20 @@ class WorkingGroup(Base, ChangeTrackedMixin):
         back_populates="workgroups",
     )
 
-    employees: Mapped[List["Employee"]] = relationship(
-        "Employee",
+    memberships: Mapped[List["WorkGroupMembership"]] = relationship(
+        "WorkGroupMembership",
         back_populates="working_group",
+        cascade="all, delete-orphan",
     )
+
+    @property
+    def current_employees(self) -> List["Employee"]:
+        """Сотрудники с активным (незакрытым) участием в группе."""
+        return [
+            membership.employee
+            for membership in self.memberships
+            if membership.end_date is None and membership.employee is not None
+        ]
 
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
@@ -505,6 +518,58 @@ class WorkingGroup(Base, ChangeTrackedMixin):
         secondary=telegram_workgroup_association,
         back_populates="workgroups",
     )
+
+
+class WorkGroupMembership(Base, ChangeTrackedMixin):
+    """Участие сотрудника в рабочей группе (запись истории переводов).
+
+    Перевод в новую группу не затирает прежнее участие: старая запись
+    закрывается датой окончания, новая открывается отдельной строкой.
+    Активным считается участие без даты окончания (у сотрудника оно одно).
+    """
+    __entity_label__ = "Участие в рабочей группе"
+    __entity_label_plural__ = "Участия в рабочих группах"
+    __field_labels__ = {"id": "Идентификатор"}
+
+
+    __tablename__ = "workgroup_memberships"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    employee_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("employees.id", ondelete="CASCADE"),
+        nullable=False,
+        info={"label": "Сотрудник"},
+    )
+    working_group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("working_groups.id", ondelete="CASCADE"),
+        nullable=False,
+        info={"label": "Рабочая группа"},
+    )
+    start_date: Mapped[Optional[date]] = mapped_column(
+        Date, nullable=True,
+        info={"label": "Начало работы в рабочей группе", "short": "Начало"},
+    )
+    end_date: Mapped[Optional[date]] = mapped_column(
+        Date, nullable=True,
+        info={"label": "Конец работы в рабочей группе", "short": "Окончание"},
+    )
+
+    employee: Mapped["Employee"] = relationship(
+        "Employee",
+        back_populates="workgroup_memberships",
+    )
+    working_group: Mapped["WorkingGroup"] = relationship(
+        "WorkingGroup",
+        back_populates="memberships",
+    )
+
+    def is_active_on(self, value: date) -> bool:
+        """Проверяет, действует ли участие на указанную дату."""
+        if self.start_date is not None and value < self.start_date:
+            return False
+        if self.end_date is not None and value > self.end_date:
+            return False
+        return True
 
 
 class Employee(Base, ChangeTrackedMixin):
@@ -543,18 +608,70 @@ class Employee(Base, ChangeTrackedMixin):
         back_populates="employees",
     )
 
-    working_group_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        ForeignKey("working_groups.id", ondelete="SET NULL"),
-        nullable=True,
-        info={"label": "Рабочая группа"},
-    )
-    working_group: Mapped[Optional["WorkingGroup"]] = relationship(
-        "WorkingGroup",
-        back_populates="employees",
+    workgroup_memberships: Mapped[List["WorkGroupMembership"]] = relationship(
+        "WorkGroupMembership",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        order_by="WorkGroupMembership.start_date",
     )
 
-    workgroup_start_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Начало работы в рабочей группе", "short": "Начало в группе"})
-    workgroup_end_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Конец работы в рабочей группе", "short": "Конец в группе"})
+    @property
+    def current_membership(self) -> Optional["WorkGroupMembership"]:
+        """Участие, действующее сегодня (с учётом плановой даты окончания)."""
+        today = date.today()
+        active = [
+            m
+            for m in self.workgroup_memberships
+            if (m.start_date is None or m.start_date <= today)
+            and (m.end_date is None or m.end_date >= today)
+        ]
+        if not active:
+            return None
+        # При нескольких действующих участиях берём самое позднее по дате начала
+        return max(active, key=lambda m: (m.start_date or date.min, str(m.id)))
+
+    @property
+    def working_group(self) -> Optional["WorkingGroup"]:
+        """Рабочая группа активного участия сотрудника (None, если не включён)."""
+        membership = self.current_membership
+        return membership.working_group if membership is not None else None
+
+    def assign_working_group(
+        self,
+        workgroup: Optional["WorkingGroup"],
+        start_date: Optional[date] = None,
+    ) -> Optional["WorkGroupMembership"]:
+        """Переводит сотрудника в рабочую группу, закрывая прежнее участие.
+
+        Старое участие не удаляется, а закрывается датой окончания
+        (по умолчанию — датой начала нового участия или сегодняшним днём).
+        При ``workgroup=None`` текущее участие просто закрывается.
+        Возвращает новую запись участия (или None при исключении из группы).
+        """
+        closing_date = start_date or date.today()
+        current = self.current_membership
+        if current is not None:
+            if workgroup is not None and current.working_group_id == workgroup.id:
+                return current  # уже состоит в этой группе
+            if (
+                start_date is not None
+                and current.start_date is not None
+                and start_date < current.start_date
+            ):
+                raise ValueError(
+                    "Дата начала нового участия не может быть раньше начала текущего."
+                )
+            if current.end_date is None or current.end_date > closing_date:
+                current.end_date = closing_date
+        if workgroup is None:
+            return None
+        membership = WorkGroupMembership(
+            employee_id=self.id,
+            working_group_id=workgroup.id,
+            start_date=start_date or closing_date,
+        )
+        self.workgroup_memberships.append(membership)
+        return membership
 
     tasks: Mapped[List["ScientificTask"]] = relationship(
         "ScientificTask",
@@ -582,14 +699,15 @@ class Employee(Base, ChangeTrackedMixin):
         return f"{title}{self.last_name} {initials}".strip()
 
     def worked_in_workgroup_on(self, value: date) -> bool:
-        """Проверяет, работал ли сотрудник в рабочей группе на указанную дату."""
-        if self.working_group_id is None:
-            return False
-        if self.workgroup_start_date is not None and value < self.workgroup_start_date:
-            return False
-        if self.workgroup_end_date is not None and value > self.workgroup_end_date:
-            return False
-        return True
+        """Проверяет, работал ли сотрудник в какой-либо рабочей группе на дату."""
+        return any(m.is_active_on(value) for m in self.workgroup_memberships)
+
+    def workgroup_on(self, value: date) -> Optional["WorkingGroup"]:
+        """Возвращает рабочую группу, в которой сотрудник работал на дату."""
+        for membership in self.workgroup_memberships:
+            if membership.is_active_on(value):
+                return membership.working_group
+        return None
 
 
 # -----------------------------------------------------------------------------
@@ -615,6 +733,11 @@ class ScientificTask(Base, ChangeTrackedMixin):
     partial_threshold: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True, info={"label": "Частичное решение"})
     full_threshold: Mapped[Optional[float]] = mapped_column(Numeric(10, 2), nullable=True, info={"label": "Полное решение"})
 
+    added_tasks: Mapped[List["AddedTask"]] = relationship(
+        "AddedTask",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
     employees: Mapped[List["Employee"]] = relationship(
         "Employee",
         secondary=task_employee_association,
@@ -632,18 +755,62 @@ class ScientificTask(Base, ChangeTrackedMixin):
     )
 
 
-class TaskEntityLink(Base):
-    """Связь научной задачи с сущностью (филиал, отдел, рабочая группа, сотрудник).
+class AddedTask(Base, ChangeTrackedMixin):
+    """Назначение научной задачи узлу иерархии.
 
-    Закладка под механизм распределения научных задач: задача связывается
-    с произвольной сущностью через имя класса и строковое представление
-    её первичного ключа. Change-tracking и обмен будут подключены вместе
-    с механизмом распределения.
+    Узел задаётся парой ``node_type``/``node_id``. Полиморфная ссылка выбрана
+    осознанно: одна таблица обслуживает регионы, филиалы, отделы, рабочие
+    группы и сотрудников, а целостность узла проверяется сервисом.
+    """
+    __entity_label__ = "Назначение задачи"
+    __entity_label_plural__ = "Назначения задач"
+    __field_labels__ = {"id": "Идентификатор"}
+
+    __tablename__ = "added_tasks"
+    __table_args__ = (
+        UniqueConstraint("task_id", "node_type", "node_id", name="uix_added_task_node"),
+        Index("ix_added_tasks_node", "node_type", "node_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    task_id: Mapped[str] = mapped_column(
+        String(50),
+        ForeignKey("scientific_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        info={"label": "Научная задача"},
+    )
+    node_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        info={"label": "Тип узла"},
+    )
+    node_id: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        info={"label": "Узел"},
+    )
+
+    task: Mapped["ScientificTask"] = relationship(
+        "ScientificTask",
+        back_populates="added_tasks",
+        info={"label": "Научная задача"},
+    )
+
+
+# -----------------------------------------------------------------------------
+# Связь задачи с сущностью (устаревшая закладка, сохранена для совместимости схемы)
+# -----------------------------------------------------------------------------
+
+class TaskEntityLink(Base):
+    """Связь научной задачи с сущностью через имя класса и строковый PK.
+
+    Таблица сохранена для совместимости с существующей схемой и миграцией
+    ``f8cc27a9d0e1``; распределение задач ведётся через :class:`AddedTask`.
     """
     __entity_label__ = "Связь задачи с сущностью"
     __entity_label_plural__ = "Связи задач с сущностями"
     __field_labels__ = {"id": "Идентификатор"}
-
 
     __tablename__ = "task_entity_links"
 
@@ -740,10 +907,13 @@ class ParticipantMixin:
         workgroups = {}
         document_date = self.document_date
         for employee in self.employees:
-            workgroup = employee.working_group
+            # Группа берётся по записи участия, действовавшей на дату документа;
+            # без даты документа — по активному (текущему) участию.
+            if document_date is not None:
+                workgroup = employee.workgroup_on(document_date)
+            else:
+                workgroup = employee.working_group
             if workgroup is None:
-                continue
-            if document_date is not None and not employee.worked_in_workgroup_on(document_date):
                 continue
             workgroups[workgroup.id] = workgroup
         return sorted(workgroups.values(), key=lambda workgroup: workgroup.name)
@@ -754,21 +924,12 @@ class EvaluationMixin:
 
     @property
     def latest_evaluation(self) -> Optional["Evaluation"]:
-        """Возвращает последнюю оценку документа по дате списка оценок."""
-        evaluations = [
-            evaluation
-            for evaluation in self.evaluations
-            if evaluation.evaluation_list is not None
-        ]
-        if not evaluations:
+        """Возвращает последнюю оценку документа по дате выставления."""
+        if not self.evaluations:
             return None
         return max(
-            evaluations,
-            key=lambda evaluation: (
-                evaluation.evaluation_list.date,
-                evaluation.evaluation_list.number or "",
-                str(evaluation.id),
-            ),
+            self.evaluations,
+            key=lambda evaluation: (evaluation.date, str(evaluation.id)),
         )
 
     @property
@@ -828,6 +989,7 @@ class ScientificMaterial(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationM
     serial_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Серийный номер"})
     release_year: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, info={"label": "Год выпуска"})
     permit_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Номер разрешительного документа"})
+    permit_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата разрешительного документа"})
     cost: Mapped[Optional[float]] = mapped_column(Numeric(15, 2), nullable=True, info={"label": "Стоимость"})
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
 
@@ -865,6 +1027,7 @@ class ScientificMaterial(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationM
         "Employee",
         secondary=material_employee_association,
         back_populates="materials",
+        info={"label": "Сотрудники"},
     )
     workgroups: Mapped[List["WorkingGroup"]] = relationship(
         "WorkingGroup",
@@ -960,6 +1123,7 @@ class Telegram(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationMixin):
         "Employee",
         secondary=telegram_employee_association,
         back_populates="telegrams",
+        info={"label": "Сотрудники"},
     )
     workgroups: Mapped[List["WorkingGroup"]] = relationship(
         "WorkingGroup",
@@ -1008,7 +1172,7 @@ class ReportAddress(Base, ChangeTrackedMixin):
     __tablename__ = "report_addresses"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    report_date: Mapped[date] = mapped_column(Date, nullable=False, info={"label": "Дата доклада"})
+    report_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, info={"label": "Дата доклада"})
 
     telegram_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("telegrams.id", ondelete="CASCADE"),
@@ -1062,13 +1226,17 @@ class Evaluation(Base, ChangeTrackedMixin):
     value: Mapped[EvaluationValue] = mapped_column(
         IntEnumType(EvaluationValue), nullable=False, info={"label": "Значение оценки"}
     )
+    date: Mapped[date] = mapped_column(Date, nullable=False, info={"label": "Дата выставления"})
+    effect: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(15, 2), nullable=True, info={"label": "Эффект"}
+    )
 
-    evaluation_list_id: Mapped[uuid.UUID] = mapped_column(
+    evaluation_list_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("evaluation_lists.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         info={"label": "Список оценок"},
     )
-    evaluation_list: Mapped["EvaluationList"] = relationship(
+    evaluation_list: Mapped[Optional["EvaluationList"]] = relationship(
         "EvaluationList",
         back_populates="evaluations",
     )

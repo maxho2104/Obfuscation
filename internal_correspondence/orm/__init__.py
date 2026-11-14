@@ -3,6 +3,7 @@
 from internal_correspondence.orm.base import Base
 from internal_correspondence.orm.models import (
     AcademicTitle,
+    AddedTask,
     Branch,
     Change,
     Consumer,
@@ -26,6 +27,7 @@ from internal_correspondence.orm.models import (
 __all__ = [
     "Base",
     "AcademicTitle",
+    "AddedTask",
     "Branch",
     "Change",
     "Consumer",

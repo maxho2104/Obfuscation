@@ -3,8 +3,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-.kilo/
-
 # Virtual environment
 .venv/
 venv/
@@ -54,6 +52,7 @@ instance/
 Logs/
 Backups/
 Файловое хранилище/
+demo/
 *.db
 *.db-journal
 *.db-wal
@@ -69,3 +68,4 @@ Backups/
 # OS files
 Thumbs.db
 .DS_Store
+/.kilo/

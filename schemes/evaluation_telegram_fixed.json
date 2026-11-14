@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "name": "evaluation_telegram_fixed",
+  "description": "Телеграмма: BR 002 ТЛГ-00008  112025 П 21.12.2025 (код филиала из двух частей).",
+  "mode": "fixed",
+  "delimiter": "",
+  "header_mode": "none",
+  "fields": [
+    {"name": "branch_part_1", "type": "string", "start": 1, "length": 2, "required": true},
+    {"name": "branch_part_2", "type": "string", "start": 4, "length": 3, "required": true},
+    {"name": "outgoing_no", "type": "string", "start": 8, "length": 10, "required": true},
+    {"name": "year_month", "type": "string", "start": 19, "length": 6, "required": true},
+    {"name": "value", "type": "string", "start": 26, "length": 1, "required": false},
+    {"name": "evaluation_date", "type": "date", "start": 28, "length": 10, "date_format": "DD.MM.YYYY", "required": false}
+  ]
+}

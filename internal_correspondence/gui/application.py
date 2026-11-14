@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from PyQt5.QtCore import QByteArray
+from PyQt5.QtCore import QByteArray, Qt
 from PyQt5.QtWidgets import (
     QAction,
     QActionGroup,
@@ -36,7 +36,13 @@ from internal_correspondence.core.domain_pack import (
 )
 from internal_correspondence.core.logging_config import configure_logging, get_logger
 from internal_correspondence.core.settings import AppSettings, SettingsManager
+from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
 from internal_correspondence.gui.document_list_widget import DocumentListWidget
+from internal_correspondence.gui.evaluation_import_dialog import EvaluationImportDialog
+from internal_correspondence.gui.filter_model import (
+    deserialize_filters,
+    serialize_filters,
+)
 from internal_correspondence.gui.first_run_wizard import run_first_run_wizard
 from internal_correspondence.gui.i18n import install_translations
 from internal_correspondence.gui.oshm_dialog import OSHMDialog
@@ -53,6 +59,7 @@ from internal_correspondence.gui.reference_dialogs import (
 from internal_correspondence.gui.reference_editor import ReferenceEditorDialog
 from internal_correspondence.gui.settings_dialog import SettingsDialog
 from internal_correspondence.gui.statistics_widget import StatisticsWidget
+from internal_correspondence.gui.task_distribution_widget import TaskDistributionWidget
 from internal_correspondence.gui.table_model import ColumnDef
 from internal_correspondence.gui.theme import THEMES, apply_theme, current_theme
 from internal_correspondence.importexport.export_service import ExportService
@@ -89,6 +96,7 @@ from internal_correspondence.services.reference_service import (
     SourceService,
     TerritorialUnitService,
 )
+from internal_correspondence.text_import import ImporterConfig
 from internal_correspondence.utils.string_resources import STRINGS, reload_strings
 
 logger = get_logger("application")
@@ -102,6 +110,34 @@ def _parse_column_widths(raw: str) -> List[int]:
         if part.isdigit():
             widths.append(int(part))
     return widths
+
+
+def _parse_bool(raw: str, default: bool) -> bool:
+    """Разбирает булево значение из строки настроек."""
+    raw = (raw or "").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return True
+    if raw in ("0", "false", "no"):
+        return False
+    return default
+
+
+def _parse_dock_area(raw: str) -> Optional[Qt.DockWidgetArea]:
+    """Разбирает сохранённую область стыковки дока (Qt.DockWidgetArea)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        area = Qt.DockWidgetArea(int(raw))
+    except (TypeError, ValueError):
+        return None
+    allowed = (
+        Qt.LeftDockWidgetArea,
+        Qt.RightDockWidgetArea,
+        Qt.TopDockWidgetArea,
+        Qt.BottomDockWidgetArea,
+    )
+    return area if area in allowed else None
 
 
 def _format_employees(employees) -> str:
@@ -146,37 +182,97 @@ def _format_workgroups(workgroups) -> str:
     return ", ".join(workgroup.name for workgroup in workgroups or [])
 
 
-# Описания столбцов для таблицы научных материалов
-MATERIAL_COLUMNS = [
-    ColumnDef("type", width=80, formatter=_format_material_type),
-    ColumnDef("outgoing_number", width=100),
-    ColumnDef("outgoing_date", width=100),
-    ColumnDef("name", width=250),
-    ColumnDef("evaluation_display", width=90),
-    ColumnDef("incoming_number", width=100),
-    ColumnDef("incoming_date", width=100),
-    ColumnDef("participating_employees", width=220, formatter=_format_employees),
-    ColumnDef("participating_departments", width=180, formatter=_format_departments),
-    ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
-    ColumnDef("branch.short_name", width=100),
-    ColumnDef("consumer.short_name", width=120),
-]
+def _format_countries(countries) -> str:
+    """Форматирует список стран происхождения данных для ячейки таблицы."""
+    return ", ".join(country.name for country in countries or [])
 
-# Описания столбцов для таблицы телеграмм
-TELEGRAM_COLUMNS = [
-    ColumnDef("type", width=80, formatter=_format_telegram_type),
-    ColumnDef("outgoing_number", width=100),
-    ColumnDef("outgoing_date", width=100),
-    ColumnDef("name", width=300),
-    ColumnDef("evaluation_display", width=90),
-    ColumnDef("incoming_number", width=100),
-    ColumnDef("incoming_date", width=100),
-    ColumnDef("participating_employees", width=220, formatter=_format_employees),
-    ColumnDef("participating_departments", width=180, formatter=_format_departments),
-    ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
-    ColumnDef("report_type", width=100, formatter=_format_report_type),
-    ColumnDef("branch.short_name", width=100),
-]
+
+def _format_addresses(addresses) -> str:
+    """Форматирует адресацию доклада («ИД+» через запятую)."""
+    from internal_correspondence.gui.edit_elements import format_report_addresses
+
+    return format_report_addresses(addresses or [])
+
+
+def _is_head_office(role: Optional[str]) -> bool:
+    """Проверяет, задана ли роль «головной офис»."""
+    return role == Role.HEAD_OFFICE.value
+
+
+def material_columns(role: Optional[str] = None) -> List[ColumnDef]:
+    """Возвращает описания столбцов таблицы научных материалов для роли.
+
+    Порядок и состав столбцов — по плану редактирования отображения:
+    для роли «филиал» дополнительно отделы и сотрудники, для роли
+    «головной офис» — филиал.
+    """
+    columns = [
+        ColumnDef("outgoing_number", width=100),
+        ColumnDef("outgoing_date", width=110),
+        ColumnDef("type", width=80, formatter=_format_material_type),
+        ColumnDef("name", width=250),
+        ColumnDef("countries", width=150, formatter=_format_countries),
+        ColumnDef("consumer.short_name", width=120),
+    ]
+    if _is_head_office(role):
+        columns.append(ColumnDef("branch.short_name", width=100))
+        columns.append(
+            ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups)
+        )
+    else:
+        columns.extend(
+            [
+                ColumnDef("participating_departments", width=180, formatter=_format_departments),
+                ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
+                ColumnDef("participating_employees", width=220, formatter=_format_employees),
+            ]
+        )
+    columns.extend(
+        [
+            ColumnDef("incoming_number", width=100),
+            ColumnDef("incoming_date", width=110),
+            ColumnDef("evaluation_display", width=90),
+        ]
+    )
+    return columns
+
+
+def telegram_columns(role: Optional[str] = None) -> List[ColumnDef]:
+    """Возвращает описания столбцов таблицы телеграмм для роли."""
+    columns = [
+        ColumnDef("outgoing_number", width=100),
+        ColumnDef("outgoing_date", width=110),
+        ColumnDef("type", width=80, formatter=_format_telegram_type),
+        ColumnDef("name", width=280),
+        ColumnDef("countries", width=150, formatter=_format_countries),
+        ColumnDef("report_addresses", width=160, formatter=_format_addresses),
+        ColumnDef("report_type", width=100, formatter=_format_report_type),
+    ]
+    if _is_head_office(role):
+        columns.append(ColumnDef("branch.short_name", width=100))
+    else:
+        columns.extend(
+            [
+                ColumnDef("participating_departments", width=180, formatter=_format_departments),
+                ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
+                ColumnDef("participating_employees", width=220, formatter=_format_employees),
+            ]
+        )
+    columns.extend(
+        [
+            ColumnDef("incoming_number", width=100),
+            ColumnDef("incoming_date", width=110),
+            ColumnDef("evaluation_display", width=90),
+        ]
+    )
+    return columns
+
+
+# Описания столбцов таблицы научных материалов (роль «филиал»)
+MATERIAL_COLUMNS = material_columns()
+
+# Описания столбцов для таблицы телеграмм (роль «филиал»)
+TELEGRAM_COLUMNS = telegram_columns()
 
 # Описания столбцов справочников
 TERRITORIAL_UNIT_COLUMNS = [
@@ -251,11 +347,13 @@ class MainWindow(QMainWindow):
         settings: AppSettings,
         db_manager: DatabaseManager,
         settings_manager: Optional[SettingsManager] = None,
+        app_dir: Optional[Path] = None,
     ) -> None:
         super().__init__()
         self.settings = settings
         self.db_manager = db_manager
         self._settings_manager = settings_manager or SettingsManager()
+        self.app_dir = Path(app_dir) if app_dir is not None else Path(__file__).resolve().parent.parent.parent
         self.setWindowTitle(STRINGS.app_title)
         self.setMinimumSize(1024, 768)
         self._setup_ui()
@@ -278,26 +376,85 @@ class MainWindow(QMainWindow):
             self.db_manager.get_session(),
             self.settings.storage_path_obj(),
             ScientificMaterial,
-            MATERIAL_COLUMNS,
+            material_columns(self.settings.role),
             self.settings.branch_id,
+            role=self.settings.role,
         )
         self.telegram_tab = DocumentListWidget(
             self.db_manager.get_session(),
             self.settings.storage_path_obj(),
             Telegram,
-            TELEGRAM_COLUMNS,
+            telegram_columns(self.settings.role),
             self.settings.branch_id,
+            role=self.settings.role,
         )
         self.statistics_tab = StatisticsWidget(
             self.db_manager.get_session(),
             self.settings.branch_id if self.settings.role == Role.BRANCH.value else None,
         )
+        self.tasks_tab = TaskDistributionWidget(
+            self.db_manager.get_session(),
+            self.settings.role,
+            self.settings.branch_id,
+        )
 
         self.tabs.addTab(self.materials_tab, entity_label(ScientificMaterial, plural=True))
         self.tabs.addTab(self.telegram_tab, entity_label(Telegram, plural=True))
+        self.tabs.addTab(self.tasks_tab, STRINGS.tab_tasks)
         self.tabs.addTab(self.statistics_tab, STRINGS.tab_statistics)
         layout.addWidget(self.tabs)
         self.setCentralWidget(container)
+
+        self.materials_tab.filtersChanged.connect(self._materials_filters_changed)
+        self.telegram_tab.filtersChanged.connect(self._telegram_filters_changed)
+
+        # Док-виджет прикреплённых файлов привязан к текущей записи вкладки
+        self.files_dock = AttachedFilesWidget(
+            self.db_manager.get_session(),
+            self.settings.storage_path_obj(),
+            self,
+        )
+        self.addDockWidget(Qt.RightDockWidgetArea, self.files_dock)
+        self.files_dock.filesChanged.connect(self._on_files_changed)
+        self.tabs.currentChanged.connect(lambda _index: self._sync_files_dock())
+        self.materials_tab.currentDocumentChanged.connect(
+            lambda document: self._files_document_changed(self.materials_tab, document)
+        )
+        self.telegram_tab.currentDocumentChanged.connect(
+            lambda document: self._files_document_changed(self.telegram_tab, document)
+        )
+        self._sync_files_dock()
+
+    def _files_document_changed(self, tab, document) -> None:
+        """Привязывает док файлов к записи, если её вкладка активна."""
+        if tab is self.tabs.currentWidget():
+            self.files_dock.set_document(document)
+
+    def _on_files_changed(self, document_id) -> None:
+        """Обновляет подсветку строки после операций док-виджета с файлами.
+
+        Записи Change создаются в сессии док-виджета, поэтому табличная
+        модель перечитывает служебное состояние записи явно.
+        """
+        tab = self.tabs.currentWidget()
+        if isinstance(tab, DocumentListWidget):
+            tab.reload_document_state(document_id)
+
+    def _sync_files_dock(self) -> None:
+        """Обновляет док файлов при смене вкладки."""
+        tab = self.tabs.currentWidget()
+        if isinstance(tab, DocumentListWidget):
+            self.files_dock.set_document(tab.current_document())
+        else:
+            self.files_dock.set_document(None)
+
+    def _materials_filters_changed(self, filters) -> None:
+        """Запоминает фильтры материалов для сохранения при закрытии."""
+        self.settings.material_filters = serialize_filters(filters)
+
+    def _telegram_filters_changed(self, filters) -> None:
+        """Запоминает фильтры телеграмм для сохранения при закрытии."""
+        self.settings.telegram_filters = serialize_filters(filters)
 
     def _setup_menu(self) -> None:
         """Формирует главное меню приложения."""
@@ -375,6 +532,13 @@ class MainWindow(QMainWindow):
         import_actual_action.triggered.connect(self._import_actual_data)
         data_menu.addAction(import_actual_action)
 
+        data_menu.addSeparator()
+        import_evaluations_action = QAction(STRINGS.menu_import_evaluations, self)
+        import_evaluations_action.setEnabled(is_head_office)
+        import_evaluations_action.triggered.connect(self._import_evaluations)
+        data_menu.addAction(import_evaluations_action)
+        data_menu.addSeparator()
+
         # Меню "ОШС"
         oshm_action = QAction(STRINGS.action_oshm, self)
         oshm_action.triggered.connect(self._open_oshm)
@@ -399,6 +563,15 @@ class MainWindow(QMainWindow):
             )
             theme_group.addAction(action)
             theme_menu.addAction(action)
+
+        # Показ/скрытие дока прикреплённых файлов (восстановление — в _restore_ui_state)
+        view_menu.addSeparator()
+        self.files_dock_action = QAction(STRINGS.menu_attached_files, self)
+        self.files_dock_action.setCheckable(True)
+        self.files_dock_action.setChecked(not self.files_dock.isHidden())
+        self.files_dock_action.toggled.connect(self.files_dock.setVisible)
+        self.files_dock.visibilityChanged.connect(self.files_dock_action.setChecked)
+        view_menu.addAction(self.files_dock_action)
 
     def _add_reference_action(
         self,
@@ -426,7 +599,7 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         """Открывает диалог настроек."""
-        dialog = SettingsDialog(self.settings, self)
+        dialog = SettingsDialog(self.settings, self.db_manager, self)
         if dialog.exec_() == SettingsDialog.Accepted:
             settings_manager = SettingsManager()
             settings_manager.save(self.settings)
@@ -437,12 +610,12 @@ class MainWindow(QMainWindow):
             )
 
     def closeEvent(self, event) -> None:
-        """Сохраняет геометрию окна и ширины колонок при закрытии."""
+        """Сохраняет геометрию окна, ширины колонок и состояние дока файлов."""
         self._save_ui_state()
         super().closeEvent(event)
 
     def _save_ui_state(self) -> None:
-        """Сохраняет геометрию окна и ширины колонок таблиц в настройки."""
+        """Сохраняет геометрию окна, ширины колонок и состояние дока в настройки."""
         self.settings.window_geometry = (
             self.saveGeometry().toBase64().data().decode("ascii")
         )
@@ -452,20 +625,63 @@ class MainWindow(QMainWindow):
         self.settings.telegram_column_widths = ",".join(
             str(width) for width in self.telegram_tab.column_widths()
         )
+        self._save_files_dock_state()
         self._settings_manager.save(self.settings)
 
+    def _save_files_dock_state(self) -> None:
+        """Сохраняет видимость, область стыковки и геометрию дока файлов."""
+        dock = self.files_dock
+        self.settings.files_dock_visible = "false" if dock.isHidden() else "true"
+        # Плавающий док не привязан к области: запоминаем последнюю закреплённую
+        if not dock.isFloating():
+            self.settings.files_dock_area = str(int(self.dockWidgetArea(dock)))
+        self.settings.files_dock_floating = "true" if dock.isFloating() else "false"
+        self.settings.files_dock_geometry = (
+            dock.saveGeometry().toBase64().data().decode("ascii")
+        )
+
     def _restore_ui_state(self) -> None:
-        """Восстанавливает геометрию окна и ширины колонок из настроек."""
+        """Восстанавливает геометрию окна, колонки и состояние дока из настроек."""
         if self.settings.window_geometry:
             self.restoreGeometry(
                 QByteArray.fromBase64(self.settings.window_geometry.encode("ascii"))
             )
+        self._restore_files_dock_state()
         material_widths = _parse_column_widths(self.settings.material_column_widths)
         if material_widths:
             self.materials_tab.set_column_widths(material_widths)
         telegram_widths = _parse_column_widths(self.settings.telegram_column_widths)
         if telegram_widths:
             self.telegram_tab.set_column_widths(telegram_widths)
+        self._restore_filters()
+
+    def _restore_files_dock_state(self) -> None:
+        """Восстанавливает область, открепление и геометрию дока файлов."""
+        dock = self.files_dock
+        area = _parse_dock_area(self.settings.files_dock_area)
+        if area is not None:
+            self.addDockWidget(area, dock)
+        if _parse_bool(self.settings.files_dock_floating, False):
+            dock.setFloating(True)
+        if self.settings.files_dock_geometry:
+            dock.restoreGeometry(
+                QByteArray.fromBase64(
+                    self.settings.files_dock_geometry.encode("ascii")
+                )
+            )
+        visible = _parse_bool(self.settings.files_dock_visible, True)
+        dock.setVisible(visible)
+        # visibilityChanged не приходит, пока окно не показано: синхронизируем вручную
+        self.files_dock_action.setChecked(visible)
+
+    def _restore_filters(self) -> None:
+        """Восстанавливает фильтры таблиц из настроек (два набора раздельно)."""
+        self.materials_tab.set_filters(
+            deserialize_filters(self.settings.material_filters, ScientificMaterial)
+        )
+        self.telegram_tab.set_filters(
+            deserialize_filters(self.settings.telegram_filters, Telegram)
+        )
 
     def _set_theme(self, theme_key: str) -> None:
         """Применяет тему оформления и сохраняет выбор в настройках."""
@@ -477,6 +693,7 @@ class MainWindow(QMainWindow):
         # Перекрашиваем строки таблиц и графики
         self.materials_tab.refresh()
         self.telegram_tab.refresh()
+        self.tasks_tab.apply_theme()
         self.statistics_tab.apply_theme()
 
     def _export(self) -> None:
@@ -532,6 +749,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, STRINGS.title_import, message)
             self.materials_tab.refresh()
             self.telegram_tab.refresh()
+            self.tasks_tab.refresh_all()
             self.statistics_tab.refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка импорта")
@@ -584,6 +802,30 @@ class MainWindow(QMainWindow):
         """Форматирует результаты импорта для сообщения."""
         return "\n".join(f"{sheet}: {count}" for sheet, count in results.items())
 
+    def _import_evaluations(self) -> None:
+        """Открывает мастер импорта оценок из текстового файла (только ГО)."""
+        if self.settings.role != Role.HEAD_OFFICE.value:
+            QMessageBox.warning(
+                self,
+                STRINGS.title_error,
+                STRINGS.msg_import_head_office_only,
+            )
+            return
+        config = ImporterConfig(
+            file_storage_dir=self.settings.storage_path_obj(),
+            schemes_dir=self.app_dir / "schemes",
+            matcher_rules_path=self.app_dir / "matcher_rules.json",
+            storage_subdir=dir_name("import"),
+        )
+        dialog = EvaluationImportDialog(config, self.db_manager.engine, self)
+        try:
+            dialog.exec_()
+        finally:
+            dialog.importer.close()
+        self.materials_tab.refresh()
+        self.telegram_tab.refresh()
+        self.statistics_tab.refresh()
+
     def _export_domain_pack(self) -> None:
         """Выгружает активный пакет предметной области в JSON-файл."""
         path, _ = QFileDialog.getSaveFileName(
@@ -612,38 +854,34 @@ class MainWindow(QMainWindow):
             SettingsManager().save(self.settings)
 
     def _open_oshm(self) -> None:
-        """Открывает диалог ОШС."""
-        branch_id = self.settings.branch_id
-        if not branch_id:
-            if self.settings.role == Role.HEAD_OFFICE.value:
-                # В головном офисе можно выбрать филиал для просмотра
-                branch, ok = self._select_branch()
-                if not ok or not branch:
-                    return
-                branch_id = branch
-            else:
-                QMessageBox.warning(self, STRINGS.title_oshm, STRINGS.msg_no_branch_selected)
-                return
+        """Открывает диалог ОШС: головной офис видит все филиалы, филиал — себя."""
         is_head_office = self.settings.role == Role.HEAD_OFFICE.value
+        branch_id = self.settings.branch_id
+        if not is_head_office and not branch_id:
+            QMessageBox.warning(self, STRINGS.title_oshm, STRINGS.msg_no_branch_selected)
+            return
         dialog = OSHMDialog(
             self.db_manager.get_session(),
-            branch_id,
-            read_only=is_head_office,
+            branch_id=branch_id or None,
+            role=self.settings.role,
             parent=self,
         )
-        dialog.exec_()
-
-    def _select_branch(self) -> tuple:
-        """Показывает простой выбор филиала для головного офиса."""
-        from PyQt5.QtWidgets import QInputDialog
-        branches = self.db_manager.get_session().query(Branch).order_by(Branch.name).all()
-        items = [f"{b.id} — {b.name}" for b in branches]
-        text, ok = QInputDialog.getItem(
-            self, STRINGS.dialog_select_branch, STRINGS.label_branch, items, 0, False
+        # Кнопка «Статистика» на панели сведений: диалог закрывается,
+        # открывается вкладка статистики с выделенной строкой элемента
+        self._oshm_statistics_node = None
+        dialog.details_panel.statistics_requested.connect(
+            lambda node: self._on_oshm_statistics(dialog, node)
         )
-        if ok and text:
-            return text.split(" — ")[0], True
-        return None, ok
+        dialog.exec_()
+        if self._oshm_statistics_node is not None:
+            self.tabs.setCurrentWidget(self.statistics_tab)
+            self.statistics_tab.show_element(self._oshm_statistics_node)
+            self._oshm_statistics_node = None
+
+    def _on_oshm_statistics(self, dialog: OSHMDialog, node) -> None:
+        """Запоминает элемент ОШС для статистики и закрывает диалог."""
+        self._oshm_statistics_node = node
+        dialog.accept()
 
 
 def _changes_retention_days(settings: AppSettings) -> int:
@@ -736,7 +974,7 @@ def run_application(argv: List[str]) -> int:
     except Exception:  # pylint: disable=broad-except
         logger.exception("Не удалось проверить коды перечислений в БД")
 
-    window = MainWindow(settings, db_manager)
+    window = MainWindow(settings, db_manager, app_dir=app_dir)
     window.show()
 
     return app.exec_()

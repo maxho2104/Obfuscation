@@ -4,6 +4,7 @@ import json
 import os
 import uuid
 import zipfile
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from internal_correspondence.core.constants import (
     ChangeOperation,
     MaterialType,
     Role,
+    TelegramType,
 )
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.importexport.export_service import ExportService, ExportError
@@ -25,7 +27,10 @@ from internal_correspondence.orm.models import (
     Department,
     Employee,
     FileRecord,
+    Leader,
+    ReportAddress,
     ScientificMaterial,
+    Telegram,
     TerritorialUnit,
 )
 from internal_correspondence.services.base_service import BaseService
@@ -204,6 +209,111 @@ def test_countries_many_to_many_tracked_and_exported(
     with zipfile.ZipFile(output) as zf:
         data = json.loads(zf.read("export.json").decode("utf-8"))
     assert data["ScientificMaterial"][material_id]["countries"] == ["RUS"]
+
+
+def test_report_address_export_contains_telegram_id(
+    db_manager: DatabaseManager, tmp_path: Path
+) -> None:
+    """CREATE адресации новой телеграммы экспортирует telegram_id.
+
+    Внешний ключ назначается в ходе flush (синхронизация связи), поэтому
+    на момент before_flush он ещё пуст — но обязан попасть в changed_fields.
+    """
+    storage = tmp_path / "storage"
+    storage.mkdir()
+
+    with db_manager.get_session() as session:
+        session.add(TerritorialUnit(id="MSK", name="Москва"))
+        session.add(Branch(id="F1", name="Филиал", short_name="Ф", territorial_unit_id="MSK"))
+        session.add(Leader(id="L1", active=True))
+        telegram = Telegram(
+            type=TelegramType.THEMATIC,
+            outgoing_number="Т-1",
+            outgoing_date=date(2026, 11, 1),
+            name="Телеграмма",
+            branch_id="F1",
+            report_addresses=[ReportAddress(leader_id="L1", report_date=date(2026, 11, 5))],
+        )
+        session.add(telegram)
+        session.commit()
+        telegram_id = str(telegram.id)
+        address_id = str(telegram.report_addresses[0].id)
+
+        change = (
+            session.query(Change)
+            .filter(Change.entity_name == "ReportAddress")
+            .one()
+        )
+        assert "telegram_id" in change.changed_fields
+
+        output = ExportService(session, storage).export()
+        session.commit()
+
+    data = _read_export_json(output)
+    record = data["ReportAddress"][address_id]
+    assert record["telegram_id"] == telegram_id
+    assert record["leader_id"] == "L1"
+    assert record["report_date"] == "2026-11-05"
+
+
+def test_report_address_export_import_roundtrip(
+    db_manager: DatabaseManager, tmp_path: Path
+) -> None:
+    """Прогон экспорта/импорта: адресация доклада восстанавливается со связью к телеграмме."""
+    source_storage = tmp_path / "source_storage"
+    source_storage.mkdir()
+    target_storage = tmp_path / "target_storage"
+    target_storage.mkdir()
+
+    with db_manager.get_session() as session:
+        session.add(TerritorialUnit(id="MSK", name="Москва"))
+        session.add(Branch(id="F1", name="Филиал", short_name="Ф", territorial_unit_id="MSK"))
+        session.add(Leader(id="L1", active=True))
+        session.add(Leader(id="L2", active=True))
+        telegram = Telegram(
+            type=TelegramType.THEMATIC,
+            outgoing_number="Т-1",
+            outgoing_date=date(2026, 11, 1),
+            name="Телеграмма",
+            branch_id="F1",
+            report_addresses=[
+                ReportAddress(leader_id="L1", report_date=date(2026, 11, 5)),
+                ReportAddress(leader_id="L2", report_date=None),
+            ],
+        )
+        session.add(telegram)
+        session.commit()
+        telegram_id = telegram.id
+        address_ids = sorted(a.id for a in telegram.report_addresses)
+
+        output = ExportService(session, source_storage).export()
+        session.commit()
+
+    target_db = DatabaseManager(f"sqlite:///{tmp_path / 'target.db'}")
+    target_db.create_tables()
+    try:
+        with target_db.get_session() as session:
+            result = ImportService(
+                session, target_storage, Role.HEAD_OFFICE.value
+            ).import_archive(output)
+
+        assert result["imported"] == 7
+        assert result["skipped"] == 0
+        assert result["conflicts"] == []
+
+        with target_db.get_session() as session:
+            telegram = session.get(Telegram, telegram_id)
+            assert telegram is not None
+            addresses = {address.leader_id: address for address in telegram.report_addresses}
+            assert set(addresses) == {"L1", "L2"}
+            assert addresses["L1"].telegram_id == telegram_id
+            assert addresses["L1"].report_date == date(2026, 11, 5)
+            assert addresses["L2"].report_date is None
+            assert sorted(a.id for a in session.query(ReportAddress).all()) == sorted(address_ids)
+            # Служебные записи Change импорт не оставляет
+            assert session.query(Change).count() == 0
+    finally:
+        target_db.close()
 
 
 def test_import_creates_m2m_countries(db_manager: DatabaseManager, tmp_path: Path) -> None:

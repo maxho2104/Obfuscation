@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "name": "evaluation_fixed1",
+  "description": "",
+  "mode": "fixed",
+  "delimiter": "",
+  "header_mode": "none",
+  "fields": [
+    {
+      "name": "branch_part_1",
+      "type": "string",
+      "required": true,
+      "start": 1,
+      "length": 2
+    },
+    {
+      "name": "branch_part_2",
+      "type": "string",
+      "required": true,
+      "start": 4,
+      "length": 3
+    },
+    {
+      "name": "outgoing_no",
+      "type": "string",
+      "required": true,
+      "start": 8,
+      "length": 10
+    },
+    {
+      "name": "year_month",
+      "type": "string",
+      "required": true,
+      "start": 19,
+      "length": 6,
+      "date_format": "MMYYYY"
+    },
+    {
+      "name": "value",
+      "type": "string",
+      "required": false,
+      "start": 26,
+      "length": 1
+    },
+    {
+      "name": "evaluation_date",
+      "type": "date",
+      "required": false,
+      "start": 28,
+      "length": 10,
+      "date_format": "DD.MM.YYYY"
+    }
+  ]
+}
