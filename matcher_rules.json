@@ -5,7 +5,7 @@
       "name": "branch_outgoing_material",
       "description": "Научный материал: филиал + исходящий номер + год/месяц даты.",
       "entity": "material",
-      "composite_keys": ["branch_part_1", "branch_part_2", "branch_part_3"],
+      "composite_keys": ["branch_part_1", "branch_part_2"],
       "conditions": ["year_month_equal"],
       "lookup": {
         "table": "scientific_materials",
