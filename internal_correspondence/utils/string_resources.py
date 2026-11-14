@@ -416,7 +416,7 @@ class AppStrings:
     import_scheme_not_found_for_length: str = (
         "Для длины строки {length} нет подходящей схемы. Создайте новую схему."
     )
-    import_evaluation_presence: str = "Оценка"
+    import_evaluation_presence: str = "Имеется оценка"
     import_has_evaluation: str = "Есть оценка"
     import_no_evaluation: str = "Нет оценки"
     import_value_not_set: str = "Оценка не указана"

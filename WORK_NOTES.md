@@ -780,8 +780,8 @@
 ### Изменения
 - **`internal_correspondence/text_import/`** (новый пакет): конфигурация, ошибки, модели схем/правил/результатов, чтение файла с автоопределением кодировки, разбор fixed/delimited, загрузка и автоопределение схем, декларативный матчер, репозиторий журнала/staging-строк, копирование файла в хранилище и оркестратор `Importer`.
 - **`internal_correspondence/services/evaluation_import_writer.py`** (новый): поиск/создание `EvaluationList` по номеру и дате, создание/обновление `Evaluation`, привязка к научному материалу или телеграмме.
-- **`internal_correspondence/gui/evaluation_import_dialog.py`** (новый): мастер из четырёх страниц (файл и документ, проверка строк, совпадения, результат), drag&drop, редактор схем и просмотр правил.
-- **`internal_correspondence/gui/application.py`**: пункты меню «Данные» → «Импорт оценок из файла...» и «Правила сопоставления» (только головной офис), передача `app_dir` в `MainWindow`.
+- **`internal_correspondence/gui/evaluation_import_dialog.py`** (новый): мастер из четырёх страниц (файл и документ, проверка строк, совпадения, результат), drag&drop, редактор схем; просмотр правил позже убран из меню.
+- **`internal_correspondence/gui/application.py`**: пункт меню «Данные» → «Импорт оценок из файла...» (только головной офис), передача `app_dir` в `MainWindow`.
 - **`internal_correspondence/utils/string_resources.py`**: строки модуля; секция `strings` пакета регенерирована (324 ключа).
 - **`internal_correspondence/core/domain_pack.py`**, **`domain_pack.default.json`**: директория `import` («Импорт»).
 - **`alembic/versions/a7d4e2f6b9c1_import_tables.py`** (новый): `import_log`, `import_rows`, представление `import_matches`, индексы; downgrade удаляет объекты.
@@ -795,7 +795,7 @@
 - `scripts_dev/test_migration_import_tables.py`: upgrade/downgrade/повторный upgrade — OK.
 - `compileall` и импорт GUI — OK.
 - Рабочая БД `D:/Projects/Obfuscation/123.db` обновлена до `a7d4e2f6b9c1` (резервная копия `123.db.bak-import-2026-11-14`); проверены `import_log`, `import_rows` и представление `import_matches`.
-- Дымовая проверка `MainWindow` (роль головного офиса): 4 вкладки, пункты «Импорт оценок из файла...» и «Правила сопоставления» присутствуют.
+- Дымовая проверка `MainWindow` (роль головного офиса): 4 вкладки, пункт «Импорт оценок из файла...» присутствует.
 
 ### Отложено
 - Автоматическая проверка кодировки на реальных файлах заказчика (нужны образцы).
@@ -901,3 +901,34 @@
 ### Отложено
 - Поле «Оценка_количество» сохраняется в staging, но в бизнес-логике пока не используется.
 - Отдельный просмотрщик журнала импорта.
+
+---
+
+## 2026-11-14 — Правки окна импорта оценок
+
+### Изменения
+- **`internal_correspondence/gui/evaluation_import_dialog.py`**:
+  - при выборе файла через диалог или drag&drop файл сразу загружается, поэтому подпись
+    «Схема:» обновляется без дополнительного нажатия «Далее»;
+  - окно при открытии занимает 40% ширины и 40% высоты доступной области экрана
+    и центрируется (`_apply_initial_geometry()`);
+  - в таблице совпадений столбец называется «Имеется оценка»; для существующей оценки
+    показывается её код (`П`, `И`, `Б`, `В`), для новой — «Нет оценки».
+- **`internal_correspondence/text_import/models.py`**, **`service.py`**: `MatchResult.existing_value`
+  заполняется кодом существующей оценки через `enum_codes("evaluation_value")`.
+- **`internal_correspondence/gui/application.py`**: из меню «Данные» удалён пункт
+  «Правила сопоставления» и метод `_view_import_rules()`; просмотр правил больше не
+  требуется, так как сопоставление автоматическое.
+- **`tests/test_evaluation_import_dialog.py`**: тесты обновления подписи схемы при выборе
+  файла, геометрии окна (40% и центр) и отображения кода существующей оценки.
+- **`README.md`**: уточнён столбец «Имеется оценка» и код оценки.
+
+### Проверка
+- `tests/test_evaluation_import_dialog.py`: 7 passed.
+- Полный `pytest tests`: 276 passed.
+- `compileall` и импорт GUI — OK.
+- `scripts_dev/update_pack_strings.py`: 351 ключ (значение `import_evaluation_presence` изменено).
+
+### Отложено
+- Просмотр правил сопоставления из интерфейса удалён; файл `matcher_rules.json`
+  остаётся для обратной совместимости и тестов.

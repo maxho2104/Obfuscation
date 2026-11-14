@@ -291,6 +291,7 @@ class MatchResult:
     evaluation_date: Optional[date] = None
     effect: Optional[float] = None
     duplicate: bool = False
+    existing_value: Optional[str] = None
 
 
 @dataclass

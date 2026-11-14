@@ -992,7 +992,7 @@
     "import_scheme_length": " (длина {length})",
     "import_scheme_not_detected": "Схема не определена: выберите файл.",
     "import_scheme_not_found_for_length": "Для длины строки {length} нет подходящей схемы. Создайте новую схему.",
-    "import_evaluation_presence": "Оценка",
+    "import_evaluation_presence": "Имеется оценка",
     "import_has_evaluation": "Есть оценка",
     "import_no_evaluation": "Нет оценки",
     "import_value_not_set": "Оценка не указана",

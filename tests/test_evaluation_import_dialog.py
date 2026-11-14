@@ -19,7 +19,13 @@ from internal_correspondence.gui.evaluation_import_dialog import (
 )
 from internal_correspondence.orm.base import Base
 from internal_correspondence.text_import import ImporterConfig
-from internal_correspondence.text_import.models import FieldSpec, LayoutScheme
+from internal_correspondence.text_import.models import (
+    FieldSpec,
+    LayoutScheme,
+    MatchPreview,
+    MatchResult,
+    ParsedRow,
+)
 from internal_correspondence.utils.string_resources import STRINGS
 
 
@@ -78,6 +84,76 @@ def test_dialog_auto_detects_project_scheme_by_length(app, tmp_path: Path) -> No
         dialog._go_next()
         assert dialog.stack.currentIndex() == 2
         assert dialog.matches_table.rowCount() == 1
+    finally:
+        dialog.importer.close()
+        dialog.close()
+
+
+def test_choose_file_updates_scheme_label(app, tmp_path: Path, monkeypatch) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'db.sqlite'}")
+    Base.metadata.create_all(engine)
+    dialog = EvaluationImportDialog(_config(tmp_path), engine)
+    try:
+        row = list(" " * 139)
+        for start, value in (
+            (1, "11"), (4, "1"), (6, "11"), (21, "0000012345678"),
+            (86, "П"), (90, "1"), (97, "21.12.2025"), (108, "122025"),
+        ):
+            row[start - 1 : start - 1 + len(value)] = value
+        path = tmp_path / "data.txt"
+        path.write_text("".join(row) + "\n", encoding="utf-8")
+        monkeypatch.setattr(
+            "internal_correspondence.gui.evaluation_import_dialog.QFileDialog.getOpenFileName",
+            lambda *args, **kwargs: (str(path), ""),
+        )
+        dialog._choose_file()
+        assert dialog.importer.scheme is not None
+        assert "Оценочные данные" in dialog.scheme_label.text()
+        assert dialog.next_button.isEnabled() is True
+    finally:
+        dialog.importer.close()
+        dialog.close()
+
+
+def test_dialog_geometry_is_40_percent_and_centered(app, tmp_path: Path) -> None:
+    from PyQt5.QtWidgets import QApplication
+
+    screen = QApplication.primaryScreen()
+    if screen is None:
+        pytest.skip("нет экрана")
+    available = screen.availableGeometry()
+    engine = create_engine(f"sqlite:///{tmp_path / 'db.sqlite'}")
+    Base.metadata.create_all(engine)
+    dialog = EvaluationImportDialog(_config(tmp_path), engine)
+    try:
+        assert abs(dialog.width() - int(available.width() * 0.4)) <= 5
+        assert abs(dialog.height() - int(available.height() * 0.4)) <= 5
+        assert abs(dialog.frameGeometry().center().x() - available.center().x()) <= 5
+        assert abs(dialog.frameGeometry().center().y() - available.center().y()) <= 5
+    finally:
+        dialog.importer.close()
+        dialog.close()
+
+
+def test_match_table_shows_existing_evaluation_code(app, tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'db.sqlite'}")
+    Base.metadata.create_all(engine)
+    dialog = EvaluationImportDialog(_config(tmp_path), engine)
+    try:
+        row = ParsedRow(row_no=2, raw="line", data={"outgoing_no": "154/23"})
+        result = MatchResult(
+            row=row,
+            matched=True,
+            entity_type="material",
+            entity_id="00000000-0000-0000-0000-000000000001",
+            value_code="В",
+            duplicate=True,
+            existing_value="П",
+        )
+        dialog._fill_matches(MatchPreview(results=[result], total=1))
+        header = dialog.matches_table.horizontalHeaderItem(4).text()
+        assert header == STRINGS.import_evaluation_presence
+        assert dialog.matches_table.item(0, 4).text() == "П"
     finally:
         dialog.importer.close()
         dialog.close()

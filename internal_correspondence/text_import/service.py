@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from sqlalchemy.orm import Session
 
+from internal_correspondence.core.domain_pack import enum_codes
 from internal_correspondence.services.evaluation_import_writer import (
     EvaluationImportWriter,
     EvaluationWriteError,
@@ -48,6 +49,14 @@ from internal_correspondence.text_import.scheme import (
 from internal_correspondence.text_import.storage import copy_to_storage
 
 logger = logging.getLogger("internal_correspondence.text_import")
+
+
+def _evaluation_code(evaluation: Any) -> Optional[str]:
+    """Возвращает код вида оценки (Б/И/П/В) для существующей оценки."""
+    try:
+        return list(enum_codes("evaluation_value"))[int(evaluation.value)]
+    except (TypeError, ValueError, IndexError):
+        return str(evaluation.value)
 
 
 class Importer:
@@ -217,10 +226,12 @@ class Importer:
         for result in results:
             if result.matched and result.value_code:
                 try:
-                    result.duplicate = (
-                        self._writer.find_existing(result.entity_type or "", result.entity_id or "")
-                        is not None
+                    existing = self._writer.find_existing(
+                        result.entity_type or "", result.entity_id or ""
                     )
+                    result.duplicate = existing is not None
+                    if existing is not None:
+                        result.existing_value = _evaluation_code(existing)
                 except (ValueError, EvaluationWriteError):
                     result.duplicate = False
         self.preview = MatchPreview(results=results, total=len(results))

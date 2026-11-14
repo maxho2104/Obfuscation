@@ -38,10 +38,7 @@ from internal_correspondence.core.logging_config import configure_logging, get_l
 from internal_correspondence.core.settings import AppSettings, SettingsManager
 from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
 from internal_correspondence.gui.document_list_widget import DocumentListWidget
-from internal_correspondence.gui.evaluation_import_dialog import (
-    EvaluationImportDialog,
-    RulesViewerDialog,
-)
+from internal_correspondence.gui.evaluation_import_dialog import EvaluationImportDialog
 from internal_correspondence.gui.filter_model import (
     deserialize_filters,
     serialize_filters,
@@ -497,10 +494,6 @@ class MainWindow(QMainWindow):
         import_evaluations_action.setEnabled(is_head_office)
         import_evaluations_action.triggered.connect(self._import_evaluations)
         data_menu.addAction(import_evaluations_action)
-        rules_action = QAction(STRINGS.import_rules_viewer, self)
-        rules_action.setEnabled(is_head_office)
-        rules_action.triggered.connect(self._view_import_rules)
-        data_menu.addAction(rules_action)
         data_menu.addSeparator()
 
         # Меню "ОШС"
@@ -747,11 +740,6 @@ class MainWindow(QMainWindow):
         self.materials_tab.refresh()
         self.telegram_tab.refresh()
         self.statistics_tab.refresh()
-
-    def _view_import_rules(self) -> None:
-        """Показывает правила сопоставления строк с документами."""
-        dialog = RulesViewerDialog(self.app_dir / "matcher_rules.json", self)
-        dialog.exec_()
 
     def _export_domain_pack(self) -> None:
         """Выгружает активный пакет предметной области в JSON-файл."""

@@ -10,6 +10,7 @@ from PyQt5.QtCore import QDate, Qt
 from PyQt5.QtGui import QBrush, QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDateEdit,
@@ -45,13 +46,13 @@ class EvaluationImportDialog(QDialog):
     def __init__(self, config: ImporterConfig, engine, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(STRINGS.dialog_import_evaluations_title)
-        self.resize(1000, 720)
         self.setAcceptDrops(True)
         self.config = config
         self.importer = Importer(config, engine)
         self._duplicate_actions: Dict[int, str] = {}
         self._result = None
         self._build_ui()
+        self._apply_initial_geometry()
         self._reload_schemes()
         self._update_nav()
 
@@ -79,6 +80,18 @@ class EvaluationImportDialog(QDialog):
         nav.addWidget(close_button)
         nav.addWidget(self.next_button)
         layout.addLayout(nav)
+
+    def _apply_initial_geometry(self) -> None:
+        """Размещает окно по центру экрана размером 40% x 40%."""
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            self.resize(1000, 720)
+            return
+        available = screen.availableGeometry()
+        self.resize(int(available.width() * 0.4), int(available.height() * 0.4))
+        frame = self.frameGeometry()
+        frame.moveCenter(available.center())
+        self.move(frame.topLeft())
 
     def _build_file_page(self) -> QWidget:
         page = QWidget()
@@ -240,7 +253,7 @@ class EvaluationImportDialog(QDialog):
         )
         if path:
             self.file_edit.setText(path)
-            self._update_nav()
+            self._load_selected_file()
 
     def _load_selected_file(self) -> bool:
         path = self.file_edit.text().strip()
@@ -479,7 +492,7 @@ class EvaluationImportDialog(QDialog):
             elif not result.value_code:
                 presence = STRINGS.import_value_not_set
             elif result.duplicate:
-                presence = STRINGS.import_has_evaluation
+                presence = result.existing_value or STRINGS.import_has_evaluation
             else:
                 presence = STRINGS.import_no_evaluation
             self.matches_table.setItem(row, 4, QTableWidgetItem(presence))
@@ -631,7 +644,7 @@ class EvaluationImportDialog(QDialog):
         path = Path(urls[0].toLocalFile())
         if path.is_file():
             self.file_edit.setText(str(path))
-            self._update_nav()
+            self._load_selected_file()
             event.acceptProposedAction()
 
 

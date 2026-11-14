@@ -366,6 +366,7 @@ def test_project_effect_scheme_updates_existing_evaluation_and_cost(tmp_path: Pa
     updater.validate()
     preview = updater.preview_matches()
     assert preview.duplicate_count == 1
+    assert preview.results[0].existing_value == "П"
     result = updater.import_to_db(
         duplicate_actions={preview.results[0].row.row_no: "update"},
         force_duplicate=True,
