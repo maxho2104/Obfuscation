@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import List, Optional
 
 from sqlalchemy import (
@@ -1108,6 +1109,9 @@ class Evaluation(Base, ChangeTrackedMixin):
         IntEnumType(EvaluationValue), nullable=False, info={"label": "Значение оценки"}
     )
     date: Mapped[date] = mapped_column(Date, nullable=False, info={"label": "Дата выставления"})
+    effect: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(15, 2), nullable=True, info={"label": "Эффект"}
+    )
 
     evaluation_list_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("evaluation_lists.id", ondelete="CASCADE"),

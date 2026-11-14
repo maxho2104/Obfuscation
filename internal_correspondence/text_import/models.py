@@ -79,9 +79,10 @@ class LayoutScheme:
     header_mode: str = "skip"
     fields: List[FieldSpec] = field(default_factory=list)
     description: str = ""
+    record_length: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "version": 1,
             "name": self.name,
             "description": self.description,
@@ -90,6 +91,9 @@ class LayoutScheme:
             "header_mode": self.header_mode,
             "fields": [item.to_dict() for item in self.fields],
         }
+        if self.record_length is not None:
+            result["line_length"] = self.record_length
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LayoutScheme":
@@ -101,6 +105,7 @@ class LayoutScheme:
             header_mode=str(data.get("header_mode", "skip")),
             fields=fields,
             description=str(data.get("description", "")),
+            record_length=data.get("line_length"),
         )
 
     def validate(self) -> List[str]:
@@ -122,7 +127,7 @@ class LayoutScheme:
         if len(set(names)) != len(names):
             errors.append("field_name_duplicate")
         for item in self.fields:
-            if item.type not in ("string", "integer", "date"):
+            if item.type not in ("string", "integer", "number", "date"):
                 errors.append(f"field_type_invalid:{item.name}")
             if item.type == "date":
                 if item.date_format not in (None, "DD.MM.YYYY", "YYYYMM"):
@@ -164,7 +169,27 @@ class LayoutScheme:
         for left, right in zip(intervals, intervals[1:]):
             if right[0] <= left[1]:
                 errors.append(f"field_overlap:{left[2]}:{right[2]}")
+        if self.record_length is not None:
+            if self.record_length < 1:
+                errors.append("scheme_line_length_invalid")
+            elif intervals and intervals[-1][1] > self.record_length:
+                errors.append("scheme_line_length_too_small")
         return errors
+
+    @property
+    def line_length(self) -> Optional[int]:
+        """Длина записи для fixed-схемы (None, если последнее поле до конца)."""
+        if self.mode != "fixed":
+            return None
+        lengths = [
+            item.start - 1 + item.length
+            for item in self.fields
+            if item.start is not None and item.length is not None
+        ]
+        computed = max(lengths) if lengths else None
+        if self.record_length is not None:
+            return self.record_length
+        return computed
 
     @property
     def is_valid(self) -> bool:
@@ -264,6 +289,7 @@ class MatchResult:
     year_month: str = ""
     value_code: Optional[str] = None
     evaluation_date: Optional[date] = None
+    effect: Optional[float] = None
     duplicate: bool = False
 
 
@@ -317,8 +343,13 @@ class ImportCounts:
     skipped: int = 0
     rejected: int = 0
     error: int = 0
+    evaluations_received: int = 0
+    by_value: Dict[str, int] = field(default_factory=dict)
+    documents_reupdated: int = 0
+    materials_reupdated: int = 0
+    telegrams_reupdated: int = 0
 
-    def as_dict(self) -> Dict[str, int]:
+    def as_dict(self) -> Dict[str, Any]:
         return {
             "imported": self.imported,
             "matched": self.matched,
@@ -326,6 +357,11 @@ class ImportCounts:
             "skipped": self.skipped,
             "rejected": self.rejected,
             "error": self.error,
+            "evaluations_received": self.evaluations_received,
+            "by_value": dict(self.by_value),
+            "documents_reupdated": self.documents_reupdated,
+            "materials_reupdated": self.materials_reupdated,
+            "telegrams_reupdated": self.telegrams_reupdated,
         }
 
 

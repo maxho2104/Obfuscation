@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from decimal import Decimal
 from typing import Optional, Tuple
 
 from sqlalchemy import select
@@ -132,19 +133,33 @@ class EvaluationImportWriter:
         if document is None:
             raise EvaluationWriteError(f"document not found: {match.entity_id}")
         value = value_from_code(match.value_code)
+        effect = Decimal(str(match.effect)) if match.effect is not None else None
         existing = self.find_existing(match.entity_type, match.entity_id)
         if existing is not None:
             if action != "update":
                 return existing, False
+            changed = (
+                existing.value != value
+                or existing.date != match.evaluation_date
+                or existing.effect != effect
+            )
+            if not changed:
+                return existing, False
             existing.value = value
             existing.date = match.evaluation_date
+            existing.effect = effect
+            if match.entity_type == "material" and effect is not None:
+                document.cost = effect
             self.session.flush()
             return existing, True
         evaluation = Evaluation(
             value=value,
             date=match.evaluation_date,
+            effect=effect,
             evaluation_list_id=self.ensure_list().id,
         )
+        if match.entity_type == "material" and effect is not None:
+            document.cost = effect
         document.evaluations.append(evaluation)
         self.session.add(evaluation)
         self.session.flush()

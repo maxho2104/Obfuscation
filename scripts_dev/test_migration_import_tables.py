@@ -46,6 +46,10 @@ def main() -> None:
         assert "import_log" in tables, tables
         assert "import_rows" in tables, tables
         assert "import_matches" in views, views
+        evaluation_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(evaluations)")
+        }
+        assert "effect" in evaluation_columns, evaluation_columns
 
         conn.execute(
             "INSERT INTO import_log "

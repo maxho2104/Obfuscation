@@ -408,6 +408,37 @@ class AppStrings:
     import_entity_column: str = "Сущность"
     import_table_column: str = "Таблица"
     import_conditions_column: str = "Условия"
+    import_clear: str = "Очистить"
+    import_create_scheme: str = "Создать новую схему"
+    import_scheme_detected: str = "Схема определена: {title}"
+    import_scheme_length: str = " (длина {length})"
+    import_scheme_not_detected: str = "Схема не определена: выберите файл."
+    import_scheme_not_found_for_length: str = (
+        "Для длины строки {length} нет подходящей схемы. Создайте новую схему."
+    )
+    import_evaluation_presence: str = "Оценка"
+    import_has_evaluation: str = "Есть оценка"
+    import_no_evaluation: str = "Нет оценки"
+    import_value_not_set: str = "Оценка не указана"
+    import_stats_evaluations: str = "Получено оценок: {count}"
+    import_stats_by_value: str = "По видам оценок: {values}"
+    import_stats_reupdated: str = (
+        "Переоценено документов: {documents}, материалов: {materials}"
+    )
+    import_problem_line_length: str = "Длина строки не соответствует схеме."
+    import_problem_line_empty: str = "Пустая строка."
+    import_problem_field_required: str = "Не заполнено обязательное поле."
+    import_problem_field_type: str = "Некорректное числовое значение."
+    import_problem_field_date: str = "Некорректная дата."
+    import_problem_field_regex: str = "Значение не соответствует формату."
+    import_problem_field_start: str = "В схеме не задано начало поля."
+    import_problem_field_count: str = "Неверное количество полей."
+    import_reason_key_empty: str = "Не удалось собрать код филиала."
+    import_reason_year_month_invalid: str = "Некорректный отчётный месяц."
+    import_reason_document_not_found: str = "Документ не найден."
+    import_reason_document_ambiguous: str = "Найдено несколько документов."
+    import_reason_rule_not_selected: str = "Не выбрано правило."
+    import_reason_scheme_not_selected: str = "Не выбрана схема."
 
 
 STRINGS = AppStrings()

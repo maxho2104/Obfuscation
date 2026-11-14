@@ -40,7 +40,11 @@ from internal_correspondence.text_import.models import (
 )
 from internal_correspondence.text_import.parsing import parse_rows
 from internal_correspondence.text_import.reader import read_file
-from internal_correspondence.text_import.scheme import detect_schemes, load_schemes
+from internal_correspondence.text_import.scheme import (
+    detect_scheme_by_length,
+    detect_schemes,
+    load_schemes,
+)
 from internal_correspondence.text_import.storage import copy_to_storage
 
 logger = logging.getLogger("internal_correspondence.text_import")
@@ -77,6 +81,7 @@ class Importer:
         self.rules: MatchRuleSet = MatchRuleSet()
         self._rejected: Set[int] = set()
         self._writer: Optional[EvaluationImportWriter] = None
+        self._scheme_matches: List[SchemeMatch] = []
 
     # -- загрузка и выбор схемы/правила ------------------------------------
     def load_file(self, path: str | Path, encoding: Optional[str] = None) -> FileInfo:
@@ -90,7 +95,39 @@ class Importer:
         self.preview = None
         self._rejected.clear()
         self.schemes = load_schemes(self.config.schemes_dir)
+        self.auto_detect_scheme()
         return self.info
+
+    def auto_detect_scheme(self) -> List[SchemeMatch]:
+        """Определяет схему по длине строки; выбирает её при единственном совпадении."""
+        if self.info is None:
+            raise ImporterError("file_not_loaded", "file is not loaded")
+        self._scheme_matches = detect_scheme_by_length(self.info.lines, self.schemes)
+        matched = [item for item in self._scheme_matches if item.matched]
+        self.scheme = matched[0].scheme if len(matched) == 1 else None
+        self.report = None
+        self.preview = None
+        return self._scheme_matches
+
+    def reset(self) -> None:
+        """Сбрасывает загруженный файл и результаты проверки."""
+        self.info = None
+        self.scheme = None
+        self.rule = None
+        self.report = None
+        self.preview = None
+        self._rejected.clear()
+        self._scheme_matches = []
+        self._writer = None
+
+    def scheme_length(self) -> Optional[int]:
+        if self.info is None:
+            return None
+        for line in self.info.lines:
+            candidate = line.rstrip("\r\n")
+            if candidate.strip():
+                return len(candidate)
+        return None
 
     def detect_schemes(self) -> List[SchemeMatch]:
         if self.info is None:
@@ -164,7 +201,7 @@ class Importer:
     # -- предпросмотр и импорт ---------------------------------------------
     def preview_matches(self) -> MatchPreview:
         self._require(self.report, "validation_required")
-        self._require(self.rule, "rule_not_selected")
+        self._require(self.scheme, "scheme_not_selected")
         self._require(self.meta, "document_not_set")
         rows = [
             row
@@ -172,7 +209,10 @@ class Importer:
             if row.is_valid and row.row_no not in self._rejected
         ]
         matcher = Matcher(self.session)
-        results = matcher.match(rows, self.rule, self.scheme)
+        if self.rule is not None:
+            results = matcher.match(rows, self.rule, self.scheme)
+        else:
+            results = matcher.match_auto(rows)
         self._writer = EvaluationImportWriter(self.session, self.meta.doc_no, self.meta.doc_date)
         for result in results:
             if result.matched and result.value_code:
@@ -198,7 +238,6 @@ class Importer:
     ) -> ImportResult:
         self._require(self.info, "file_not_loaded")
         self._require(self.scheme, "scheme_not_selected")
-        self._require(self.rule, "rule_not_selected")
         self._require(self.meta, "document_not_set")
         if self.report is None:
             self.validate()
@@ -239,7 +278,7 @@ class Importer:
                 "file_name": self.info.path.name,
                 "file_hash": self.info.file_hash,
                 "scheme_name": self.scheme.name,
-                "matched_rule": self.rule.name,
+                "matched_rule": self.rule.name if self.rule is not None else "auto",
                 "started_at": datetime.now(),
                 "status": "running",
             },
@@ -248,7 +287,7 @@ class Importer:
         try:
             with self.session.begin():
                 self._insert_staging_rows(log_id, preview, actions)
-                self._write_evaluations(preview, actions)
+                self._write_evaluations(preview, actions, counts)
                 repository.update_log(
                     self.session,
                     log_id,
@@ -279,7 +318,12 @@ class Importer:
             logger.exception("import failed", exc_info=exc)
             raise
         try:
-            copied = copy_to_storage(self.info.path, self.config)
+            copied = copy_to_storage(
+                self.info.path,
+                self.config,
+                doc_no=self.meta.doc_no,
+                doc_date=self.meta.doc_date,
+            )
             stored_path = copied.path
             repository.update_log(self.session, log_id, stored_path=str(stored_path))
         except Exception as exc:  # файл уже в БД — не откатываем импорт
@@ -353,14 +397,33 @@ class Importer:
         for start in range(self.config.batch_size, len(payload), self.config.batch_size):
             repository.insert_rows(self.session, payload[start : start + self.config.batch_size])
 
-    def _write_evaluations(self, preview: MatchPreview, actions: Dict[int, str]) -> None:
+    def _write_evaluations(
+        self,
+        preview: MatchPreview,
+        actions: Dict[int, str],
+        counts: ImportCounts,
+    ) -> None:
         if self._writer is None:
             self._writer = EvaluationImportWriter(self.session, self.meta.doc_no, self.meta.doc_date)
         for result in preview.results:
             if not result.matched or not result.value_code:
                 continue
+            # «Оценка_количество» пока не используется в бизнес-логике:
+            # одна строка файла — одна полученная оценка.
+            counts.evaluations_received += 1
+            code = str(result.value_code)
+            counts.by_value[code] = counts.by_value.get(code, 0) + 1
             action = actions.get(result.row.row_no, "skip")
-            self._writer.write(result, action=action)
+            existing = self._writer.find_existing(
+                result.entity_type or "", result.entity_id or ""
+            )
+            _, changed = self._writer.write(result, action=action)
+            if existing is not None and changed:
+                counts.documents_reupdated += 1
+                if result.entity_type == "material":
+                    counts.materials_reupdated += 1
+                elif result.entity_type == "telegram":
+                    counts.telegrams_reupdated += 1
 
     def _require(self, value: Any, code: str) -> None:
         if value is None:

@@ -152,6 +152,11 @@ def _convert(item: FieldSpec, raw_value: str) -> Any:
         if value.startswith("+"):
             value = value[1:]
         return int(value)
+    if item.type == "number":
+        try:
+            return float(value.replace(",", ".").replace(" ", ""))
+        except ValueError as exc:
+            raise RowProblemError("field_type", f"field {item.name} is not a number") from exc
     if item.type == "date":
         return parse_date(value, item.date_format)
     return value

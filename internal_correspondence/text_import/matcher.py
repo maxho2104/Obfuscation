@@ -123,11 +123,121 @@ def _parse_year_month(value: str) -> Optional[Tuple[int, int]]:
     return None
 
 
+def _auto_branch_code(row: ParsedRow) -> str:
+    """Собирает код филиала из частей ``branch_part_*`` через дефис."""
+    explicit = row.data.get("branch_code")
+    if explicit:
+        return str(explicit).strip()
+    parts = [
+        str(row.data.get(key) or "").strip()
+        for key in ("branch_part_1", "branch_part_2", "branch_part_3")
+    ]
+    parts = [part for part in parts if part]
+    return "-".join(parts)
+
+
+def _auto_effect(row: ParsedRow) -> Optional[float]:
+    value = row.data.get("effect")
+    if value is None or value == "":
+        return None
+    try:
+        return float(str(value).replace(",", ".").replace(" ", ""))
+    except (TypeError, ValueError):
+        return None
+
+
 class Matcher:
     """Сопоставляет разобранные строки с существующими документами."""
 
     def __init__(self, session) -> None:
         self.session = session
+
+    def match_auto(self, rows: Iterable[ParsedRow]) -> List[MatchResult]:
+        """Ищет документ сразу в материалах и телеграммах.
+
+        Ключ поиска — филиал + исходящий номер; затем проверяется, что месяц
+        ``outgoing_date`` совпадает с отчётным месяцем строки. Если подходящих
+        документов несколько (включая случай «материал и телеграмма»), строка
+        считается неоднозначной.
+        """
+        valid_rows = [row for row in rows if row.is_valid]
+        keys: Dict[Tuple[str, str], List[Tuple[str, str, date]]] = {}
+        branch_codes = set()
+        numbers = set()
+        for row in valid_rows:
+            branch_code = _auto_branch_code(row)
+            outgoing_no = str(row.data.get("outgoing_no") or "").strip()
+            if branch_code and outgoing_no:
+                branch_codes.add(branch_code)
+                numbers.add(outgoing_no)
+        if branch_codes and numbers:
+            for entity_type, model in ENTITY_MODELS.items():
+                statement = select(
+                    model.id,
+                    model.branch_id,
+                    model.outgoing_number,
+                    model.outgoing_date,
+                ).where(
+                    model.branch_id.in_(sorted(branch_codes)),
+                    model.outgoing_number.in_(sorted(numbers)),
+                )
+                for entity_id, branch_id, number, document_date in self.session.execute(statement):
+                    if document_date is None:
+                        continue
+                    key = (str(branch_id), str(number))
+                    keys.setdefault(key, []).append(
+                        (entity_type, str(entity_id), document_date)
+                    )
+
+        results: List[MatchResult] = []
+        for row in valid_rows:
+            branch_code = _auto_branch_code(row)
+            outgoing_no = str(row.data.get("outgoing_no") or "").strip()
+            year_month = str(row.data.get("year_month") or "").strip()
+            value_code = row.data.get("value")
+            value_code = str(value_code).strip() if value_code is not None else None
+            evaluation_date = row.data.get("evaluation_date")
+            if evaluation_date is not None and not isinstance(evaluation_date, date):
+                evaluation_date = None
+            base = MatchResult(
+                row=row,
+                matched=False,
+                branch_code=branch_code,
+                outgoing_no=outgoing_no,
+                year_month=year_month,
+                value_code=value_code or None,
+                evaluation_date=evaluation_date,
+                effect=_auto_effect(row),
+            )
+            if not branch_code or not outgoing_no:
+                base.reason = "key_empty"
+                results.append(base)
+                continue
+            parsed_year_month = _parse_year_month(year_month)
+            if parsed_year_month is None:
+                base.reason = "year_month_invalid"
+                results.append(base)
+                continue
+            year, month = parsed_year_month
+            found = [
+                item
+                for item in keys.get((branch_code, outgoing_no), [])
+                if item[2].year == year and item[2].month == month
+            ]
+            if not found:
+                base.reason = "document_not_found"
+                results.append(base)
+                continue
+            if len(found) > 1:
+                base.reason = "document_ambiguous"
+                results.append(base)
+                continue
+            entity_type, entity_id, _ = found[0]
+            base.matched = True
+            base.entity_type = entity_type
+            base.entity_id = entity_id
+            results.append(base)
+        return results
 
     def match(
         self,

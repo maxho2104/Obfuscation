@@ -857,3 +857,47 @@
 
 ### Отложено
 - Отдельный просмотрщик журнала импорта.
+
+---
+
+## 2026-11-14 — Импорт оценок: автоопределение схемы, «Эффект» и статистика
+
+### Изменения
+- **`internal_correspondence/text_import/models.py`**: `LayoutScheme.record_length` и
+  `line_length`; тип поля `number`; `MatchResult.effect`; в `ImportCounts` добавлены
+  `evaluations_received`, `by_value`, `documents_reupdated`, `materials_reupdated`,
+  `telegrams_reupdated`.
+- **`internal_correspondence/text_import/scheme.py`**: `detect_scheme_by_length()` —
+  выбор схемы по длине строки (139/101) и разбор первых строк.
+- **`internal_correspondence/text_import/matcher.py`**: `match_auto()` ищет документ
+  одновременно в научных материалах и телеграммах по филиалу, исходящему номеру и
+  месяцу исходящей даты; добавлены `_auto_branch_code()` и `_auto_effect()`.
+- **`internal_correspondence/text_import/service.py`**: автоопределение схемы при загрузке,
+  импорт без выбора правила, статистика переоценки, имя копии файла с номером и датой
+  документа.
+- **`internal_correspondence/orm/models.py`**, **`alembic/versions/d2f4a6c8e0b1_evaluation_effect.py`**:
+  поле `Evaluation.effect` (`Numeric(15,2)`); миграция применена к рабочей БД.
+- **`internal_correspondence/services/evaluation_import_writer.py`**: сохранение эффекта
+  в оценке и в `ScientificMaterial.cost`; подсчёт переоценённых документов.
+- **`internal_correspondence/gui/evaluation_import_dialog.py`**: шаг 1 без выбора схемы и
+  правила, кнопки «Выбрать файл»/«Очистить»/«Создать новую схему»; предпросмотр по
+  столбцам; на шаге совпадений — «Есть оценка»/«Нет оценки» и русские причины; итоговая
+  статистика.
+- **`schemes/evaluation_data_139.json`**, **`schemes/effect_101.json`**: схемы форматов
+  «Оценочные данные» и «Эффект».
+- **`tests/test_text_import.py`**, **`tests/test_evaluation_import_dialog.py`**: тесты
+  автоопределения схемы, неоднозначного совпадения, эффекта и обновления стоимости,
+  автоопределения в диалоге.
+- **`README.md`**: новый порядок импорта, описание поля «Эффект» и статистики.
+
+### Проверка
+- `pytest tests`: **273 passed**.
+- `scripts_dev/test_migration_import_tables.py`: upgrade/downgrade/повторный upgrade OK,
+  колонка `evaluations.effect` присутствует.
+- `scripts_dev/update_pack_strings.py`: 351 ключ; `compileall` и импорт GUI — OK.
+- Рабочая БД `D:/Projects/Obfuscation/123.db` обновлена до `d2f4a6c8e0b1`
+  (резервная копия `123.db.bak-effect-2026-11-14`).
+
+### Отложено
+- Поле «Оценка_количество» сохраняется в staging, но в бизнес-логике пока не используется.
+- Отдельный просмотрщик журнала импорта.

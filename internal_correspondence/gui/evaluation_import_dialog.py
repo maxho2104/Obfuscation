@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from PyQt5.QtCore import QDate, Qt
-from PyQt5.QtGui import QBrush, QColor, QDesktopServices
+from PyQt5.QtGui import QBrush, QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -30,9 +30,10 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from internal_correspondence.core.domain_pack import enum_label
 from internal_correspondence.text_import import Importer, ImporterConfig
 from internal_correspondence.text_import.errors import ImporterError
-from internal_correspondence.text_import.models import LayoutScheme, MatchRule
+from internal_correspondence.text_import.models import LayoutScheme
 from internal_correspondence.text_import.parsing import parse_rows, split_fields
 from internal_correspondence.text_import.scheme import load_schemes
 from internal_correspondence.utils.string_resources import STRINGS
@@ -51,7 +52,7 @@ class EvaluationImportDialog(QDialog):
         self._duplicate_actions: Dict[int, str] = {}
         self._result = None
         self._build_ui()
-        self._load_lists()
+        self._reload_schemes()
         self._update_nav()
 
     # -- построение ---------------------------------------------------------
@@ -88,8 +89,11 @@ class EvaluationImportDialog(QDialog):
         self.file_edit.textChanged.connect(lambda _: self._update_nav())
         browse = QPushButton(STRINGS.import_choose_file)
         browse.clicked.connect(self._choose_file)
+        clear = QPushButton(STRINGS.import_clear)
+        clear.clicked.connect(self._clear_file)
         file_row.addWidget(self.file_edit, 1)
         file_row.addWidget(browse)
+        file_row.addWidget(clear)
         form.addRow(STRINGS.import_file_label, file_row)
         hint = QLabel(STRINGS.import_drop_hint)
         hint.setWordWrap(True)
@@ -101,15 +105,13 @@ class EvaluationImportDialog(QDialog):
         self.doc_date_edit.setDisplayFormat("dd.MM.yyyy")
         form.addRow(STRINGS.import_doc_date, self.doc_date_edit)
         scheme_row = QHBoxLayout()
-        self.scheme_combo = QComboBox()
-        self.scheme_combo.currentIndexChanged.connect(lambda _: self._on_scheme_changed())
-        edit_scheme = QPushButton(STRINGS.import_scheme_editor)
-        edit_scheme.clicked.connect(self._edit_scheme)
-        scheme_row.addWidget(self.scheme_combo, 1)
-        scheme_row.addWidget(edit_scheme)
+        self.scheme_label = QLabel(STRINGS.import_scheme_not_detected)
+        self.scheme_label.setWordWrap(True)
+        create_scheme = QPushButton(STRINGS.import_create_scheme)
+        create_scheme.clicked.connect(self._create_scheme)
+        scheme_row.addWidget(self.scheme_label, 1)
+        scheme_row.addWidget(create_scheme)
         form.addRow(STRINGS.import_scheme, scheme_row)
-        self.rule_combo = QComboBox()
-        form.addRow(STRINGS.import_rule, self.rule_combo)
         return page
 
     def _build_check_page(self) -> QWidget:
@@ -161,13 +163,14 @@ class EvaluationImportDialog(QDialog):
         layout = QVBoxLayout(page)
         self.match_counts = QLabel()
         layout.addWidget(self.match_counts)
-        self.matches_table = QTableWidget(0, 5)
+        self.matches_table = QTableWidget(0, 6)
         self.matches_table.setHorizontalHeaderLabels(
             [
                 "№",
                 STRINGS.import_match_status,
                 STRINGS.import_match_reason,
                 STRINGS.label_evaluation_value,
+                STRINGS.import_evaluation_presence,
                 STRINGS.import_duplicate_eval,
             ]
         )
@@ -197,39 +200,35 @@ class EvaluationImportDialog(QDialog):
         self.result_details = QPlainTextEdit()
         self.result_details.setReadOnly(True)
         layout.addWidget(self.result_details, 1)
-        buttons = QHBoxLayout()
-        open_log = QPushButton(STRINGS.import_open_log)
-        open_log.clicked.connect(self._open_log)
-        buttons.addWidget(open_log)
-        buttons.addStretch(1)
-        layout.addLayout(buttons)
         return page
 
-    # -- списки схем/правил -------------------------------------------------
-    def _load_lists(self) -> None:
-        self.scheme_combo.clear()
+    # -- схемы --------------------------------------------------------------
+    def _reload_schemes(self) -> None:
         try:
-            schemes = load_schemes(self.config.schemes_dir)
+            self.schemes = load_schemes(self.config.schemes_dir)
         except Exception as exc:  # noqa: BLE001
-            schemes = []
+            self.schemes = []
             self._show_error(exc)
-        for scheme in schemes:
-            self.scheme_combo.addItem(scheme.name, scheme)
-        if not schemes:
-            self.scheme_combo.addItem(STRINGS.import_no_schemes, None)
-        self.rule_combo.clear()
-        try:
-            rules = self.importer.load_rules()
-        except Exception as exc:  # noqa: BLE001
-            self.rule_combo.addItem(STRINGS.import_no_rules, None)
-            self._show_error(exc)
-            return
-        for rule in rules.rules:
-            self.rule_combo.addItem(rule.name, rule)
 
-    def _on_scheme_changed(self) -> None:
-        self._refresh_preview()
-        self._update_nav()
+    def _scheme_title(self, scheme: LayoutScheme) -> str:
+        length = scheme.line_length
+        suffix = STRINGS.import_scheme_length.format(length=length) if length else ""
+        return f"{scheme.name}{suffix}"
+
+    def _update_scheme_label(self) -> None:
+        scheme = self.importer.scheme
+        if scheme is not None:
+            self.scheme_label.setText(
+                STRINGS.import_scheme_detected.format(title=self._scheme_title(scheme))
+            )
+            return
+        length = self.importer.scheme_length()
+        if length is None:
+            self.scheme_label.setText(STRINGS.import_scheme_not_detected)
+        else:
+            self.scheme_label.setText(
+                STRINGS.import_scheme_not_found_for_length.format(length=length)
+            )
 
     # -- файл ---------------------------------------------------------------
     def _choose_file(self) -> None:
@@ -254,15 +253,32 @@ class EvaluationImportDialog(QDialog):
             self._show_error(exc)
             return False
         self.file_edit.setText(str(info.path))
+        self._update_scheme_label()
         self._refresh_preview()
-        matches = self.importer.detect_schemes()
-        matched = [item for item in matches if item.matched]
-        if matched:
-            index = self.scheme_combo.findText(matched[0].scheme.name)
-            if index >= 0:
-                self.scheme_combo.setCurrentIndex(index)
         self._update_nav()
         return True
+
+    def _clear_file(self) -> None:
+        self.importer.reset()
+        self.file_edit.clear()
+        self.scheme_label.setText(STRINGS.import_scheme_not_detected)
+        self.preview_table.clear()
+        self.preview_table.setRowCount(0)
+        self.preview_table.setColumnCount(0)
+        self.problems_table.setRowCount(0)
+        self.matches_table.setRowCount(0)
+        self.match_counts.clear()
+        self._duplicate_actions.clear()
+        self.stack.setCurrentIndex(0)
+        self._update_nav()
+
+    def _create_scheme(self) -> None:
+        dialog = SchemeEditorDialog(self.config.schemes_dir, None, self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        self._reload_schemes()
+        if self.file_edit.text().strip():
+            self._load_selected_file()
 
     def _reload_encoding(self) -> None:
         if self.file_edit.text().strip():
@@ -299,23 +315,16 @@ class EvaluationImportDialog(QDialog):
                 self.preview_table.setItem(index, column, item)
 
     def _current_scheme(self) -> Optional[LayoutScheme]:
-        data = self.scheme_combo.currentData()
-        return data if isinstance(data, LayoutScheme) else None
-
-    def _current_rule(self) -> Optional[MatchRule]:
-        data = self.rule_combo.currentData()
-        return data if isinstance(data, MatchRule) else None
+        return self.importer.scheme
 
     def _validate(self) -> None:
-        scheme = self._current_scheme()
-        if scheme is None:
+        if self.importer.scheme is None:
             self._show_error(ImporterError("scheme_not_selected", STRINGS.import_select_scheme))
             return
         if not self.doc_no_edit.text().strip():
             self._show_error(ImporterError("document_not_set", STRINGS.import_doc_no))
             return
         try:
-            self.importer.set_scheme(scheme)
             self.importer.set_document(
                 self.doc_no_edit.text().strip(), self.doc_date_edit.date().toPyDate()
             )
@@ -344,7 +353,11 @@ class EvaluationImportDialog(QDialog):
         shown = 0
         for row in report.rows:
             if row.problem is not None:
-                self._add_problem_row(row.row_no, STRINGS.import_status_error, row.problem.code)
+                self._add_problem_row(
+                    row.row_no,
+                    STRINGS.import_status_error,
+                    self._problem_text(row.problem.code),
+                )
                 shown += 1
             elif row.row_no in self.importer.rejected_rows():
                 self._add_problem_row(row.row_no, STRINGS.import_status_rejected, "")
@@ -355,6 +368,16 @@ class EvaluationImportDialog(QDialog):
             self.problems_table.setItem(0, 0, item)
             item = QTableWidgetItem(STRINGS.import_no_errors)
             self.problems_table.setItem(0, 1, item)
+
+    def _problem_text(self, code: str) -> str:
+        template = getattr(STRINGS, f"import_problem_{code}", "")
+        return template or code
+
+    def _reason_text(self, code: str) -> str:
+        if not code:
+            return ""
+        template = getattr(STRINGS, f"import_reason_{code}", "")
+        return template or code
 
     def _add_problem_row(self, row_no: int, status: str, reason: str) -> None:
         row = self.problems_table.rowCount()
@@ -421,16 +444,11 @@ class EvaluationImportDialog(QDialog):
 
     # -- сопоставление ------------------------------------------------------
     def _preview(self) -> None:
-        rule = self._current_rule()
-        if rule is None:
-            self._show_error(ImporterError("rule_not_selected", STRINGS.import_select_rule))
-            return
         if self.importer.report is None:
             self._validate()
             if self.importer.report is None:
                 return
         try:
-            self.importer.set_rule(rule)
             preview = self.importer.preview_matches()
         except Exception as exc:  # noqa: BLE001
             self._show_error(exc)
@@ -439,6 +457,7 @@ class EvaluationImportDialog(QDialog):
 
     def _fill_matches(self, preview) -> None:
         self.matches_table.setRowCount(0)
+        self._duplicate_actions.clear()
         for result in preview.results:
             row = self.matches_table.rowCount()
             self.matches_table.insertRow(row)
@@ -451,9 +470,20 @@ class EvaluationImportDialog(QDialog):
                 else STRINGS.import_status_unmatched
             )
             self.matches_table.setItem(row, 1, QTableWidgetItem(status))
-            self.matches_table.setItem(row, 2, QTableWidgetItem(result.reason))
+            self.matches_table.setItem(
+                row, 2, QTableWidgetItem(self._reason_text(result.reason))
+            )
             self.matches_table.setItem(row, 3, QTableWidgetItem(result.value_code or ""))
-            if result.duplicate:
+            if not result.matched:
+                presence = "—"
+            elif not result.value_code:
+                presence = STRINGS.import_value_not_set
+            elif result.duplicate:
+                presence = STRINGS.import_has_evaluation
+            else:
+                presence = STRINGS.import_no_evaluation
+            self.matches_table.setItem(row, 4, QTableWidgetItem(presence))
+            if result.matched and result.value_code and result.duplicate:
                 combo = QComboBox()
                 combo.addItem(STRINGS.import_action_skip, "skip")
                 combo.addItem(STRINGS.import_action_update, "update")
@@ -463,7 +493,7 @@ class EvaluationImportDialog(QDialog):
                     )
                 )
                 self._duplicate_actions[result.row.row_no] = "skip"
-                self.matches_table.setCellWidget(row, 4, combo)
+                self.matches_table.setCellWidget(row, 5, combo)
         self.match_counts.setText(
             STRINGS.import_counts.format(
                 total=preview.total,
@@ -508,31 +538,34 @@ class EvaluationImportDialog(QDialog):
         self._update_nav()
 
     def _show_result(self, result) -> None:
+        counts = result.counts
         self.result_label.setText(
             STRINGS.import_done.format(
-                matched=result.counts.matched,
-                unmatched=result.counts.unmatched,
-                skipped=result.counts.skipped,
-                rejected=result.counts.rejected,
+                matched=counts.matched,
+                unmatched=counts.unmatched,
+                skipped=counts.skipped,
+                rejected=counts.rejected,
                 stored_path=result.stored_path or "—",
             )
         )
+        value_lines = []
+        for code, count in sorted(counts.by_value.items()):
+            label = enum_label("evaluation_value", code) or code
+            value_lines.append(f"{label}: {count}")
         lines = [
-            STRINGS.import_rows_total.format(count=result.counts.imported),
+            STRINGS.import_rows_total.format(count=counts.imported),
+            STRINGS.import_stats_evaluations.format(count=counts.evaluations_received),
+            STRINGS.import_stats_by_value.format(values=", ".join(value_lines) or "—"),
+            STRINGS.import_stats_reupdated.format(
+                documents=counts.documents_reupdated,
+                materials=counts.materials_reupdated,
+            ),
             STRINGS.import_log_saved.format(log_id=result.log_id)
             if result.log_id
             else "",
         ]
         lines.extend(result.warnings)
         self.result_details.setPlainText("\n".join(item for item in lines if item))
-
-    def _open_log(self) -> None:
-        if self._result and self._result.log_id:
-            QMessageBox.information(
-                self,
-                STRINGS.import_open_log,
-                STRINGS.import_log_saved.format(log_id=self._result.log_id),
-            )
 
     # -- навигация ----------------------------------------------------------
     def _go_back(self) -> None:
@@ -545,6 +578,11 @@ class EvaluationImportDialog(QDialog):
         index = self.stack.currentIndex()
         if index == 0:
             if not self._load_selected_file():
+                return
+            if self.importer.scheme is None:
+                return
+            self._validate()
+            if self.importer.report is None:
                 return
             self.stack.setCurrentIndex(1)
         elif index == 1:
@@ -581,16 +619,6 @@ class EvaluationImportDialog(QDialog):
         if code:
             text = f"{code}: {detail}"
         QMessageBox.critical(self, STRINGS.import_error_title, text)
-
-    def _edit_scheme(self) -> None:
-        scheme = self._current_scheme()
-        dialog = SchemeEditorDialog(self.config.schemes_dir, scheme, self)
-        if dialog.exec_() == QDialog.Accepted:
-            self._load_lists()
-            if dialog.saved_path:
-                index = self.scheme_combo.findText(dialog.saved_scheme.name if dialog.saved_scheme else "")
-                if index >= 0:
-                    self.scheme_combo.setCurrentIndex(index)
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802
         if event.mimeData().hasUrls():

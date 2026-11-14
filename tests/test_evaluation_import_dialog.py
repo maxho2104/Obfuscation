@@ -46,9 +46,38 @@ def test_dialog_opens_with_project_schemes(app, tmp_path: Path) -> None:
     dialog = EvaluationImportDialog(_config(tmp_path), engine)
     try:
         assert dialog.stack.count() == 4
-        assert dialog.scheme_combo.count() >= 1
-        assert dialog.rule_combo.count() >= 1
+        assert len(dialog.schemes) >= 1
         assert dialog.next_button.isEnabled() is False
+    finally:
+        dialog.importer.close()
+        dialog.close()
+
+
+def test_dialog_auto_detects_project_scheme_by_length(app, tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'db.sqlite'}")
+    Base.metadata.create_all(engine)
+    dialog = EvaluationImportDialog(_config(tmp_path), engine)
+    try:
+        row = list(" " * 139)
+        for start, value in (
+            (1, "11"), (4, "1"), (6, "11"), (21, "0000012345678"),
+            (86, "П"), (90, "1"), (97, "21.12.2025"), (108, "122025"),
+        ):
+            row[start - 1 : start - 1 + len(value)] = value
+        path = tmp_path / "data.txt"
+        path.write_text("".join(row) + "\n", encoding="utf-8")
+        dialog.file_edit.setText(str(path))
+        dialog.doc_no_edit.setText("DOC-1")
+        assert dialog._load_selected_file()
+        assert dialog.importer.scheme is not None
+        assert dialog.importer.scheme.name == "Оценочные данные"
+        dialog._go_next()
+        assert dialog.stack.currentIndex() == 1
+        assert dialog.importer.report is not None
+        assert dialog.importer.report.problem_count == 0
+        dialog._go_next()
+        assert dialog.stack.currentIndex() == 2
+        assert dialog.matches_table.rowCount() == 1
     finally:
         dialog.importer.close()
         dialog.close()
@@ -123,8 +152,7 @@ def test_preview_is_split_and_refreshes_after_correction(
         dialog.file_edit.setText(str(path))
         assert dialog.next_button.isEnabled()
         assert dialog._load_selected_file()
-        dialog.scheme_combo.clear()
-        dialog.scheme_combo.addItem(scheme.name, scheme)
+        dialog.importer.set_scheme(scheme)
         dialog.doc_no_edit.setText("123")
         dialog._validate()
 

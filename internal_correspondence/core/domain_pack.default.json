@@ -641,6 +641,9 @@
         "date": {
           "label": "Дата выставления"
         },
+        "effect": {
+          "label": "Эффект"
+        },
         "evaluation_list_id": {
           "label": "Список оценок"
         },
@@ -982,6 +985,33 @@
     "import_rule_column": "Правило",
     "import_entity_column": "Сущность",
     "import_table_column": "Таблица",
-    "import_conditions_column": "Условия"
+    "import_conditions_column": "Условия",
+    "import_clear": "Очистить",
+    "import_create_scheme": "Создать новую схему",
+    "import_scheme_detected": "Схема определена: {title}",
+    "import_scheme_length": " (длина {length})",
+    "import_scheme_not_detected": "Схема не определена: выберите файл.",
+    "import_scheme_not_found_for_length": "Для длины строки {length} нет подходящей схемы. Создайте новую схему.",
+    "import_evaluation_presence": "Оценка",
+    "import_has_evaluation": "Есть оценка",
+    "import_no_evaluation": "Нет оценки",
+    "import_value_not_set": "Оценка не указана",
+    "import_stats_evaluations": "Получено оценок: {count}",
+    "import_stats_by_value": "По видам оценок: {values}",
+    "import_stats_reupdated": "Переоценено документов: {documents}, материалов: {materials}",
+    "import_problem_line_length": "Длина строки не соответствует схеме.",
+    "import_problem_line_empty": "Пустая строка.",
+    "import_problem_field_required": "Не заполнено обязательное поле.",
+    "import_problem_field_type": "Некорректное числовое значение.",
+    "import_problem_field_date": "Некорректная дата.",
+    "import_problem_field_regex": "Значение не соответствует формату.",
+    "import_problem_field_start": "В схеме не задано начало поля.",
+    "import_problem_field_count": "Неверное количество полей.",
+    "import_reason_key_empty": "Не удалось собрать код филиала.",
+    "import_reason_year_month_invalid": "Некорректный отчётный месяц.",
+    "import_reason_document_not_found": "Документ не найден.",
+    "import_reason_document_ambiguous": "Найдено несколько документов.",
+    "import_reason_rule_not_selected": "Не выбрано правило.",
+    "import_reason_scheme_not_selected": "Не выбрана схема."
   }
 }
