@@ -974,3 +974,19 @@
 
 ### Отложено
 - README обновлён по участию и исторической статистике.
+
+---
+
+## 2026-11-14 — Зависимость Pillow
+
+### Изменения
+- `requirements.txt`, `pyproject.toml`: добавлен `Pillow>=10.0` — без него
+  библиотеки, читающие изображения (например, python-docx/openpyxl), падают с
+  `ImportError: You must install Pillow to fetch image objects`.
+
+### Проверка
+- В `.venv` установлен Pillow 13.0.0; `python -c "import PIL"` — OK.
+- `pip check` — No broken requirements found.
+
+### Отложено
+- Нет.
