@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QGridLayout,
@@ -117,6 +118,7 @@ class EntityEditDialog(QDialog):
         self._setup_visibility_driver()
         self._load_values()
         self._update_more_button()
+        self._fit_to_content()
 
     # --- построение интерфейса ---
 
@@ -231,6 +233,25 @@ class EntityEditDialog(QDialog):
     def _toggle_extra(self) -> None:
         self._extra_visible = not self._extra_visible
         self._update_more_button()
+        self._fit_to_content()
+
+    def _fit_to_content(self) -> None:
+        """Подгоняет высоту диалога под содержимое, чтобы все поля были видны без прокрутки.
+
+        Полоса прокрутки остаётся только как запасной вариант, когда
+        содержимое выше доступной области экрана.
+        """
+        self.layout().activate()
+        content_hint = self._scroll.widget().sizeHint()
+        margins = self.layout().contentsMargins()
+        height = (
+            content_hint.height()
+            + margins.top()
+            + margins.bottom()
+            + 2 * self._scroll.frameWidth()
+        )
+        available = QApplication.desktop().availableGeometry(self)
+        self.resize(self.width(), min(height, available.height()))
 
     def _apply_visibility(self) -> None:
         """Применяет правила видимости полей от значения драйвера."""

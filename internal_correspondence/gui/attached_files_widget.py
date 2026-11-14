@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from PyQt5.QtCore import QObject, Qt, QThread, QFileInfo, QMimeData, QUrl, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QColor, QDesktopServices, QIcon
+from PyQt5.QtGui import QColor, QDesktopServices, QFontMetrics, QIcon
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -58,6 +58,108 @@ logger = get_logger("attached_files_widget")
 
 # Цвет отображения файла, ссылка на который в БД «битая»
 BROKEN_FILE_COLOR = QColor(190, 40, 40)
+
+# Блок копирования для прогресс-диалога: мелкие блоки дают плавный ход
+# полосы при копировании крупных файлов
+COPY_DIALOG_CHUNK_SIZE = 4 * 1024
+
+# Диапазон QProgressDialog — 32-битные C int; объёмы крупнее требуют масштаба
+PROGRESS_INT_MAX = 2**31 - 1
+
+
+def _progress_range(total: int) -> tuple:
+    """Возвращает (максимум, масштаб) для QProgressDialog по суммарному объёму.
+
+    При объёме крупнее 32-битного диапазона полоса масштабируется
+    (значение = байты // масштаб), чтобы не переполнять C int.
+    """
+    scale = max(1, -(-total // PROGRESS_INT_MAX))
+    return total // scale, scale
+
+
+def _safe_file_size(path: Path) -> int:
+    """Возвращает размер файла; при недоступности файла — 0."""
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _elide_path(metrics: QFontMetrics, text: str, width: int) -> str:
+    """Сокращает начало пути по границам каталогов до заданной ширины.
+
+    «C:\\A\\B\\C» → «...\\C»; при увеличении ширины показывается больше
+    хвоста: «...\\B\\C». Если не влезает даже последний компонент —
+    усечение слева посимвольно.
+    """
+    if metrics.width(text) <= width:
+        return text
+    for index, char in enumerate(text):
+        if char not in "/\\":
+            continue
+        candidate = "..." + text[index:]
+        if metrics.width(candidate) <= width:
+            return candidate
+    tail = text
+    while tail and metrics.width("..." + tail) > width:
+        tail = tail[1:]
+    return "..." + tail
+
+
+def _last_path_component(text: str) -> str:
+    """Возвращает последний компонент пути (имя файла или каталога)."""
+    for separator in ("/", "\\"):
+        if separator in text:
+            text = text.split(separator)[-1]
+    return text
+
+
+class CopyProgressLabel(QLabel):
+    """Метка прогресса копирования с сокращением длинных путей.
+
+    Каталоги источника и приёмника сокращаются по границам компонентов
+    («...\\Directory_5») под текущую ширину метки; при растягивании
+    диалога пользователем показывается всё больше хвоста пути.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._file_name = ""
+        self._source = ""
+        self._target = ""
+
+    def set_progress(self, file_name: str, source: str, target: str) -> None:
+        """Запоминает части сообщения и обновляет отображаемый текст."""
+        self._file_name = file_name
+        self._source = source
+        self._target = target
+        self._refresh_text()
+
+    def resizeEvent(self, event) -> None:
+        self._refresh_text()
+        super().resizeEvent(event)
+
+    def showEvent(self, event) -> None:
+        self._refresh_text()
+        super().showEvent(event)
+
+    def _refresh_text(self) -> None:
+        metrics = self.fontMetrics()
+        available = max(self.width() - 8, 0)
+        template = STRINGS.files_copy_progress
+        fixed = metrics.width(
+            template.format(name=self._file_name, source="", target="")
+        )
+        # Бюджет на путь делится пополам; не меньше «... + последний компонент»,
+        # чтобы всегда оставался узнаваемый хвост пути
+        shared = max((available - fixed) // 2, metrics.width("...") + 40)
+        source_budget = max(shared, metrics.width("..." + _last_path_component(self._source)))
+        target_budget = max(shared, metrics.width("..." + _last_path_component(self._target)))
+        source = _elide_path(metrics, self._source, source_budget)
+        target = _elide_path(metrics, self._target, target_budget)
+        super().setText(
+            template.format(name=self._file_name, source=source, target=target)
+        )
 
 
 def _explorer_select_command(path: Path) -> str:
@@ -134,11 +236,13 @@ class CopyFilesWorker(QObject):
     """Потоковое поблочное копирование файлов в хранилище.
 
     Не обращается к БД: только файловая система. Отмена проверяется
-    между блоками; недокопированный файл удаляется.
+    между блоками; недокопированный файл удаляется. Прогресс отдаётся
+    в байтах: ``step`` — накопительный скопированный объём от общего
+    размера всех файлов.
     """
 
-    progressed = pyqtSignal(str)
-    step = pyqtSignal(int)
+    progressed = pyqtSignal(str, str, str)  # имя файла, каталог-источник, каталог-приёмник
+    step = pyqtSignal(int)                  # скопировано байт (накопительно)
     finished = pyqtSignal(list)      # пары (источник, назначение) завершённых
     failed = pyqtSignal(str)
 
@@ -154,23 +258,25 @@ class CopyFilesWorker(QObject):
     @pyqtSlot()
     def run(self) -> None:
         completed = []
+        copied = 0
         try:
             for source, target in self._pairs:
                 if self._cancelled:
                     self.finished.emit(completed)
                     return
                 self.progressed.emit(
-                    STRINGS.files_copy_progress.format(
-                        name=source.name,
-                        source=source.parent,
-                        target=target.parent,
-                    )
+                    source.name, str(source.parent), str(target.parent)
                 )
                 copy_with_progress(
-                    source, target, should_cancel=lambda: self._cancelled
+                    source,
+                    target,
+                    should_cancel=lambda: self._cancelled,
+                    on_chunk=lambda size, base=copied: self.step.emit(base + size),
+                    chunk_size=COPY_DIALOG_CHUNK_SIZE,
                 )
+                copied += source.stat().st_size
+                self.step.emit(copied)
                 completed.append((source, target))
-                self.step.emit(len(completed))
             self.finished.emit(completed)
         except FileCopyCancelled:
             self.finished.emit(completed)
@@ -181,6 +287,11 @@ class CopyFilesWorker(QObject):
 
 class AttachedFilesWidget(QDockWidget):
     """Док-виджет прикреплённых файлов текущего документа."""
+
+    # Изменён состав файлов документа (привязка/открепление); аргумент — id документа.
+    # Нужен таблице документов: записи Change создаются в сессии док-виджета,
+    # а подсветка строки читается из кэша модели другой сессии.
+    filesChanged = pyqtSignal(object)
 
     def __init__(self, session: Session, storage_root: Path, parent=None) -> None:
         super().__init__(STRINGS.tooltip_add_files, parent)
@@ -360,6 +471,7 @@ class AttachedFilesWidget(QDockWidget):
                 return
             self.session.commit()
             self.refresh()
+            self.filesChanged.emit(self._document.id)
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка прикрепления файлов")
             self.session.rollback()
@@ -408,18 +520,26 @@ class AttachedFilesWidget(QDockWidget):
         progress = QProgressDialog(self)
         progress.setWindowTitle(STRINGS.tooltip_add_files)
         progress.setWindowModality(Qt.WindowModal)
-        progress.setRange(0, len(pairs))
+        total = sum(_safe_file_size(source) for source, _target in pairs)
+        maximum, scale = _progress_range(total)
+        progress.setRange(0, maximum)
+        progress.setValue(0)
         progress.setCancelButtonText(STRINGS.button_cancel)
         progress.setMinimumDuration(0)
-        progress.setValue(0)
+        label = CopyProgressLabel(progress)
+        progress.setLabel(label)
         progress.canceled.connect(lambda: worker.cancel() if worker else None)
 
         thread = QThread(self)
         worker = CopyFilesWorker(pairs)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.progressed.connect(progress.setLabelText)
-        worker.step.connect(progress.setValue)
+        worker.progressed.connect(label.set_progress)
+
+        def _report_progress(value: int) -> None:
+            progress.setValue(min(value // scale, maximum))
+
+        worker.step.connect(_report_progress)
 
         def _done(completed: List[tuple]) -> None:
             progress.close()
@@ -428,6 +548,7 @@ class AttachedFilesWidget(QDockWidget):
                 try:
                     self._service().attach_copied_files(self._document, completed)
                     self.session.commit()
+                    self.filesChanged.emit(self._document.id)
                     QMessageBox.information(
                         self,
                         STRINGS.tooltip_add_files,
@@ -484,6 +605,7 @@ class AttachedFilesWidget(QDockWidget):
             self._service().detach_files(self._document, records)
             self.session.commit()
             self.refresh()
+            self.filesChanged.emit(self._document.id)
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка открепления файлов")
             self.session.rollback()

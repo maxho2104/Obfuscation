@@ -8,7 +8,8 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import QDate
+from PyQt5.QtWidgets import QApplication, QDesktopWidget
 
 from internal_correspondence.core.constants import MaterialType, Role
 from internal_correspondence.core.database import DatabaseManager
@@ -92,9 +93,11 @@ def test_number_date_required_validation(qapp, db_manager) -> None:
     required = NumberDateEditElement(
         ScientificMaterial.outgoing_number, ScientificMaterial.outgoing_date, required=True
     )
+    # Без номера пара считается пустой, даже если дата показывает «сегодня»
     assert required.validate() is not None
+    # Дата по умолчанию — сегодня: после ввода номера пара уже валидна
     required.number_edit.setText("1")
-    assert required.validate() is not None
+    assert required.validate() is None
     required.date_edit.setDate(date(2026, 1, 10))
     assert required.validate() is None
 
@@ -103,9 +106,96 @@ def test_number_date_required_validation(qapp, db_manager) -> None:
     )
     assert optional.validate() is None
     optional.number_edit.setText("2")
-    assert optional.validate() is not None
+    assert optional.validate() is None
     optional.date_edit.setDate(date(2026, 2, 10))
     assert optional.validate() is None
+    # Стертый номер снова опустошает пару
+    optional.number_edit.setText("")
+    assert optional.validate() is None
+
+
+def test_number_date_today_bounds(qapp, db_manager) -> None:
+    """Максимальная дата пары — сегодня; у новой записи по умолчанию сегодня."""
+    pair = NumberDateEditElement(
+        ScientificMaterial.outgoing_number, ScientificMaterial.outgoing_date, required=True
+    )
+    today = QDate.currentDate()
+    assert pair.date_edit.maximumDate() == today
+    assert pair.date_edit.date() == today
+
+
+def test_number_date_empty_number_means_empty_pair(qapp, db_manager) -> None:
+    """Пустой номер обнуляет и дату: «сегодня» не попадает в данные новой записи."""
+    pair = NumberDateEditElement(
+        ScientificMaterial.outgoing_number, ScientificMaterial.outgoing_date
+    )
+    target = {}
+    pair.collect_data(target)
+    assert target == {"outgoing_number": None, "outgoing_date": None}
+
+
+def test_document_dialog_pair_labels(qapp, base_data) -> None:
+    """Метки пар «номер и дата» — единый текст из строковых ресурсов."""
+    with base_data.get_session() as session:
+        dialog = MaterialEditDialog(session, branch_id="F1", role=Role.BRANCH.value)
+        assert (
+            dialog.element("outgoing_number").label_text()
+            == "Номер и дата исходящего документа"
+        )
+        assert (
+            dialog.element("incoming_number").label_text()
+            == "Номер и дата входящего документа"
+        )
+        assert (
+            dialog.element("permit_number").label_text()
+            == STRINGS.label_permit_number_date
+        )
+        dialog.close()
+
+        telegram = TelegramEditDialog(session, branch_id="F1", role=Role.BRANCH.value)
+        assert (
+            telegram.element("outgoing_number").label_text()
+            == "Номер и дата исходящего документа"
+        )
+        assert (
+            telegram.element("incoming_number").label_text()
+            == "Номер и дата входящего документа"
+        )
+        telegram.close()
+
+
+def test_dialog_fits_content_without_scrollbar(qapp, base_data) -> None:
+    """Диалог подгоняет высоту под поля; скролл — только при нехватке экрана."""
+    with base_data.get_session() as session:
+        small = EntityEditDialog(session, TerritorialUnit)
+        small.show()
+        qapp.processEvents()
+        assert not small._scroll.verticalScrollBar().isVisible()
+        small.close()
+
+        # Объёмный диалог: высота — min(контент, экран), раскрытие «Больше» пересчитывает
+        big = MaterialEditDialog(session, branch_id="F1", role=Role.BRANCH.value)
+        big.show()
+        qapp.processEvents()
+        expected = _expected_fit_height(big)
+        available = QDesktopWidget().availableGeometry(big).height()
+        assert big.height() == min(expected, available)
+        big.more_button.click()
+        qapp.processEvents()
+        assert big.height() == min(_expected_fit_height(big), available)
+        big.close()
+
+
+def _expected_fit_height(dialog) -> int:
+    """Высота диалога по логике EntityEditDialog._fit_to_content."""
+    hint = dialog._scroll.widget().sizeHint()
+    margins = dialog.layout().contentsMargins()
+    return (
+        hint.height()
+        + margins.top()
+        + margins.bottom()
+        + 2 * dialog._scroll.frameWidth()
+    )
 
 
 def test_number_date_collects_both_columns(qapp, db_manager) -> None:
@@ -301,6 +391,26 @@ def test_telegram_dialog_branch_role(qapp, base_data) -> None:
         assert dialog.element("report_addresses") is not None
         assert dialog.element("employees") is not None
         assert dialog.element("branch_id") is None
+
+
+def test_enum_editor_empty_item_for_nullable_column(qapp, base_data) -> None:
+    """У nullable перечисления (тип доклада) есть пустой пункт; у обязательного — нет."""
+    with base_data.get_session() as session:
+        dialog = TelegramEditDialog(session, branch_id="F1", role=Role.BRANCH.value)
+        report_type = dialog.element("report_type")
+        assert report_type.combo.itemData(0) is None
+        assert report_type.combo.itemText(0) == "—"
+        # Новая телеграмма: незаполненный тип доклада не подменяется первым значением
+        assert report_type.value() is None
+        code = report_type.combo.itemData(1)
+        report_type.set_value(code)
+        assert report_type.value() == code
+        report_type.set_value(None)
+        assert report_type.value() is None
+        # Обязательное перечисление (тип телеграммы) пустого пункта не имеет
+        telegram_type = dialog.element("type")
+        assert telegram_type.combo.itemData(0) is not None
+        dialog.close()
 
 
 def test_extra_fields_toggle(qapp, base_data) -> None:

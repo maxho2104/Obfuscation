@@ -143,3 +143,25 @@ def test_modified_row_highlight_takes_priority(documents, qapp) -> None:
         )
         color = model.index(changed_row, 0).data(Qt.BackgroundRole)
         assert color == theme.modified_row
+
+
+def test_date_columns_displayed_as_dd_mm_yyyy(documents, qapp) -> None:
+    """Даты в таблице отображаются в формате ДД.ММ.ГГГГ."""
+    with documents.get_session() as session:
+        columns = [ColumnDef("outgoing_date"), ColumnDef("incoming_date")]
+        model = DocumentsTableModel(session, ScientificMaterial, columns, branch_id="F1")
+
+        with_incoming = next(
+            row
+            for row in range(model.rowCount())
+            if model.item_at(row).incoming_number is not None
+        )
+        assert model.index(with_incoming, 0).data(Qt.DisplayRole) == "01.01.2026"
+        assert model.index(with_incoming, 1).data(Qt.DisplayRole) == "01.02.2026"
+
+        without_incoming = next(
+            row
+            for row in range(model.rowCount())
+            if model.item_at(row).incoming_number is None
+        )
+        assert model.index(without_incoming, 1).data(Qt.DisplayRole) == ""

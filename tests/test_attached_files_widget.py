@@ -9,7 +9,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QLabel, QMessageBox
 
 from internal_correspondence.core.constants import MaterialType
 from internal_correspondence.core.database import DatabaseManager
@@ -17,6 +17,8 @@ from internal_correspondence.core.domain_pack import dir_name
 from internal_correspondence.gui.attached_files_widget import (
     AttachedFilesWidget,
     CopyFilesWorker,
+    CopyProgressLabel,
+    _elide_path,
     _explorer_select_command,
 )
 from internal_correspondence.orm.models import (
@@ -314,3 +316,162 @@ def test_explorer_select_command_keeps_key_outside_quotes() -> None:
     )
     assert command == r'explorer /select,"C:\Users\user name\Storage\file.txt"'
     assert command.startswith('explorer /select,"')
+
+
+def test_copy_worker_reports_byte_progress(env, qapp, tmp_path: Path) -> None:
+    """Прогресс идёт по суммарным байтам: растёт монотонно, финал = общий объём."""
+    db, storage, material_id = env
+    source1 = tmp_path / "a.bin"
+    source1.write_bytes(b"x" * 6000)
+    source2 = tmp_path / "b.bin"
+    source2.write_bytes(b"y" * 4000)
+    target_dir = storage / dir_name("files") / dir_name("material_files") / "2026-03-01" / "М-1"
+    pairs = [(source1, target_dir / "a.bin"), (source2, target_dir / "b.bin")]
+
+    worker = CopyFilesWorker(pairs)
+    steps = []
+    finished = []
+    worker.step.connect(steps.append)
+    worker.finished.connect(finished.append)
+    worker.run()
+
+    assert len(finished[0]) == 2
+    assert steps, "прогресс не отправлялся"
+    assert steps[-1] == 10000
+    assert steps == sorted(steps)
+    # Полоса двигается внутри крупных файлов, а не только между файлами
+    assert len(set(steps)) >= 3
+
+
+def test_elide_path_shortens_by_directory_boundaries(qapp) -> None:
+    """Путь сокращается слева по границам каталогов; шире окно — длиннее хвост."""
+    probe = QLabel()
+    metrics = probe.fontMetrics()
+    text = r"C:\Directory_1\Directory_2\Directory_3\Directory_4\Directory_5"
+
+    # Узко: только последний компонент
+    assert _elide_path(metrics, text, metrics.width(r"...\Directory_5")) == r"...\Directory_5"
+    # Шире: два последних компонента
+    assert (
+        _elide_path(metrics, text, metrics.width(r"...\Directory_4\Directory_5"))
+        == r"...\Directory_4\Directory_5"
+    )
+    # Хватает ширины: путь не трогается
+    assert _elide_path(metrics, text, metrics.width(text)) == text
+    # Совсем узко: усечение слева без границ компонентов
+    narrow = _elide_path(metrics, text, metrics.width(r"...\Dir"))
+    assert narrow.startswith("...")
+    assert metrics.width(narrow) <= metrics.width(r"...\Directory_5")
+
+
+def test_copy_progress_label_adapts_to_width(env, qapp) -> None:
+    """Метка прогресса сокращает пути под ширину и раскрывает их при растягивании."""
+    db, storage, material_id = env
+    long_source = r"C:\Directory_1\Directory_2\Directory_3\Directory_4\Directory_5"
+    long_target = r"D:\Storage_1\Storage_2\Storage_3\Storage_4\Storage_5"
+
+    label = CopyProgressLabel()
+    label.set_progress("doc.txt", long_source, long_target)
+
+    # Широкие состояния проверяем на скрытом виджете: offscreen оконный
+    # менеджер ограничивает показанные окна размером экрана (800x600)
+    label.resize(1400, 30)
+    label._refresh_text()  # pylint: disable=protected-access
+    mid_text = label.text()
+    assert r"...\Directory_4\Directory_5" in mid_text
+
+    label.resize(2600, 30)
+    label._refresh_text()  # pylint: disable=protected-access
+    wide_text = label.text()
+    assert wide_text.count("Directory") > mid_text.count("Directory")
+
+    # Узкий показанный диалог: только последний компонент пути
+    label.resize(220, 30)
+    label.show()
+    qapp.processEvents()
+    narrow_text = label.text()
+    assert "..." in narrow_text
+    assert "Directory_1" not in narrow_text
+    assert "Directory_5" in narrow_text
+    label.close()
+
+
+def test_progress_range_fits_int32_for_huge_volumes(qapp) -> None:
+    """Суммарный объём крупнее 2 ГиБ не переполняет диапазон QProgressDialog."""
+    from PyQt5.QtWidgets import QProgressDialog
+
+    from internal_correspondence.gui.attached_files_widget import (
+        PROGRESS_INT_MAX,
+        _progress_range,
+    )
+
+    # Малый объём: без масштаба, точный диапазон
+    maximum, scale = _progress_range(10_000)
+    assert (maximum, scale) == (10_000, 1)
+
+    # Граница и за границей 32-битного диапазона
+    for total in (PROGRESS_INT_MAX, PROGRESS_INT_MAX + 1, 5 * PROGRESS_INT_MAX):
+        maximum, scale = _progress_range(total)
+        assert maximum <= PROGRESS_INT_MAX
+        dialog = QProgressDialog()
+        dialog.setRange(0, maximum)  # не бросает OverflowError
+        # Отображение значений остаётся монотонным и не выходит за диапазон
+        for fraction in (0, 1, 2, 10):
+            value = min(total * fraction // 10 // scale, maximum)
+            assert 0 <= value <= maximum
+        dialog.close()
+
+
+def test_run_copy_thread_handles_huge_total(env, qapp, tmp_path, monkeypatch) -> None:
+    """Прогон _run_copy_thread при суммарном объёме > 2 ГиБ: без OverflowError."""
+    from internal_correspondence.gui import attached_files_widget as afw
+
+    db, storage, material_id = env
+    dock_session = db.get_session()
+    dock = AttachedFilesWidget(dock_session, storage)
+    source = tmp_path / "big.bin"
+    source.write_bytes(b"x" * 100)
+    target = storage / "big_target.bin"
+
+    monkeypatch.setattr(afw, "_safe_file_size", lambda path: 3 * afw.PROGRESS_INT_MAX)
+    monkeypatch.setattr(afw.QMessageBox, "information", lambda *args, **kwargs: None)
+    monkeypatch.setattr(afw.QMessageBox, "critical", lambda *args, **kwargs: None)
+
+    dock._run_copy_thread([(source, target)])  # pylint: disable=protected-access
+    for _ in range(200):
+        qapp.processEvents()
+        if dock._thread is None:
+            break
+
+    assert dock._thread is None
+    assert target.read_bytes() == b"x" * 100
+    dock_session.close()
+
+
+def test_dock_files_changed_after_attach_and_detach(env, qapp, tmp_path, monkeypatch) -> None:
+    """Успешные привязка и открепление извещают через filesChanged (id документа)."""
+    db, storage, material_id = env
+    target_dir = storage / dir_name("files") / dir_name("material_files") / "2026-03-01" / "М-1"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    inside = target_dir / "report.txt"
+    inside.write_text("x", encoding="utf-8")
+
+    dock_session = db.get_session()
+    dock = AttachedFilesWidget(dock_session, storage)
+    dock.set_document(dock_session.get(ScientificMaterial, material_id))
+    emitted = []
+    dock.filesChanged.connect(emitted.append)
+
+    # Привязка файла из хранилища — синхронный путь без потока копирования
+    dock._add_paths([inside])  # pylint: disable=protected-access
+    assert emitted == [material_id]
+
+    # Открепление с подтверждением
+    monkeypatch.setattr(
+        "internal_correspondence.gui.attached_files_widget.QMessageBox.question",
+        lambda *args, **kwargs: QMessageBox.Yes,
+    )
+    dock.list_widget.setCurrentRow(0)
+    dock._remove_selected()  # pylint: disable=protected-access
+    assert emitted == [material_id, material_id]
+    dock_session.close()

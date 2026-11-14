@@ -1018,3 +1018,326 @@
 ### Отложено
 - Описания части полей оставлены «—»: они берутся из метаданных и дополняются
   вручную в `scripts_dev/schema_docs/model.py` по мере необходимости.
+
+---
+
+## 2026-11-14 — Док прикреплённых файлов: меню «Вид» и запоминание положения
+
+### Запрос пользователя
+Связать отображение/скрытие док-виджета AttachedFilesWidget с пунктом меню
+«Вид» → «Прикреплённые файлы»; при закрытии приложения запоминать в настройках
+положение дока (сторона стыковки, а для откреплённого отдельным окном — его
+геометрию) и восстанавливать его при следующем запуске.
+
+### Изменения
+- `internal_correspondence/utils/string_resources.py`: новая строка
+  `menu_attached_files` («Прикреплённые файлы»); секция `strings` пакета
+  перегенерирована скриптом `scripts_dev/update_pack_strings.py`.
+- `internal_correspondence/core/settings.py`: в `AppSettings` добавлены поля
+  `files_dock_visible`, `files_dock_area` (значение Qt.DockWidgetArea),
+  `files_dock_floating`, `files_dock_geometry` (Base64 от saveGeometry).
+- `internal_correspondence/gui/application.py`:
+  - в меню «Вид» добавлен переключаемый пункт `files_dock_action`
+    (toggled → dock.setVisible, dock.visibilityChanged → setChecked);
+  - `_save_files_dock_state()` — вызывается из `_save_ui_state()` при закрытии:
+    видимость (через isHidden, не зависит от показа окна), область стыковки
+    (только когда док не плавающий — плавающий не привязан к области),
+    признак «откреплён отдельным окном», геометрия;
+  - `_restore_files_dock_state()` — вызывается из `_restore_ui_state()`:
+    addDockWidget в сохранённую область, setFloating, restoreGeometry,
+    setVisible из настроек; пункт меню синхронизируется явно, т.к.
+    visibilityChanged не приходит, пока главное окно не показано;
+  - хелперы `_parse_bool()` и `_parse_dock_area()` (устойчивы к мусору в INI).
+- `tests/test_window_state.py`: 5 новых тестов — переключение видимости
+  пунктом меню, сохранение области/видимости при закрытии, восстановление
+  области и видимости из настроек, roundtrip геометрии плавающего окна.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests -q` — 285 passed, без исключений.
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"` — OK.
+- Ручной прогон сценария не выполнялся (offscreen-окружение): поведение меню
+  и перетаскивания дока проверены тестами на QWidget API.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-14 — Правки диалогов документов и отображения дат
+
+### Запрос пользователя
+- EntityEditDialog: при открытии должны быть видны все поля без полосы прокрутки.
+- MaterialEditDialog/TelegramEditDialog: максимальная дата QDateEdit — сегодня;
+  при создании новой записи дата по умолчанию — сегодня.
+- Метки пар «номер и дата»: «Номер и дата исходящего (входящего) документа».
+- Даты в таблице — в формате ДД.ММ.ГГГГ.
+
+### Изменения
+- `gui/entity_edit_dialog.py`: `_fit_to_content()` — высота диалога вычисляется
+  явно по sizeHint контейнера + рамки/отступы (adjustSize для окон урезает
+  рост, из-за чего скролл появлялся всегда); вызов в конце __init__ и при
+  раскрытии «Больше». Скролл остаётся запасным вариантом при нехватке
+  высоты экрана (ограничение availableGeometry).
+- `gui/edit_elements.py`:
+  - NumberDateEditElement: setMaximumDate(сегодня), умолчание новой записи —
+    сегодня (load_value сущности перезаписывает), редактор даты неактивен, пока
+    пуст номер; `_current_date()` — дата учитывается только при заполненном
+    номере (иначе «сегодня» по умолчанию ломало необязательные пары правилом
+    «номер и дата вместе»); collect_data/validate переведены на неё;
+  - ReportAddressesEditElement: максимальная дата доклада — сегодня.
+- `gui/document_dialogs.py`: метки пар исходящего/входящего/разрешительного —
+    из STRINGS (`label_outgoing_number_date`, `label_incoming_number_date`,
+    `label_permit_number_date` в `utils/string_resources.py`, пакет
+    перегенерирован — 356 ключей).
+- `gui/table_model.py`: `_format_value` форматирует date/datetime как
+  «ДД.ММ.ГГГГ [ЧЧ:ММ]» (сортировка по строке остаётся хронологической,
+  фильтры сравнивают типизированные значения — не затронуты).
+- Тесты: `test_edit_dialog.py` — обновлён required/optional валидация пары,
+    +границы «сегодня», +пустая пара при пустом номере, +метки диалогов,
+    +подгон высоты; `test_document_table_model.py` — +формат ДД.ММ.ГГГГ.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests -q` — 290 passed.
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"` — OK.
+- Offscreen-замеры: малый диалог (TerritorialUnit) — без скролла; объёмный
+  MaterialEditDialog ограничивается высотой экрана. Ширина контейнера в
+  offscreen завышена артефактом шрифта Helvetica — на экране не воспроизводится.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-14 — Экспорт ReportAddress: потеря telegram_id и тест прогона
+
+### Запрос пользователя
+Похоже, сломался экспорт ReportAddress — не экспортируется telegram_id;
+сделать тест прогона экспорта/импорта.
+
+### Причина
+`_mark_created` (services/change_tracking.py) формировал changed_fields
+новой записи только из колонок, непустых на момент before_flush. Внешний
+ключ telegram_id у адресации новой телеграммы назначается в ходе flush
+(синхронизация связи «телеграмма → адресация»), то есть после события, —
+поэтому в Change он не попадал, экспортный JSON шёл без telegram_id, и
+импорт не мог восстановить связь (конфликт, адресация терялась). Та же
+лака для обязательных колонок со значениями по умолчанию, назначаемыми
+при вставке.
+
+### Изменения
+- `services/change_tracking.py`: новая функция `_created_fields()` — в поля
+  создания входят заполненные колонки, колонки NOT NULL и колонки-FK (к
+  моменту экспорта значения уже в БД, to_dict читает их оттуда);
+  `_mark_created` использует её.
+- `tests/test_export_import.py`:
+  - `test_report_address_export_contains_telegram_id` — регрессия: CREATE
+    адресации новой телеграммы даёт Change с telegram_id, архив содержит
+    его (до исправления падает);
+  - `test_report_address_export_import_roundtrip` — полный прогон
+    экспорт→импорт в чистую БД: телеграмма с двумя адресатами (одна без
+    даты доклада) восстанавливается со связями, без конфликтов, без
+    служебных Change в приёмной БД.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests -q` — 292 passed.
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"` — OK.
+- Воспроизведение до исправления: Change ReportAddress ['id', 'leader_id',
+  'report_date'] — telegram_id отсутствует; после — в changed_fields и в
+  архиве, roundtrip-импорт восстанавливает связь.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-14 — Прогресс-диалог копирования файлов
+
+### Запрос пользователя
+1. Прогресс-бар при копировании не двигается — показывать процент
+   скопированного к общему объёму; копировать блоками по 4 Кб.
+2. Слишком длинные строки источника/приёмника: сокращать по границам
+   каталогов («...\Directory_5»), раскрывать хвост при растягивании диалога.
+
+### Изменения
+- `gui/attached_files_widget.py`:
+  - CopyFilesWorker: `progressed` теперь отдаёт (имя, источник, приёмник)
+    отдельными частями; `step` — накопительные скопированные байты;
+    копирование блоками COPY_DIALOG_CHUNK_SIZE = 4 Кб (on_chunk даёт
+    позицию внутри файла, к ней добавляется база уже скопированных файлов);
+  - CopyProgressLabel: метка прогресс-диалога; пути источника и приёмника
+    сокращает по границам каталогов под текущую ширину (_elide_path),
+    бюджет на путь — половина ширины минус скелет сообщения, не меньше
+    «... + последний компонент»; пересчёт в resizeEvent/showEvent;
+  - `_run_copy_thread`: диалог получает метку через setLabel, диапазон
+    0..суммарный размер файлов (_safe_file_size).
+- `tests/test_attached_files_widget.py`: +тест байтового прогресса
+  (монотонность, финал = общий объём, шаги внутри файла), +тест границ
+  сокращения _elide_path, +тест адаптации метки к ширине.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests -q` — 295 passed.
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"` — OK.
+- Нюанс окружения: offscreen ограничивает показанные окна экраном 800x600
+  и использует широкий запасной шрифт, поэтому широкие состояния метки
+  проверены на скрытом виджете с прямым пересчётом.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-14 — Исправление OverflowError в прогресс-диалоге копирования
+
+### Проблема
+`QProgressDialog.setRange` принимает 32-битные C int, а после перевода
+прогресса на байты диапазон стал суммарным объёмом файлов: при копировании
+свыше ~2 ГиБ — OverflowError, прикрепление файлов не стартовало
+(регрессия байтового прогресса от 2026-11-14).
+
+### Изменения
+- `gui/attached_files_widget.py`: константа PROGRESS_INT_MAX и хелпер
+  `_progress_range(total)` — (максимум, масштаб); при объёме крупнее
+  32-битного диапазона значения полосы делятся на масштаб
+  (`value // scale`), точность для обычных объёмов не меняется (масштаб 1).
+- `tests/test_attached_files_widget.py`:
+  - `test_progress_range_fits_int32_for_huge_volumes` — границы диапазона
+    int32, setRange не бросает OverflowError, монотонность отображения;
+  - `test_run_copy_thread_handles_huge_total` — сквозной прогон
+    `_run_copy_thread` с имитированным объёмом 3×INT_MAX: копирование
+    завершается, файл на месте.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests -q` — 297 passed.
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"` — OK.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-14 — Подсветка изменённой строки после операций с файлами
+
+### Проблема
+При прикреплении/откреплении файлов подсветка «изменено» в таблице
+документов не появлялась до перезапуска (запись Change при этом
+создавалась). Причина: док-виджет работает в собственной сессии БД,
+Change.change_id у документа появляется там, а табличная модель читает
+подсветку из кэша объектов другой сессии (DocumentsTableModel.data,
+BackgroundRole → item.change_id) и не перечитывала его.
+
+### Изменения
+- `gui/attached_files_widget.py`: сигнал `filesChanged(object)` — id
+  документа; испускается после успешной привязки (синхронный путь
+  link_existing_files и завершение потока копирования attach_copied_files)
+  и после открепления (detach_files).
+- `gui/document_list_widget.py`: `reload_document_state(document_id)` —
+  expire экземпляра в сессии таблицы и dataChanged по строке с ролью
+  BackgroundRole; без полного refresh (выделение/пагинация не трогаются).
+- `gui/application.py`: `filesChanged` дока подключён к `_on_files_changed`
+  — перенаправляет id в активную вкладку-список документов.
+
+### Проверка
+- `tests/test_attached_files_widget.py`: `test_dock_files_changed_after_attach_and_detach`
+  — сигнал после привязки и открепления.
+- `tests/test_window_state.py`: `test_files_changed_signal_updates_document_row_highlight`
+  — интеграция уровня MainWindow: экспорт начальных изменений → строка
+  без подсветки; привязка файла через док → BackgroundRole == modified_row.
+- `.venv/Scripts/python.exe -m pytest tests -q` — 299 passed.
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"` — OK.
+
+### Отложено
+- Переименование файла (FileRecord) документную строку не подсвечивает:
+  Change создаётся только для FileRecord, состав документа не меняется —
+  поведение не изменено.
+
+---
+
+## 2026-11-14 — Пустой пункт у nullable перечислений (тип доклада)
+
+### Проблема
+В диалоге телеграммы у «Типа доклада» (nullable TelegramReportType) не
+было пустого значения: EnumEditElement наполнял комбобокс только вариантами
+перечисления, поэтому незаполненное поле молча отображало (и сохраняло бы)
+первый доступный вариант.
+
+### Изменения
+- `gui/edit_elements.py`: EnumEditElement определяет nullable колонки
+  (`attribute.property.columns[0].nullable`); у nullable первым пунктом
+  добавляется «—» с данными None (как у FK-комбобоксов). Обязательные
+  перечисления (тип материала/телеграммы) без изменений.
+- `tests/test_edit_dialog.py`: `test_enum_editor_empty_item_for_nullable_column`
+  — пустой пункт у типа доклада, round-trip set_value, отсутствие пустого
+  пункта у обязательного типа телеграммы.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests -q` — 300 passed.
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"` — OK.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-14 — Тёмная тема: белый уголок таблицы
+
+### Проблема
+В тёмной теме внутри таблицы документов белый прямоугольник в правом
+нижнем углу — уголок пересечения горизонтальной и вертикальной полос
+прокрутки (QAbstractScrollArea::corner). Стиль Windows рисует его
+дефолтным светлым фоном; в таблице стилей темы правила не было.
+
+### Изменения
+- `gui/theme.py`: в _DARK_STYLESHEET добавлено правило
+  QAbstractScrollArea::corner с фоном полос прокрутки (#1E1E21).
+- `tests/test_theme.py`: `test_dark_theme_styles_scroll_area_corner` —
+  правило присутствует в таблице стилей тёмной темы и задаёт тёмный фон.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests -q` — 301 passed.
+- Применение тёмной темы и показ QTableView в offscreen — без ошибок.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-14 — Тёмная тема: белый уголок, доводка (виджет-уголок)
+
+### Проблема
+Правило QAbstractScrollArea::corner из предыдущего этапа не помогло:
+уголок остался белым. Offscreen-проверка снятием пикселей показала, что
+правило срабатывает под QFusionStyle, но стиль Windows (QWindowsStyle/
+QWindowsVistaStyle на машине пользователя) рисует уголок сам, игнорируя
+subcontrol QSS. Классический стиль заодно оставляет «защемлённые» 4px
+стрелки add-line полос прокрутки (предсуществующий артефакт, у пользователя
+с Vista-стилем их нет — подавить QSS не удалось).
+
+### Изменения
+- `gui/theme.py`:
+  - _ScrollCornerInstaller — eventFilter на QEvent.Polish для
+    QAbstractScrollArea: ставит setCornerWidget(QWidget) с именем объекта
+    scroll_area_corner, если уголок не задан явно. Покрывает виджеты,
+    созданные до и после применения темы (Polish приходит при стилизации
+    и показе). Подключается в Theme.apply при непустой таблице стилей.
+  - В QSS добавлено правило QWidget#scroll_area_corner (#1E1E21) — в светлой
+    теме таблицы стилей нет, уголок окрашивается палитрой (остаётся светлым).
+  - Правило QAbstractScrollArea::corner сохранено (покрывает стили,
+    где subcontrol работает: fusion).
+  - Полосам прокрутки добавлен border: none (убирает рамку классического
+    стиля).
+- `tests/test_theme.py`: test_dark_theme_installs_corner_widget — после
+  применения тёмной темы у показанной QTableView появляется cornerWidget
+  с именем scroll_area_corner; в test_dark_theme_styles_scroll_area_corner
+  добавлена проверка правила для именованного виджета.
+
+### Проверка
+- Пиксельная проверка (grab().toImage) в offscreen: уголок тёмный
+  (#1E1E21) под QFusionStyle и принудительным QWindowsStyle; в светлой
+  теме после переключения уголок светлый.
+- `.venv/Scripts/python.exe -m pytest tests -q` — 302 passed.
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"` — OK.
+
+### Отложено
+- «Защемлённые» стрелки add-line под классическим QWindowsStyle
+  (4px, дитеринг) — не воспроизводятся в среде пользователя
+  (WindowsVista-стиль), подавление средствами QSS не найдено.

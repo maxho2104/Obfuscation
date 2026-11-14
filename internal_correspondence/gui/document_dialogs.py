@@ -28,6 +28,7 @@ from internal_correspondence.gui.edit_elements import (
 from internal_correspondence.gui.entity_edit_dialog import EntityEditDialog, FieldSpec
 from internal_correspondence.orm import models as models_mod
 from internal_correspondence.orm.labels import entity_label
+from internal_correspondence.utils.string_resources import STRINGS
 
 
 def _type_in(*types) -> Callable:
@@ -91,16 +92,18 @@ class MaterialEditDialog(EntityEditDialog):
         outgoing = NumberDateEditElement(
             m.ScientificMaterial.outgoing_number,
             m.ScientificMaterial.outgoing_date,
+            label=STRINGS.label_outgoing_number_date,
             required=True,
         )
         incoming = NumberDateEditElement(
             m.ScientificMaterial.incoming_number,
             m.ScientificMaterial.incoming_date,
+            label=STRINGS.label_incoming_number_date,
         )
         permit = NumberDateEditElement(
             m.ScientificMaterial.permit_number,
             m.ScientificMaterial.permit_date,
-            label="Номер и дата разрешительного документа",
+            label=STRINGS.label_permit_number_date,
         )
         employees = ManyToManyEditElement(
             m.ScientificMaterial.employees,
@@ -168,11 +171,13 @@ class TelegramEditDialog(EntityEditDialog):
         outgoing = NumberDateEditElement(
             m.Telegram.outgoing_number,
             m.Telegram.outgoing_date,
+            label=STRINGS.label_outgoing_number_date,
             required=True,
         )
         incoming = NumberDateEditElement(
             m.Telegram.incoming_number,
             m.Telegram.incoming_date,
+            label=STRINGS.label_incoming_number_date,
         )
         report_addresses = ReportAddressesEditElement(
             m.Telegram.report_addresses,

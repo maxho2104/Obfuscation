@@ -20,7 +20,7 @@ from datetime import date, datetime, time
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import sqlalchemy as sa
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import QDate, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -358,14 +358,22 @@ class DateTimeEditElement(EditElement):
 
 
 class EnumEditElement(EditElement):
-    """Редактирование поля-перечисления (QComboBox из пакета предметной области)."""
+    """Редактирование поля-перечисления (QComboBox из пакета предметной области).
+
+    У nullable колонки первым пунктом идёт пустое значение («—»), чтобы
+    поле можно было оставить незаполненным; без него комбобокс молча
+    подставлял бы первый доступный вариант.
+    """
 
     def __init__(self, attribute, pack_enum: str, parent=None, label=None) -> None:
         self.pack_enum = pack_enum
+        self.nullable = attribute.property.columns[0].nullable
         super().__init__(attribute, parent=parent, label=label)
 
     def _build_editor(self) -> QWidget:
         self.combo = QComboBox()
+        if self.nullable:
+            self.combo.addItem("—", None)
         for value, text in pack_enum_choices(self.pack_enum):
             self.combo.addItem(text, value)
         self.combo.currentIndexChanged.connect(self.valueChanged)
@@ -692,6 +700,7 @@ class ReportAddressesEditElement(ManyToManyEditElement):
         date_edit.setDisplayFormat("dd.MM.yyyy")
         date_edit.setSpecialValueText(STRINGS.date_not_set)
         date_edit.setMinimumDate(EMPTY_DATE)
+        date_edit.setMaximumDate(QDate.currentDate())
         date_edit.setDate(EMPTY_DATE if report_date is None else report_date)
         date_edit.dateChanged.connect(
             lambda _value, row=row: self._on_date_changed(row)
@@ -814,7 +823,11 @@ class NumberDateEditElement(EditElement):
         self.date_edit.setDisplayFormat("dd.MM.yyyy")
         self.date_edit.setSpecialValueText("")
         self.date_edit.setMinimumDate(EMPTY_DATE)
-        self.date_edit.setDate(EMPTY_DATE)
+        self.date_edit.setMaximumDate(QDate.currentDate())
+        # Новая запись: дата по умолчанию — сегодня; при редактировании
+        # load_value перезапишет её фактическим (или пустым) значением
+        self.date_edit.setDate(QDate.currentDate())
+        self.date_edit.setEnabled(False)
         layout.addWidget(self.number_edit)
         layout.addWidget(self.date_edit)
         layout.addStretch(1)
@@ -849,21 +862,24 @@ class NumberDateEditElement(EditElement):
         self.number_edit.setText(number or "")
         self.date_edit.setDate(EMPTY_DATE if is_empty_date(value) else value)
 
+    def _current_date(self) -> Optional[date]:
+        """Дата пары; пока номер не заполнен, дата считается пустой."""
+        if not self.number_edit.text().strip():
+            return None
+        value = self.date_edit.date().toPyDate()
+        return None if is_empty_date(value) else value
+
     def value(self) -> Any:
         raise NotImplementedError("Используйте collect_data(target)")
 
     def collect_data(self, target: Dict[str, Any]) -> None:
         number = self.number_edit.text().strip() or None
-        value = self.date_edit.date().toPyDate()
         target[self.number_attribute.key] = number
-        target[self.date_attribute.key] = (
-            None if is_empty_date(value) else value
-        )
+        target[self.date_attribute.key] = self._current_date()
 
     def validate(self) -> Optional[str]:
         number = self.number_edit.text().strip() or None
-        value = self.date_edit.date().toPyDate()
-        value = None if is_empty_date(value) else value
+        value = self._current_date()
         label = self.label_text()
         if self._required:
             if number is None:

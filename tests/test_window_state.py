@@ -7,12 +7,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
 
 import pytest
-from PyQt5.QtCore import QByteArray
+from PyQt5.QtCore import QByteArray, Qt
 from PyQt5.QtWidgets import QApplication
 
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.core.settings import AppSettings, SettingsManager
 from internal_correspondence.gui.application import MainWindow, _parse_column_widths
+from internal_correspondence.utils.string_resources import STRINGS
 
 
 @pytest.fixture(scope="module")
@@ -97,3 +98,176 @@ def test_empty_geometry_is_tolerated(window_env, qt_app: QApplication) -> None:
     window = MainWindow(settings, db, manager)
     assert window.settings.window_geometry == ""
     window.close()
+
+
+# ---------------------------------------------------------------------------
+# Док-виджет прикреплённых файлов: меню «Вид» и сохранение положения
+# ---------------------------------------------------------------------------
+
+
+def test_files_dock_menu_action_toggles_visibility(window_env, qt_app: QApplication) -> None:
+    """Пункт меню «Вид» → «Прикреплённые файлы» показывает/скрывает док."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    action = window.files_dock_action
+    assert action.isCheckable()
+    assert action.text() == STRINGS.menu_attached_files
+
+    window.show()
+    qt_app.processEvents()
+    assert action.isChecked()
+
+    # Снятие галочки скрывает док
+    action.trigger()
+    qt_app.processEvents()
+    assert window.files_dock.isHidden()
+    assert not action.isChecked()
+
+    # Показ дока вновь отмечает пункт меню
+    window.files_dock.setVisible(True)
+    qt_app.processEvents()
+    assert action.isChecked()
+    window.close()
+
+
+def test_files_dock_dock_area_saved_on_close(window_env, qt_app: QApplication) -> None:
+    """Закрытие окна сохраняет область стыковки и геометрию дока."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    window.show()
+    window.addDockWidget(Qt.LeftDockWidgetArea, window.files_dock)
+    window._save_ui_state()
+
+    saved = manager.load()
+    assert saved.files_dock_visible == "true"
+    assert saved.files_dock_area == str(int(Qt.LeftDockWidgetArea))
+    assert saved.files_dock_floating == "false"
+    assert saved.files_dock_geometry
+    window.close()
+
+
+def test_files_dock_hidden_state_saved_on_close(window_env, qt_app: QApplication) -> None:
+    """Скрытый через меню док запоминается как скрытый."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    window.show()
+    window.files_dock_action.trigger()
+    window._save_ui_state()
+
+    saved = manager.load()
+    assert saved.files_dock_visible == "false"
+    window.close()
+
+
+def test_files_changed_signal_updates_document_row_highlight(window_env, qt_app: QApplication, tmp_path: Path) -> None:
+    """Прикрепление файла через док-виджет сразу даёт подсветку изменённой строки."""
+    from datetime import date
+
+    from internal_correspondence.core.constants import MaterialType, Role
+    from internal_correspondence.core.domain_pack import dir_name
+    from internal_correspondence.gui.theme import current_theme
+    from internal_correspondence.importexport.export_service import ExportService
+    from internal_correspondence.orm.models import (
+        Branch,
+        ScientificMaterial,
+        TerritorialUnit,
+    )
+    from internal_correspondence.services.change_tracking import register_change_tracking
+
+    register_change_tracking()
+    settings, db, manager = window_env
+    settings.role = Role.BRANCH.value
+    settings.branch_id = "F1"
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    with db.get_session() as session:
+        session.add(TerritorialUnit(id="MSK", name="Москва"))
+        session.add(Branch(id="F1", name="Филиал", short_name="Ф", territorial_unit_id="MSK"))
+        material = ScientificMaterial(
+            type=MaterialType.MESSAGE,
+            outgoing_number="М-1",
+            outgoing_date=date(2026, 1, 1),
+            name="Материал",
+            branch_id="F1",
+        )
+        session.add(material)
+        session.commit()
+        material_id = material.id
+
+    # Экспортируем начальные изменения: строка без подсветки «изменено»
+    storage = settings.storage_path_obj()
+    storage.mkdir(parents=True, exist_ok=True)
+    with db.get_session() as session:
+        ExportService(session, storage).export()
+        session.commit()
+
+    window.materials_tab.refresh()
+    assert window.materials_tab.reveal_record(material_id)
+    row = window.materials_tab.table_model.row_of(material_id)
+    theme = current_theme()
+    assert (
+        window.materials_tab.table_model.index(row, 0).data(Qt.BackgroundRole)
+        != theme.modified_row
+    )
+
+    # Файл внутри хранилища: привязка без копирования (синхронный путь дока)
+    inside = (
+        storage
+        / dir_name("files")
+        / dir_name("material_files")
+        / "old"
+        / "report.txt"
+    )
+    inside.parent.mkdir(parents=True, exist_ok=True)
+    inside.write_text("x", encoding="utf-8")
+
+    window.files_dock.set_document(
+        window.files_dock.session.get(ScientificMaterial, material_id)
+    )
+    window.files_dock._add_paths([inside])  # pylint: disable=protected-access
+
+    color = window.materials_tab.table_model.index(row, 0).data(Qt.BackgroundRole)
+    assert color == theme.modified_row
+    window.close()
+
+
+def test_files_dock_state_restored_from_settings(window_env, qt_app: QApplication) -> None:
+    """При запуске док восстанавливает область стыковки и видимость из настроек."""
+    settings, db, manager = window_env
+    settings.files_dock_area = str(int(Qt.LeftDockWidgetArea))
+    settings.files_dock_visible = "false"
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    assert window.dockWidgetArea(window.files_dock) == Qt.LeftDockWidgetArea
+    assert window.files_dock.isHidden()
+    assert not window.files_dock_action.isChecked()
+    window.close()
+
+
+def test_files_dock_floating_geometry_roundtrip(window_env, qt_app: QApplication) -> None:
+    """Откреплённый отдельным окном док восстанавливается с той же геометрией."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    window.show()
+    window.files_dock.setFloating(True)
+    window.files_dock.setGeometry(40, 60, 420, 300)
+    window._save_ui_state()
+
+    saved = manager.load()
+    assert saved.files_dock_floating == "true"
+    assert saved.files_dock_geometry
+    window.close()
+
+    restored = MainWindow(saved, db, manager)
+    restored.show()
+    qt_app.processEvents()
+    assert restored.files_dock.isFloating()
+    assert (
+        restored.files_dock.saveGeometry().toBase64().data().decode("ascii")
+        == saved.files_dock_geometry
+    )
+    restored.close()

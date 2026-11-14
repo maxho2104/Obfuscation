@@ -50,6 +50,14 @@ class AppSettings:
     material_filters: str = ""
     telegram_filters: str = ""
 
+    # Док-виджет прикреплённых файлов: видимость, область стыковки
+    # (значение Qt.DockWidgetArea), признак открепления отдельным окном
+    # и геометрия (QByteArray.saveGeometry в Base64)
+    files_dock_visible: str = "true"
+    files_dock_area: str = ""
+    files_dock_floating: str = "false"
+    files_dock_geometry: str = ""
+
     # Срок хранения записей Change (в днях); <= 0 — бессрочно
     changes_retention_days: int = DEFAULT_CHANGES_RETENTION_DAYS
 
