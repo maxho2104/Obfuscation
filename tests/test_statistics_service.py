@@ -810,6 +810,30 @@ def test_widget_selection_highlights_lines_and_pie(
         session.close()
 
 
+def test_widget_chart_elements_are_thick(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """Столбцы и линии нарисованы толще дефолтных."""
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        widget.refresh()
+
+        bar_series = widget.chart_view.chart().series()[0]
+        assert bar_series.barWidth() > 0.5
+
+        widget.chart_type_combo.setCurrentIndex(1)  # линейная
+        widget.refresh()
+        line_series = widget.chart_view.chart().series()[0]
+        assert line_series.pen().width() >= 3
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
 def test_widget_group_selection_highlights_members(
     statistics_setup, db_manager: DatabaseManager, qt_app
 ) -> None:

@@ -680,6 +680,8 @@ class StatisticsWidget(QWidget):
         series = QBarSeries()
         series.setLabelsVisible(True)
         series.setLabelsFormat("@value")
+        # Столбцы шире дефолтных (0.5 относительной ширины категории)
+        series.setBarWidth(0.75)
         series.clicked.connect(self._on_bar_clicked)
         max_value = 0
         self._bar_keys: Dict[int, str] = {}
@@ -729,6 +731,7 @@ class StatisticsWidget(QWidget):
             series = QLineSeries()
             series.setName(label)
             series.setColor(color)
+            series.setPen(QPen(color, 3))  # толщина линии
             self._chart_highlight[row.key] = self._line_highlight(series)
             self._line_keys[sip.unwrapinstance(series)] = row.key
             series.clicked.connect(self._on_line_clicked)
