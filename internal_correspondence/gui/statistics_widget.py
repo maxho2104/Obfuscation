@@ -2,8 +2,9 @@
 
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
+import sip
 from PyQt5.QtChart import (
     QBarCategoryAxis,
     QBarSeries,
@@ -13,10 +14,11 @@ from PyQt5.QtChart import (
     QChartView,
     QLineSeries,
     QPieSeries,
+    QPieSlice,
     QValueAxis,
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QBrush, QColor, QPainter
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QBrush, QColor, QPainter, QPen
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -94,6 +96,9 @@ _WORST_COLOR = QBrush(QColor(229, 115, 115, 90))
 _CHART_BARS = "bars"
 _CHART_LINES = "lines"
 _CHART_PIE = "pie"
+
+# Ключ строки «ИТОГО» в данных ячеек таблицы
+_TOTALS_KEY = "__totals__"
 
 # Соответствие типа узла ОШС критерию статистики
 NODE_TO_CRITERION = {
@@ -210,6 +215,13 @@ class StatisticsWidget(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.horizontalHeader().setStretchLastSection(True)
+        # Выделение строки подсвечивает её элемент на диаграмме
+        self._chart_highlight: Dict[str, Callable[[bool], None]] = {}
+        # Указатель C++ элемента диаграммы -> ключ строки (для кликов)
+        self._bar_keys: Dict[int, str] = {}
+        self._line_keys: Dict[int, str] = {}
+        self._slice_keys: Dict[int, str] = {}
+        self.table.itemSelectionChanged.connect(self._sync_chart_highlight)
         self.content_splitter.addWidget(self.table)
 
         # Правая часть: выбор типа графика над самим графиком
@@ -429,7 +441,9 @@ class StatisticsWidget(QWidget):
             )
 
         totals_row = len(result.rows)
-        self.table.setItem(totals_row, 0, self._text_item(STRINGS.row_grand_total, bold=True))
+        totals_item = self._text_item(STRINGS.row_grand_total, bold=True)
+        totals_item.setData(Qt.UserRole, _TOTALS_KEY)
+        self.table.setItem(totals_row, 0, totals_item)
         for column_index, value in enumerate(result.totals, start=1):
             self.table.setItem(
                 totals_row,
@@ -524,6 +538,126 @@ class StatisticsWidget(QWidget):
             chart = self._build_bars(result)
         self._chart = chart
         self.chart_view.setChart(chart)
+        # Восстанавливаем подсветку при перестроении диаграммы
+        self._sync_chart_highlight()
+
+    # ------------------------------------------------------------------
+    # Подсветка выделенной строки на диаграмме
+    # ------------------------------------------------------------------
+
+    def _sync_chart_highlight(self, *_args) -> None:
+        """Подсвечивает элементы диаграммы, соответствующие выделенным строкам."""
+        if not self._chart_highlight:
+            return
+        selected_keys = set()
+        for index in self.table.selectionModel().selectedRows():
+            item = self.table.item(index.row(), 0)
+            key = item.data(Qt.UserRole) if item is not None else None
+            if key is not None:
+                selected_keys.add(key)
+        if _TOTALS_KEY in selected_keys:
+            # Строка «ИТОГО» подсвечивает всю диаграмму целиком
+            targets = set(self._chart_highlight)
+        else:
+            targets = set()
+            for key in selected_keys:
+                targets.update(self._chart_target_keys(key))
+        for key, apply_highlight in self._chart_highlight.items():
+            apply_highlight(key in targets)
+
+    def _select_row_by_key(self, key: str) -> None:
+        """Выделяет в таблице строку с указанным ключом (клик по диаграмме).
+
+        Выделение откладывается до следующей итерации цикла событий:
+        синхронный ответ на сигнал диаграммы приводит к изменению её же
+        элементов (подсветка выделения) внутри обработчика сигнала, что
+        приводит к падению Qt Charts.
+        """
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is not None and item.data(Qt.UserRole) == key:
+                QTimer.singleShot(0, lambda r=row: self._safe_select_row(r))
+                return
+
+    def _safe_select_row(self, row: int) -> None:
+        """Выделяет строку таблицы, если виджет ещё жив."""
+        try:
+            self.table.selectRow(row)
+        except RuntimeError:
+            # Виджет успел удалиться к моменту срабатывания таймера
+            pass
+
+    def _on_bar_clicked(self, _index: int, bar_set: QBarSet) -> None:
+        """Клик по столбцу: выделяет строку таблицы."""
+        # Обёртки PyQt сигнала и построителя разные — сравниваем по указателю C++
+        key = self._bar_keys.get(sip.unwrapinstance(bar_set))
+        if key is not None:
+            self._select_row_by_key(key)
+
+    def _on_line_clicked(self, _point) -> None:
+        """Клик по точке линии: выделяет строку таблицы."""
+        series = self.sender()
+        if series is not None:
+            key = self._line_keys.get(sip.unwrapinstance(series))
+            if key is not None:
+                self._select_row_by_key(key)
+
+    def _on_pie_clicked(self, slice_) -> None:
+        """Клик по сектору: выделяет строку таблицы."""
+        key = self._slice_keys.get(sip.unwrapinstance(slice_))
+        if key is not None:
+            self._select_row_by_key(key)
+
+    def _chart_target_keys(self, key: str) -> List[str]:
+        """Ключи строк диаграммы, соответствующие выбранной строке таблицы.
+
+        Групповая строка подкатегории на диаграмме не показана — подсвечиваются
+        все её элементы; обычная строка отвечает сама за себя.
+        """
+        result = getattr(self, "_last_result", None)
+        if result is None:
+            return [key]
+        rows = result.rows
+        index = next((i for i, row in enumerate(rows) if row.key == key), None)
+        if index is None or not rows[index].is_group:
+            return [key]
+        members: List[str] = []
+        for row in rows[index + 1:]:
+            if row.is_group:
+                break
+            members.append(row.key)
+        return members
+
+    @staticmethod
+    def _bar_highlight(bar_set: QBarSet, color: QColor) -> Callable[[bool], None]:
+        """Подсветка столбца: замена цвета набора на акцентный."""
+
+        def apply(on: bool) -> None:
+            bar_set.setColor(
+                current_theme().chart_selection if on else color
+            )
+
+        return apply
+
+    @staticmethod
+    def _line_highlight(series: QLineSeries) -> Callable[[bool], None]:
+        """Подсветка линии: акцентный цвет и утолщённое перо."""
+        normal_pen = series.pen()
+        highlight_pen = QPen(current_theme().chart_selection, normal_pen.width() + 2)
+
+        def apply(on: bool) -> None:
+            series.setPen(highlight_pen if on else normal_pen)
+
+        return apply
+
+    @staticmethod
+    def _slice_highlight(slice_: QPieSlice) -> Callable[[bool], None]:
+        """Подсветка сектора: «взрыв» смещением из круга."""
+
+        def apply(on: bool) -> None:
+            slice_.setExploded(on)
+
+        return apply
 
     def _on_chart_type_changed(self) -> None:
         """Перестраивает диаграмму при смене её типа без пересчёта данных."""
@@ -538,6 +672,7 @@ class StatisticsWidget(QWidget):
         month_indices = result.month_indices
         categories = result.month_columns
         series_data = self._chart_series(result)
+        self._chart_highlight = {}
         if not series_data or not month_indices:
             chart.setTitle(STRINGS.chart_no_data)
             return chart
@@ -545,10 +680,14 @@ class StatisticsWidget(QWidget):
         series = QBarSeries()
         series.setLabelsVisible(True)
         series.setLabelsFormat("@value")
+        series.clicked.connect(self._on_bar_clicked)
         max_value = 0
+        self._bar_keys: Dict[int, str] = {}
         for label, row, color in series_data:
             bar_set = QBarSet(label)
             bar_set.setColor(color)
+            self._chart_highlight[row.key] = self._bar_highlight(bar_set, color)
+            self._bar_keys[sip.unwrapinstance(bar_set)] = row.key
             for index in month_indices:
                 value = row.values[index]
                 bar_set.append(value)
@@ -578,16 +717,21 @@ class StatisticsWidget(QWidget):
         month_indices = result.month_indices
         categories = result.month_columns
         series_data = self._chart_series(result)
+        self._chart_highlight = {}
         if not series_data or not month_indices:
             chart.setTitle(STRINGS.chart_no_data)
             return chart
 
         max_value = 0
         series_list = []
+        self._line_keys = {}
         for label, row, color in series_data:
             series = QLineSeries()
             series.setName(label)
             series.setColor(color)
+            self._chart_highlight[row.key] = self._line_highlight(series)
+            self._line_keys[sip.unwrapinstance(series)] = row.key
+            series.clicked.connect(self._on_line_clicked)
             for position, index in enumerate(month_indices):
                 value = row.values[index]
                 series.append(position, value)
@@ -619,15 +763,20 @@ class StatisticsWidget(QWidget):
         chart = self._new_chart(STRINGS.chart_by_totals.format(title=result.title))
 
         series_data = [entry for entry in self._chart_series(result) if entry[1].total > 0]
+        self._chart_highlight = {}
         if not series_data:
             chart.setTitle(STRINGS.chart_no_data)
             return chart
 
         series = QPieSeries()
+        self._slice_keys = {}
         for label, row, color in series_data:
             slice_ = series.append(label, row.total)
             slice_.setColor(color)
             slice_.setLabelVisible(True)
+            self._chart_highlight[row.key] = self._slice_highlight(slice_)
+            self._slice_keys[sip.unwrapinstance(slice_)] = row.key
+        series.clicked.connect(self._on_pie_clicked)
         chart.addSeries(series)
         chart.legend().setAlignment(Qt.AlignBottom)
         return chart
