@@ -199,6 +199,7 @@ class Theme:
         disabled: Optional[Dict[str, QColor]] = None,
         stylesheet: str = "",
         unassigned_row: Optional[QColor] = None,
+        chart_selection: Optional[QColor] = None,
     ) -> None:
         self.key = key
         self.label = label
@@ -210,6 +211,8 @@ class Theme:
         self.unassigned_row = unassigned_row or QColor("#F7C6D9")
         # Фон документов без входящего номера (менее яркий, чем modified_row)
         self.no_incoming_row = no_incoming_row or modified_row
+        # Подсветка элемента диаграммы, соответствующего выделенной строке таблицы
+        self.chart_selection = chart_selection or QColor("#E8710A")
         # Переопределения палитры: имя роли QPalette -> цвет
         self.colors = colors or {}
         # Цвета неактивных элементов: имя роли -> цвет
@@ -251,6 +254,7 @@ DARK_THEME = Theme(
     modified_row=QColor("#7E6434"),
     unassigned_row=QColor("#5A2A3A"),
     no_incoming_row=QColor("#2F3B4C"),
+    chart_selection=QColor("#FFB74D"),
     colors={
         "Window": QColor("#2D2D30"),
         "Base": QColor("#1E1E21"),
