@@ -270,6 +270,57 @@ def test_inactive_display(qt_app, db_manager, oshm_data) -> None:
     dialog.deleteLater()
 
 
+def test_header_hidden(qt_app, db_manager, oshm_data) -> None:
+    """Заголовок колонки дерева скрыт (надписи «Элемент» нет)."""
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    assert dialog.tree_structure.isHeaderHidden()
+    assert dialog.tree_workgroups.isHeaderHidden()
+    dialog.deleteLater()
+
+
+def test_active_first_order(qt_app, db_manager, oshm_data) -> None:
+    """Действующие элементы идут выше неактивных (по алфавиту внутри группы)."""
+    session = db_manager.get_session()
+    # Неактивный «Отдел А0» алфавитно раньше активного «Отдел А» —
+    # при сортировке «действующие сначала» «Отдел А» должен быть выше
+    dept_a0 = Department(name="Отдел А0", branch_id="F1", active=False)
+    session.add(dept_a0)
+    # Неактивный сотрудник алфавитно раньше активного в том же отделе
+    emp_anna = Employee(
+        last_name="Андреев", first_name="Анна",
+        department_id=oshm_data["dept_a"].id, active=False,
+    )
+    emp_boris = Employee(
+        last_name="Борисов", first_name="Борис",
+        department_id=oshm_data["dept_a"].id, active=True,
+    )
+    session.add_all([emp_anna, emp_boris])
+    session.commit()
+
+    dialog = OSHMDialog(session, branch_id="F1", role=Role.BRANCH.value)
+
+    structure_nodes = _tree_nodes(dialog.tree_structure)
+    dept_names = [
+        text for text, payload, _item in structure_nodes if payload[0] == "department"
+    ]
+    # Активные отделы (А) выше сокращённых (А0, Б); внутри группы — по имени
+    assert dept_names.index("Отдел А") < dept_names.index("Отдел А0")
+    assert dept_names.index("Отдел А") < dept_names.index("Отдел Б")
+    assert dept_names.index("Отдел А0") < dept_names.index("Отдел Б")
+
+    dept_a_item = next(
+        item for text, payload, item in structure_nodes
+        if payload[0] == "department" and text == "Отдел А"
+    )
+    child_names = [dept_a_item.child(i).text(0) for i in range(dept_a_item.childCount())]
+    # Активные сотрудники (Борисов, Иванов) выше неактивных (Андреев, Петров)
+    assert child_names.index("Борисов Б.") < child_names.index("Андреев А.")
+    assert child_names.index("Иванов И.") < child_names.index("Петров П.")
+    dialog.deleteLater()
+
+
 def test_toggle_selected(qt_app, db_manager, oshm_data) -> None:
     dialog = OSHMDialog(
         db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value

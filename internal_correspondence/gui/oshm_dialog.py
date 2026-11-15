@@ -86,7 +86,7 @@ class OSHMTreeWidget(QTreeWidget):
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setDefaultDropAction(Qt.IgnoreAction)
-        self.setHeaderLabels([STRINGS.oshm_col_element])
+        self.setHeaderHidden(True)
 
     def dropEvent(self, event) -> None:
         """Перехватывает перенос: передаёт узлы и цель диалогу."""
@@ -296,7 +296,8 @@ class OSHMDialog(QDialog):
         departments = (
             self.session.query(Department)
             .filter(Department.branch_id == branch_id)
-            .order_by(Department.name)
+            # Действующие отделы — выше сокращённых, внутри группы — по имени
+            .order_by(Department.active.desc(), Department.name)
             .all()
         )
         for dept in departments:
@@ -308,7 +309,7 @@ class OSHMDialog(QDialog):
             employees = (
                 self.session.query(Employee)
                 .filter(Employee.department_id == dept.id)
-                .order_by(Employee.last_name)
+                .order_by(Employee.active.desc(), Employee.last_name)
                 .all()
             )
             for emp in employees:
@@ -322,7 +323,7 @@ class OSHMDialog(QDialog):
             workgroups = (
                 self.session.query(WorkingGroup)
                 .filter(WorkingGroup.department_id == dept.id)
-                .order_by(WorkingGroup.name)
+                .order_by(WorkingGroup.active.desc(), WorkingGroup.name)
                 .all()
             )
             for wg in workgroups:
@@ -340,7 +341,7 @@ class OSHMDialog(QDialog):
                         WorkGroupMembership.working_group_id == wg.id,
                         WorkGroupMembership.end_date.is_(None),
                     )
-                    .order_by(Employee.last_name)
+                    .order_by(Employee.active.desc(), Employee.last_name)
                     .all()
                 )
                 for emp in members:

@@ -103,7 +103,6 @@ class AppStrings:
     oshm_window_title: str = "ОШС филиала {branch_id}"
     oshm_tree_structure: str = "Штатная структура"
     oshm_tree_workgroups: str = "Рабочие группы"
-    oshm_col_element: str = "Элемент"
     oshm_select_branch_first: str = "Выберите филиал, в который нужно добавить отдел"
     oshm_tasks_section: str = "Назначенные задачи"
     oshm_membership_history: str = "прежняя группа"
