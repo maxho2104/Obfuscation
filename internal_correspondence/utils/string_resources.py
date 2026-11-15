@@ -301,6 +301,9 @@ class AppStrings:
     filters_applied_caption: str = "Примененные фильтры:"
     filters_none: str = "Фильтры не заданы."
     tooltip_remove_filter: str = "Удалить фильтр"
+    filter_op_in: str = "одно из"
+    filter_op_empty: str = "пусто"
+    filter_op_not_empty: str = "не пусто"
 
     # --- Прикреплённые файлы (док-виджет) ---
     files_label_material: str = "Файлы к научному материалу № {number} от {date}"

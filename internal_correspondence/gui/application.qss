@@ -293,12 +293,6 @@ QFrame#attachedFilesPanel QListWidget#attachedFilesList {
     border-radius: 5px;
 }
 
-QTableView::item, QTableWidget::item, QTreeView::item,
-QTreeWidget::item, QListView::item, QListWidget::item {
-    padding: 5px 7px;
-    border: 0;
-}
-
 QTableView::item:hover, QTableWidget::item:hover, QTreeView::item:hover,
 QTreeWidget::item:hover, QListView::item:hover, QListWidget::item:hover {
     background-color: {{SURFACE_HOVER}};

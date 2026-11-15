@@ -105,6 +105,52 @@ def test_dark_theme_installs_corner_widget(qt_app: QApplication) -> None:
     apply_theme(qt_app, "light")
 
 
+def test_item_background_role_visible_in_both_themes(qt_app: QApplication) -> None:
+    """QSS-шаблон не глушит фон строк из модели (BackgroundRole).
+
+    Базовое правило «QTableView::item { padding; border }» заставляет
+    QStyleSheetStyle рисовать фон элементов самостоятельно, и подсветка
+    неэкспортированных / без входящего номера строк пропадает в обеих
+    темах. Проверка пикселями: цвета темы реально присутствуют
+    в отрисованной таблице.
+    """
+    from PyQt5.QtGui import QStandardItem, QStandardItemModel
+    from PyQt5.QtWidgets import QTableView
+
+    for key in ("dark", "light"):
+        theme = apply_theme(qt_app, key)
+        model = QStandardItemModel(4, 2)
+        for row in range(4):
+            for column in range(2):
+                item = QStandardItem(f"{row},{column}")
+                item.setBackground(
+                    theme.modified_row if row < 2 else theme.no_incoming_row
+                )
+                model.setItem(row, column, item)
+        view = QTableView()
+        view.setAlternatingRowColors(True)
+        view.setModel(model)
+        view.resize(300, 220)
+        view.show()
+        qt_app.processEvents()
+        image = view.grab().toImage()
+        rendered = {image.pixelColor(60, y).name() for y in range(40, 200)}
+        view.close()
+        assert theme.modified_row.name() in rendered, key
+        assert theme.no_incoming_row.name() in rendered, key
+
+    apply_theme(qt_app, "light")
+
+
+def test_row_highlight_colors_contrast_with_table() -> None:
+    """Цвета подсветки строк отличны от фона и чередования таблицы."""
+    for theme in THEMES.values():
+        assert theme.modified_row != theme.stripe
+        assert theme.no_incoming_row != theme.stripe
+        assert theme.modified_row != theme.colors["Base"]
+        assert theme.no_incoming_row != theme.colors["Base"]
+
+
 def test_theme_setting_roundtrip(tmp_path) -> None:
     """Выбор темы сохраняется в INI и читается обратно."""
     manager = SettingsManager(tmp_path)
