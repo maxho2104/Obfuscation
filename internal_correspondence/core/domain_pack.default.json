@@ -130,6 +130,21 @@
           "label": "Научный труд"
         }
       ]
+    },
+    "report_type": {
+      "label": "Тип аналитического отчёта",
+      "values": [
+        {
+          "key": "month",
+          "code": "МЕС",
+          "label": "За месяц"
+        },
+        {
+          "key": "half_year",
+          "code": "ПОЛ",
+          "label": "За полугодие"
+        }
+      ]
     }
   },
   "entities": {
@@ -628,6 +643,60 @@
         }
       }
     },
+    "ReportDraft": {
+      "label": "Черновик отчёта",
+      "label_plural": "Черновики отчётов",
+      "fields": {
+        "id": {
+          "label": "Идентификатор"
+        },
+        "report_type": {
+          "label": "Тип отчёта"
+        },
+        "year": {
+          "label": "Год"
+        },
+        "period_number": {
+          "label": "Номер периода"
+        },
+        "recipient": {
+          "label": "Адресат"
+        },
+        "shortcomings": {
+          "label": "Недостатки"
+        },
+        "significant_results": {
+          "label": "Значимые результаты"
+        },
+        "proposals": {
+          "label": "Предложения"
+        },
+        "conclusion": {
+          "label": "Вывод"
+        },
+        "plan_execution": {
+          "label": "Выполнение плана"
+        },
+        "signatory_position": {
+          "label": "Должность подписанта"
+        },
+        "signatory_name": {
+          "label": "ФИО подписанта"
+        },
+        "created_at": {
+          "label": "Создан"
+        },
+        "updated_at": {
+          "label": "Изменён"
+        },
+        "branch_id": {
+          "label": "Филиал"
+        },
+        "branch": {
+          "label": "Филиал"
+        }
+      }
+    },
     "EvaluationList": {
       "label": "Список оценок",
       "label_plural": "Списки оценок",
@@ -709,6 +778,7 @@
     "action_import_actual": "Загрузка актуальных данных...",
     "action_oshm": "ОШС",
     "action_domain_pack": "Пакет предметной области...",
+    "action_generate_report": "Сформировать отчёт",
     "title_error": "Ошибка",
     "title_export": "Экспорт",
     "title_import": "Импорт",
@@ -716,6 +786,7 @@
     "title_confirm": "Подтверждение",
     "title_attention": "Внимание",
     "title_domain_pack": "Пакет предметной области",
+    "title_generate_report": "Формирование отчёта",
     "msg_export_done": "Экспорт завершён:\n{output}",
     "msg_export_error": "Не удалось выполнить экспорт:\n{error}",
     "msg_import_error": "Не удалось выполнить импорт:\n{error}",
@@ -788,6 +859,43 @@
     "button_export_excel": "Экспорт в Excel",
     "dialog_save_excel": "Сохранить результат в Excel",
     "file_filter_excel": "Файлы Excel (*.xlsx)",
+    "report_label_type": "Тип отчёта:",
+    "report_label_branch": "Филиал:",
+    "report_label_year": "Год:",
+    "report_label_period": "Период:",
+    "report_type_month": "Анализ за месяц",
+    "report_type_half_year": "Анализ за полугодие",
+    "report_half_1": "Первое полугодие",
+    "report_half_2": "Второе полугодие",
+    "report_month_names": "Январь,Февраль,Март,Апрель,Май,Июнь,Июль,Август,Сентябрь,Октябрь,Ноябрь,Декабрь",
+    "report_group_manual": "Редактируемые разделы отчёта",
+    "report_label_recipient": "Адресат:",
+    "report_label_shortcomings": "Недостатки:",
+    "report_label_results": "Значимые результаты:",
+    "report_label_proposals": "Предложения:",
+    "report_label_conclusion": "Вывод:",
+    "report_label_plan": "Выполнение плана:",
+    "report_label_signatory_position": "Должность подписанта:",
+    "report_label_signatory_name": "ФИО подписанта:",
+    "report_button_generate": "Сформировать",
+    "report_default_recipient": "Директору научной организации",
+    "report_default_signatory_position": "Заместитель директора по научной работе",
+    "report_default_signatory_name": "И. Фамилия",
+    "report_dialog_save": "Сохранить сформированный отчёт",
+    "report_progress_creating": "Идёт создание отчёта…",
+    "report_file_filter": "Документ Word (*.docx)",
+    "report_month_filename": "Анализ_за_{month}_{year}.docx",
+    "report_half_filename": "Анализ_за_{half}_полугодие_{year}.docx",
+    "report_msg_done": "Отчёт сформирован:\n{output}",
+    "report_msg_error": "Не удалось сформировать отчёт:\n{error}",
+    "report_msg_no_branch": "Для формирования отчёта необходимо выбрать филиал.",
+    "report_error_branch_not_found": "Не найден филиал с идентификатором {branch_id}.",
+    "report_error_month_names": "Для отчёта требуется 12 названий месяцев.",
+    "report_error_template_missing": "Не найден шаблон отчёта: {path}",
+    "report_error_template_render": "Не удалось сформировать отчёт по шаблону {template}: {error}",
+    "report_error_damaged_docx": "Сформирован повреждённый DOCX: {path}",
+    "report_error_unresolved_fields": "В сформированном документе остались незаполненные переменные шаблона.",
+    "report_error_dialog_not_accepted": "Диалог формирования отчёта не был принят.",
     "button_refresh": "Обновить",
     "button_filter": "Фильтр",
     "button_filter_count": "Фильтр ({count})",

@@ -1341,3 +1341,220 @@ subcontrol QSS. Классический стиль заодно оставля�
 - «Защемлённые» стрелки add-line под классическим QWindowsStyle
   (4px, дитеринг) — не воспроизводятся в среде пользователя
   (WindowsVista-стиль), подавление средствами QSS не найдено.
+
+## 2026-11-15 — Подключение внешнего QSS к обеим темам
+
+### Изменения
+- `internal_correspondence/gui/theme.py`:
+  - удалена встроенная строка QSS тёмной темы;
+  - добавлена загрузка общего шаблона `application.qss` с кешированием;
+  - светлая и тёмная палитры подставляются в шаблон через именованные
+    цветовые токены;
+  - сохранены отдельные цвета строк документов, нераспределённых задач и
+    виджета-уголка полос прокрутки.
+- `internal_correspondence/gui/application.qss`:
+  - добавлены внешние правила для `QAbstractScrollArea::corner` и
+    `QWidget#scroll_area_corner`;
+  - цвет уголка задаётся токеном `SCROLL_CORNER`, включая прежний
+    `#1E1E21` для тёмной темы.
+
+### Проверка
+- `python -m pytest tests -q` с `QT_QPA_PLATFORM=offscreen` — 302 passed.
+- `.venv/Scripts/python.exe -c "import internal_correspondence.gui.application; ..."`
+  — импорт GUI и построение QSS обеих тем успешны, необработанных токенов нет.
+- `.venv/Scripts/python.exe -m pytest tests -q` не запускался: в текущем
+  виртуальном окружении отсутствует пакет `pytest`.
+- `git diff --check` — ошибок форматирования нет.
+
+### Отложено
+- Установить dev-зависимости в `.venv`, чтобы обязательная команда pytest
+  из `AGENTS.md` выполнялась тем же интерпретатором, что и приложение.
+
+## 2026-11-15 — Фиксация панели прикреплённых файлов справа
+
+### Изменения
+- `internal_correspondence/gui/attached_files_widget.py`: у панели оставлена
+  только кнопка закрытия; перемещение и отделение в самостоятельное окно
+  отключены, разрешена только правая область главного окна.
+- `internal_correspondence/gui/application.py`: панель при запуске всегда
+  закрепляется справа, старые настройки левого/плавающего положения
+  игнорируются; сохраняется только видимость панели.
+- `internal_correspondence/core/settings.py`: уточнено назначение оставленных
+  для обратной совместимости параметров положения панели.
+- `tests/test_window_state.py`: добавлены проверки фиксированного положения,
+  отсутствия кнопки отделения, игнорирования старого плавающего состояния и
+  показа/скрытия повторным нажатием пункта меню.
+- `README.md`: актуализировано описание панели прикреплённых файлов.
+
+### Проверка
+- `python -m pytest tests/test_window_state.py tests/test_attached_files_widget.py -q`
+  с `QT_QPA_PLATFORM=offscreen` — 28 passed.
+- `python -m pytest tests -q -x` с `QT_QPA_PLATFORM=offscreen` — 302 passed.
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"`
+  — импорт GUI успешен.
+- Первый полный прогон системным Python завершился нестабильным `access violation`
+  в фоне Qt; повторный чистый прогон прошёл полностью.
+- `.venv/Scripts/python.exe -m pytest tests -q` не запускается: в текущем
+  виртуальном окружении отсутствует пакет `pytest`.
+
+### Отложено
+- Установить dev-зависимости в `.venv`, чтобы обязательный полный прогон
+  выполнялся проектным интерпретатором.
+
+## 2026-11-15 — Формирование месячных и полугодовых отчётов DOCX
+
+### Изменения
+- `internal_correspondence/gui/application.py`, `gui/report_dialog.py`: в меню «Данные»
+  добавлен диалог формирования отчёта с выбором филиала, месяца/полугодия и года;
+  ручные текстовые разделы автоматически загружаются для выбранного периода.
+- `internal_correspondence/reports/report_service.py`, `reports/word_report.py`:
+  реализованы расчёт показателей из БД, сравнение с тем же периодом прошлого года,
+  сохранение ручной части и формирование итогового DOCX через `docxtpl`.
+- `internal_correspondence/reports/templates/*.docx`,
+  `scripts_dev/build_report_templates.py`: подготовлены и визуально проверены два
+  изменяемых Word-шаблона на основе предоставленных документов. При первом запуске
+  шаблоны копируются в каталог шаблонов файлового хранилища.
+- `orm/models.py`, `core/constants.py`, `services/change_tracking.py`,
+  `services/enum_validation.py`: добавлены `ReportDraft` и `ReportType`; черновики
+  участвуют в change tracking и ZIP-обмене.
+- `alembic/versions/e1a4b7c9d2f6_report_drafts.py`: добавлена совместимая с SQLite
+  и PostgreSQL миграция таблицы `report_drafts`.
+- `core/domain_pack.default.json`, `utils/string_resources.py`: добавлены метки,
+  перечисление типа отчёта и все новые строки интерфейса; секция `strings`
+  регенерирована скриптом проекта.
+- `pyproject.toml`, `requirements.txt`: добавлена runtime-зависимость `docxtpl`,
+  DOCX-шаблоны включены в package data.
+- `README.md`: описаны интерфейс отчётов, хранение шаблонов, расчётные правила,
+  новая структура данных и команда миграции.
+- `tests/test_report_service.py`, `tests/test_export_import.py`,
+  `tests/test_window_state.py`, `tests/test_domain_pack.py`: добавлены проверки
+  расчётов, рендеринга обоих шаблонов, диалога, меню и ZIP-обмена черновиков.
+- `tests/test_attached_files_widget.py`: асинхронный тест копирования ожидает
+  планировщик Qt, поэтому полный прогон больше не оставляет активный QThread.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests -q` с
+  `QT_QPA_PLATFORM=offscreen` — 310 passed.
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"`
+  — импорт GUI успешен.
+- `.venv/Scripts/python.exe scripts_dev/test_migration_report_drafts.py` —
+  upgrade/downgrade/upgrade успешно.
+- `.venv/Scripts/python.exe -m compileall -q internal_correspondence scripts_dev tests`
+  — успешно.
+- Оба шаблона отрисованы LibreOffice и визуально проверены постранично: выходов
+  за границы, наложений и неразрешённых маркеров нет.
+
+### Отложено
+- Точные формулировки постоянного текста, правила заполнения качественных разделов
+  и состав показателей можно уточнять без изменения схемы БД: текст — во внешних
+  шаблонах, ручные значения — в `ReportDraft`, расчёты — в `ReportDataService`.
+
+## 2026-11-15 — Актуализация внешнего пакета для отчётов
+
+### Изменения
+- `domain_pack.json`: в активный внешний пакет добавлено перечисление
+  `report_type` с неизменяемыми ключами `month` и `half_year` и кодами `МЕС`/`ПОЛ`.
+  Остальные пользовательские значения пакета не изменялись.
+
+### Проверка
+- Внешний пакет успешно загружается через `load_domain_pack`.
+- `validate_enum_codes` для активной БД `123.db` — предупреждений нет.
+
+### Отложено
+- Нет.
+
+## 2026-11-15 — Приведение DOCX-отчётов к предоставленным образцам
+
+### Изменения
+- `scripts_dev/report_template_sources/*.docx`: сохранены контрольные копии
+  предоставленных образцов, от которых воспроизводимо собираются шаблоны.
+- `scripts_dev/build_report_templates.py`, `reports/templates/*.docx`: шаблоны
+  перестроены непосредственно из образцов с сохранением геометрии страниц,
+  абзацев, колонтитулов и состава таблиц. В месячном отчёте оставлена одна
+  исходная таблица, в полугодовом — ровно три; добавленные ранее таблицы удалены.
+- `internal_correspondence/reports/report_service.py`: подготовлены вычисляемые
+  значения для текстовых слотов и трёх таблиц образцов без сохранения расчётов в БД.
+- `internal_correspondence/reports/word_report.py`: известные устаревшие встроенные
+  копии во внешнем каталоге шаблонов безопасно обновляются; пользовательские
+  варианты с другим содержимым остаются без изменений.
+- `tests/test_report_service.py`: зафиксировано количество таблиц обоих отчётов и
+  проверено безопасное обновление только известной устаревшей версии.
+- `README.md`: уточнена структура шаблонов и правило обновления внешних копий.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests/test_report_service.py -q` — 7 passed.
+- `.venv/Scripts/python.exe -m pytest tests -q` с
+  `QT_QPA_PLATFORM=offscreen` — 311 passed.
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"`
+  — импорт GUI успешен.
+- `.venv/Scripts/python.exe -m compileall -q internal_correspondence scripts_dev tests`
+  — успешно.
+- Оба отчёта сформированы на данных `123.db`, отрисованы LibreOffice и проверены
+  постранично; строки таблиц не разрываются между страницами, структура образцов
+  и отсутствие дополнительных таблиц подтверждены.
+
+### Отложено
+- Нет.
+
+## 2026-11-15 — Проверка типа черновика отчёта по активному пакету
+
+### Изменения
+- `internal_correspondence/core/enum_registry.py`: `ReportType` зарегистрирован
+  как перечисление пакета `report_type`, поэтому значения `0` и `1` из
+  `ReportDraft.report_type` преобразуются в ключи `month` и `half_year`.
+- `tests/test_domain_pack_integration.py`: проверка известных кодов дополнена
+  черновиком полугодового отчёта со значением `ReportType.HALF_YEAR`.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests/test_domain_pack_integration.py -q`
+  — 14 passed.
+- `.venv/Scripts/python.exe -m pytest tests -q` с
+  `QT_QPA_PLATFORM=offscreen` — 311 passed.
+- На активном `domain_pack.json` и рабочей `123.db` функция
+  `validate_enum_codes()` вернула пустой список предупреждений.
+- Импорт `internal_correspondence.gui.application` и `compileall` успешны.
+
+### Отложено
+- Нет.
+
+## 2026-11-15 — Индикатор формирования отчёта
+
+### Изменения
+- `internal_correspondence/gui/application.py`: после подтверждения пути
+  сохранения показывается модальный неопределённый индикатор; он закрывается до
+  сообщения об успешном завершении или ошибке.
+- `internal_correspondence/utils/string_resources.py`: добавлена ресурсная строка
+  `report_progress_creating` без захардкоженного текста в GUI.
+- `internal_correspondence/core/domain_pack.default.json`: секция `strings`
+  регенерирована скриптом проекта.
+- `tests/test_window_state.py`: проверены текст, модальность, отсутствие отмены и
+  фактическая видимость индикатора во время вызова рендера.
+- `README.md`: описано поведение индикатора.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests/test_window_state.py -q` — 14 passed.
+- `.venv/Scripts/python.exe -m pytest tests -q` с
+  `QT_QPA_PLATFORM=offscreen` — 313 passed.
+- Импорт `internal_correspondence.gui.application` и `compileall` успешны.
+
+### Отложено
+- Нет.
+
+## 2026-11-15 — Стили кнопок на научных материалах телеграммах
+
+### Изменения
+- `internal_correspondence/gui/document_list_widget.py`: кнопки на вкладках
+  научных материалов и телеграмм получили те же QSS-роли, что в редакторе
+  «Данные → Страны»: акцентную для добавления, нейтральную для изменения и
+  опасную для удаления.
+- `tests/test_window_state.py`: одинаковые роли проверяются на обеих вкладках.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests/test_window_state.py -q` — 15 passed.
+- `.venv/Scripts/python.exe -m pytest tests -q` с
+  `QT_QPA_PLATFORM=offscreen` — 314 passed.
+- Импорт `internal_correspondence.gui.application` и `compileall` успешны.
+
+### Отложено
+- Нет.
+

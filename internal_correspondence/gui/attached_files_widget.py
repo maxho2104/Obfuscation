@@ -302,6 +302,8 @@ class AttachedFilesWidget(QDockWidget):
         self._icon_provider = QFileIconProvider()
         self._thread: Optional[QThread] = None
         self.setObjectName("attached_files_dock")
+        self.setAllowedAreas(Qt.RightDockWidgetArea)
+        self.setFeatures(QDockWidget.DockWidgetClosable)
         self._setup_ui()
 
     # --- интерфейс ---

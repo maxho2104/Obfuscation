@@ -9,6 +9,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QLabel, QMessageBox
 
 from internal_correspondence.core.constants import MaterialType
@@ -442,6 +443,7 @@ def test_run_copy_thread_handles_huge_total(env, qapp, tmp_path, monkeypatch) ->
         qapp.processEvents()
         if dock._thread is None:
             break
+        QTest.qWait(10)
 
     assert dock._thread is None
     assert target.read_bytes() == b"x" * 100

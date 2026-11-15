@@ -29,6 +29,7 @@ from internal_correspondence.core.constants import (
     ChangeOperation,
     EvaluationValue,
     MaterialType,
+    ReportType,
     ScientificTaskType,
     SourceType,
     TelegramReportType,
@@ -313,6 +314,11 @@ class Branch(Base, ChangeTrackedMixin):
     telegrams: Mapped[List["Telegram"]] = relationship(
         "Telegram",
         back_populates="branch",
+    )
+    report_drafts: Mapped[List["ReportDraft"]] = relationship(
+        "ReportDraft",
+        back_populates="branch",
+        cascade="all, delete-orphan",
     )
 
 
@@ -1187,6 +1193,109 @@ class ReportAddress(Base, ChangeTrackedMixin):
         info={"label": "Руководитель"},
     )
     leader: Mapped["Leader"] = relationship("Leader", back_populates="report_addresses")
+
+
+# -----------------------------------------------------------------------------
+# Черновик аналитического отчёта
+# -----------------------------------------------------------------------------
+
+class ReportDraft(Base, ChangeTrackedMixin):
+    """Редактируемые текстовые разделы отчёта за один период."""
+
+    __entity_label__ = "Черновик отчёта"
+    __entity_label_plural__ = "Черновики отчётов"
+    __field_labels__ = {"id": "Идентификатор"}
+    __tablename__ = "report_drafts"
+    __table_args__ = (
+        UniqueConstraint(
+            "branch_id",
+            "report_type",
+            "year",
+            "period_number",
+            name="uix_report_draft_period",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    report_type: Mapped[ReportType] = mapped_column(
+        IntEnumType(ReportType),
+        nullable=False,
+        info={"label": "Тип отчёта"},
+    )
+    year: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        info={"label": "Год"},
+    )
+    period_number: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        info={"label": "Номер периода"},
+    )
+    recipient: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        info={"label": "Адресат"},
+    )
+    shortcomings: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        info={"label": "Недостатки"},
+    )
+    significant_results: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        info={"label": "Значимые результаты"},
+    )
+    proposals: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        info={"label": "Предложения"},
+    )
+    conclusion: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        info={"label": "Вывод"},
+    )
+    plan_execution: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        info={"label": "Выполнение плана"},
+    )
+    signatory_position: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+        info={"label": "Должность подписанта"},
+    )
+    signatory_name: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        info={"label": "ФИО подписанта"},
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        info={"label": "Создан"},
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        onupdate=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        info={"label": "Изменён"},
+    )
+
+    branch_id: Mapped[str] = mapped_column(
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        nullable=False,
+        info={"label": "Филиал"},
+    )
+    branch: Mapped["Branch"] = relationship(
+        "Branch",
+        back_populates="report_drafts",
+        info={"label": "Филиал"},
+    )
 
 
 # -----------------------------------------------------------------------------

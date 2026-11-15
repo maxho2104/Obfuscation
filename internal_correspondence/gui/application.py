@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -23,6 +24,7 @@ from internal_correspondence.core.constants import (
     BACKUPS_DIR,
     DEFAULT_CHANGES_RETENTION_DAYS,
     LOGS_DIR,
+    ReportType,
     Role,
 )
 from internal_correspondence.core.enum_registry import pack_enum_display
@@ -57,6 +59,7 @@ from internal_correspondence.gui.reference_dialogs import (
     TerritorialUnitDialog,
 )
 from internal_correspondence.gui.reference_editor import ReferenceEditorDialog
+from internal_correspondence.gui.report_dialog import ReportDialog
 from internal_correspondence.gui.settings_dialog import SettingsDialog
 from internal_correspondence.gui.statistics_widget import StatisticsWidget
 from internal_correspondence.gui.task_distribution_widget import TaskDistributionWidget
@@ -81,6 +84,8 @@ from internal_correspondence.orm.models import (
     Telegram,
     TerritorialUnit,
 )
+from internal_correspondence.reports.report_service import ReportDataService
+from internal_correspondence.reports.word_report import render_report
 from internal_correspondence.services.change_tracking import (
     purge_expired_changes,
     register_change_tracking,
@@ -102,6 +107,20 @@ from internal_correspondence.utils.string_resources import STRINGS, reload_strin
 logger = get_logger("application")
 
 
+def _create_report_progress_dialog(parent: QWidget) -> QProgressDialog:
+    """Создаёт модальный индикатор формирования отчёта без кнопки отмены."""
+    dialog = QProgressDialog(parent)
+    dialog.setWindowTitle(STRINGS.title_generate_report)
+    dialog.setLabelText(STRINGS.report_progress_creating)
+    dialog.setRange(0, 0)
+    dialog.setCancelButton(None)
+    dialog.setWindowModality(Qt.ApplicationModal)
+    dialog.setMinimumDuration(0)
+    dialog.setAutoClose(False)
+    dialog.setAutoReset(False)
+    return dialog
+
+
 def _parse_column_widths(raw: str) -> List[int]:
     """Разбирает сохранённые ширины колонок из строки настроек."""
     widths = []
@@ -120,24 +139,6 @@ def _parse_bool(raw: str, default: bool) -> bool:
     if raw in ("0", "false", "no"):
         return False
     return default
-
-
-def _parse_dock_area(raw: str) -> Optional[Qt.DockWidgetArea]:
-    """Разбирает сохранённую область стыковки дока (Qt.DockWidgetArea)."""
-    raw = (raw or "").strip()
-    if not raw:
-        return None
-    try:
-        area = Qt.DockWidgetArea(int(raw))
-    except (TypeError, ValueError):
-        return None
-    allowed = (
-        Qt.LeftDockWidgetArea,
-        Qt.RightDockWidgetArea,
-        Qt.TopDockWidgetArea,
-        Qt.BottomDockWidgetArea,
-    )
-    return area if area in allowed else None
 
 
 def _format_employees(employees) -> str:
@@ -459,8 +460,6 @@ class MainWindow(QMainWindow):
     def _setup_menu(self) -> None:
         """Формирует главное меню приложения."""
         menubar = self.menuBar()
-        if menubar is None:
-            return
 
         is_head_office = self.settings.role == Role.HEAD_OFFICE.value
 
@@ -537,6 +536,12 @@ class MainWindow(QMainWindow):
         import_evaluations_action.setEnabled(is_head_office)
         import_evaluations_action.triggered.connect(self._import_evaluations)
         data_menu.addAction(import_evaluations_action)
+        data_menu.addSeparator()
+
+        generate_report_action = QAction(STRINGS.action_generate_report, self)
+        generate_report_action.setObjectName("generateReportAction")
+        generate_report_action.triggered.connect(self._generate_report)
+        data_menu.addAction(generate_report_action)
         data_menu.addSeparator()
 
         # Меню "ОШС"
@@ -629,16 +634,12 @@ class MainWindow(QMainWindow):
         self._settings_manager.save(self.settings)
 
     def _save_files_dock_state(self) -> None:
-        """Сохраняет видимость, область стыковки и геометрию дока файлов."""
+        """Сохраняет видимость фиксированного справа дока файлов."""
         dock = self.files_dock
         self.settings.files_dock_visible = "false" if dock.isHidden() else "true"
-        # Плавающий док не привязан к области: запоминаем последнюю закреплённую
-        if not dock.isFloating():
-            self.settings.files_dock_area = str(int(self.dockWidgetArea(dock)))
-        self.settings.files_dock_floating = "true" if dock.isFloating() else "false"
-        self.settings.files_dock_geometry = (
-            dock.saveGeometry().toBase64().data().decode("ascii")
-        )
+        self.settings.files_dock_area = str(int(Qt.RightDockWidgetArea))
+        self.settings.files_dock_floating = "false"
+        self.settings.files_dock_geometry = ""
 
     def _restore_ui_state(self) -> None:
         """Восстанавливает геометрию окна, колонки и состояние дока из настроек."""
@@ -656,19 +657,12 @@ class MainWindow(QMainWindow):
         self._restore_filters()
 
     def _restore_files_dock_state(self) -> None:
-        """Восстанавливает область, открепление и геометрию дока файлов."""
+        """Закрепляет док файлов справа и восстанавливает его видимость."""
         dock = self.files_dock
-        area = _parse_dock_area(self.settings.files_dock_area)
-        if area is not None:
-            self.addDockWidget(area, dock)
-        if _parse_bool(self.settings.files_dock_floating, False):
-            dock.setFloating(True)
-        if self.settings.files_dock_geometry:
-            dock.restoreGeometry(
-                QByteArray.fromBase64(
-                    self.settings.files_dock_geometry.encode("ascii")
-                )
-            )
+        # Старые настройки могли хранить левую область или плавающее окно.
+        # Теперь панель всегда является неподвижной частью главного окна справа.
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        dock.setFloating(False)
         visible = _parse_bool(self.settings.files_dock_visible, True)
         dock.setVisible(visible)
         # visibilityChanged не приходит, пока окно не показано: синхронизируем вручную
@@ -825,6 +819,90 @@ class MainWindow(QMainWindow):
         self.materials_tab.refresh()
         self.telegram_tab.refresh()
         self.statistics_tab.refresh()
+
+    def _generate_report(self) -> None:
+        """Открывает диалог и формирует аналитический отчёт в DOCX."""
+        branch_id = (
+            self.settings.branch_id
+            if self.settings.role == Role.BRANCH.value
+            else None
+        )
+        if self.settings.role == Role.BRANCH.value and not branch_id:
+            QMessageBox.warning(
+                self,
+                STRINGS.title_generate_report,
+                STRINGS.report_msg_no_branch,
+            )
+            return
+
+        session = self.db_manager.get_session()
+        progress_dialog: Optional[QProgressDialog] = None
+        output: Optional[Path] = None
+        report_error: Optional[Exception] = None
+        try:
+            dialog = ReportDialog(session, branch_id=branch_id, parent=self)
+            if not dialog.exec_():
+                return
+            request = dialog.selected_request()
+            month_names = dialog.month_names()
+            if request.report_type == ReportType.MONTH:
+                filename = STRINGS.report_month_filename.format(
+                    month=month_names[request.period_number - 1].lower(),
+                    year=request.year,
+                )
+            else:
+                filename = STRINGS.report_half_filename.format(
+                    half=request.period_number,
+                    year=request.year,
+                )
+            output_dir = self.settings.storage_path_obj() / dir_name("export")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                STRINGS.report_dialog_save,
+                str(output_dir / filename),
+                STRINGS.report_file_filter,
+            )
+            if not path:
+                return
+
+            progress_dialog = _create_report_progress_dialog(self)
+            progress_dialog.show()
+            QApplication.processEvents()
+
+            service = ReportDataService(session)
+            service.save_draft(request, dialog.draft_values())
+            session.commit()
+            context = service.build_context(request, month_names)
+            output = render_report(
+                request.report_type,
+                context,
+                self.settings.storage_path_obj(),
+                Path(path),
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            session.rollback()
+            logger.exception("Ошибка формирования аналитического отчёта")
+            report_error = exc
+        finally:
+            if progress_dialog is not None:
+                progress_dialog.close()
+                progress_dialog.deleteLater()
+                QApplication.processEvents()
+            session.close()
+
+        if report_error is not None:
+            QMessageBox.critical(
+                self,
+                STRINGS.title_error,
+                STRINGS.report_msg_error.format(error=report_error),
+            )
+        elif output is not None:
+            QMessageBox.information(
+                self,
+                STRINGS.title_generate_report,
+                STRINGS.report_msg_done.format(output=output),
+            )
 
     def _export_domain_pack(self) -> None:
         """Выгружает активный пакет предметной области в JSON-файл."""

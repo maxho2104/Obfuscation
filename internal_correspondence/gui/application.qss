@@ -373,9 +373,18 @@ QMenu::separator {
     margin: 5px 7px;
 }
 
-QScrollArea, QAbstractScrollArea::corner {
+QScrollArea {
     background-color: {{SURFACE}};
     border: 0;
+}
+
+QAbstractScrollArea::corner {
+    background-color: {{SCROLL_CORNER}};
+    border: 0;
+}
+
+QWidget#scroll_area_corner {
+    background-color: {{SCROLL_CORNER}};
 }
 
 QScrollBar:vertical {

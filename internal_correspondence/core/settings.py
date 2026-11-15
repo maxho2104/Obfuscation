@@ -50,9 +50,8 @@ class AppSettings:
     material_filters: str = ""
     telegram_filters: str = ""
 
-    # Док-виджет прикреплённых файлов: видимость, область стыковки
-    # (значение Qt.DockWidgetArea), признак открепления отдельным окном
-    # и геометрия (QByteArray.saveGeometry в Base64)
+    # Панель прикреплённых файлов: видимость и устаревшие параметры положения.
+    # Панель всегда закреплена справа; старые поля оставлены для совместимости настроек.
     files_dock_visible: str = "true"
     files_dock_area: str = ""
     files_dock_floating: str = "false"

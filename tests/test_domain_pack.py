@@ -25,6 +25,7 @@ EXPECTED_ENUMS = {
     "telegram_type",
     "telegram_report_type",
     "source_type",
+    "report_type",
 }
 
 

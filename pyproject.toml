@@ -21,6 +21,7 @@ dependencies = [
     "openpyxl>=3.1",
     "charset-normalizer>=3.3",
     "python-docx>=1.1",
+    "docxtpl>=0.20,<1",
     "odfpy>=1.4",
     "Pillow>=10.0",
     "PyInstaller>=6.0",
@@ -41,6 +42,7 @@ include = ["internal_correspondence*"]
 
 [tool.setuptools.package-data]
 "internal_correspondence.gui" = ["*.qss", "icons/*.svg"]
+"internal_correspondence.reports" = ["templates/*.docx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

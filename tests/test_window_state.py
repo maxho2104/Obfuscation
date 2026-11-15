@@ -8,11 +8,17 @@ from pathlib import Path
 
 import pytest
 from PyQt5.QtCore import QByteArray, Qt
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QAction, QApplication, QProgressDialog, QPushButton
 
+from internal_correspondence.core.constants import ReportType
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.core.settings import AppSettings, SettingsManager
-from internal_correspondence.gui.application import MainWindow, _parse_column_widths
+from internal_correspondence.gui import application as application_module
+from internal_correspondence.gui.application import (
+    MainWindow,
+    _create_report_progress_dialog,
+    _parse_column_widths,
+)
 from internal_correspondence.utils.string_resources import STRINGS
 
 
@@ -42,6 +48,145 @@ def test_parse_column_widths() -> None:
     assert _parse_column_widths("80,100, 250,") == [80, 100, 250]
     assert _parse_column_widths("") == []
     assert _parse_column_widths("abc,10,-5") == [10]
+
+
+def test_data_menu_contains_generate_report_action(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """В меню данных доступно открытие диалога формирования отчёта."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    action = window.findChild(QAction, "generateReportAction")
+    assert action is not None
+    assert action.text() == STRINGS.action_generate_report
+    window.close()
+
+
+def test_document_action_button_styles_apply_to_both_tabs(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """Обе вкладки документов получают цветовые роли основных действий."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+
+    for tab in (window.materials_tab, window.telegram_tab):
+        assert tab.add_btn.property("role") == "primary"
+        assert tab.edit_btn.property("role") is None
+        assert tab.delete_btn.property("role") == "danger"
+
+    window.close()
+
+
+def test_report_progress_dialog_is_modal_and_cannot_be_cancelled(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """Индикатор создания отчёта блокирует окно и не предлагает отмену."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+
+    dialog = _create_report_progress_dialog(window)
+
+    assert dialog.labelText() == STRINGS.report_progress_creating
+    assert dialog.minimum() == 0
+    assert dialog.maximum() == 0
+    assert dialog.windowModality() == Qt.ApplicationModal
+    assert dialog.findChildren(QPushButton) == []
+    dialog.close()
+    window.close()
+
+
+def test_report_progress_dialog_is_visible_while_report_is_rendered(
+    window_env,
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Индикатор показывается после выбора пути и остаётся до конца рендера."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+    observed = {"visible": False}
+
+    class FakeReportDialog:
+        """Принятый диалог с фиксированным месячным периодом."""
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        @staticmethod
+        def exec_() -> bool:
+            return True
+
+        @staticmethod
+        def selected_request():
+            return type(
+                "Request",
+                (),
+                {
+                    "report_type": ReportType.MONTH,
+                    "period_number": 1,
+                    "year": 2026,
+                },
+            )()
+
+        @staticmethod
+        def month_names() -> list[str]:
+            return STRINGS.report_month_names.split(",")
+
+        @staticmethod
+        def draft_values() -> dict:
+            return {}
+
+    class FakeReportDataService:
+        """Минимальная замена сервиса для проверки поведения окна."""
+
+        def __init__(self, _session) -> None:
+            pass
+
+        @staticmethod
+        def save_draft(_request, _values) -> None:
+            return None
+
+        @staticmethod
+        def build_context(_request, _month_names) -> dict:
+            return {}
+
+    def fake_render_report(_report_type, _context, _storage_root, output_path):
+        dialogs = window.findChildren(QProgressDialog)
+        observed["visible"] = any(
+            dialog.isVisible()
+            and dialog.labelText() == STRINGS.report_progress_creating
+            for dialog in dialogs
+        )
+        return Path(output_path)
+
+    output_path = tmp_path / "report.docx"
+    monkeypatch.setattr(application_module, "ReportDialog", FakeReportDialog)
+    monkeypatch.setattr(
+        application_module,
+        "ReportDataService",
+        FakeReportDataService,
+    )
+    monkeypatch.setattr(application_module, "render_report", fake_render_report)
+    monkeypatch.setattr(
+        application_module.QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *_args, **_kwargs: (str(output_path), "")),
+    )
+    monkeypatch.setattr(
+        application_module.QMessageBox,
+        "information",
+        staticmethod(lambda *_args, **_kwargs: None),
+    )
+
+    window._generate_report()
+
+    assert observed["visible"]
+    window.close()
 
 
 def test_main_window_saves_ui_state(window_env, qt_app: QApplication) -> None:
@@ -101,7 +246,7 @@ def test_empty_geometry_is_tolerated(window_env, qt_app: QApplication) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Док-виджет прикреплённых файлов: меню «Вид» и сохранение положения
+# Док-виджет прикреплённых файлов: меню «Вид» и фиксированное положение
 # ---------------------------------------------------------------------------
 
 
@@ -123,26 +268,32 @@ def test_files_dock_menu_action_toggles_visibility(window_env, qt_app: QApplicat
     assert window.files_dock.isHidden()
     assert not action.isChecked()
 
-    # Показ дока вновь отмечает пункт меню
-    window.files_dock.setVisible(True)
+    # Повторное нажатие вновь показывает док и отмечает пункт меню
+    action.trigger()
     qt_app.processEvents()
+    assert window.files_dock.isVisible()
     assert action.isChecked()
     window.close()
 
 
-def test_files_dock_dock_area_saved_on_close(window_env, qt_app: QApplication) -> None:
-    """Закрытие окна сохраняет область стыковки и геометрию дока."""
+def test_files_dock_is_fixed_on_right(window_env, qt_app: QApplication) -> None:
+    """Панель файлов закреплена справа без перемещения и отделения."""
     settings, db, manager = window_env
     window = MainWindow(settings, db, manager)
     window.show()
-    window.addDockWidget(Qt.LeftDockWidgetArea, window.files_dock)
+    qt_app.processEvents()
+
+    assert window.files_dock.allowedAreas() == Qt.RightDockWidgetArea
+    assert window.files_dock.features() == window.files_dock.DockWidgetClosable
+    assert window.dockWidgetArea(window.files_dock) == Qt.RightDockWidgetArea
+
     window._save_ui_state()
 
     saved = manager.load()
     assert saved.files_dock_visible == "true"
-    assert saved.files_dock_area == str(int(Qt.LeftDockWidgetArea))
+    assert saved.files_dock_area == str(int(Qt.RightDockWidgetArea))
     assert saved.files_dock_floating == "false"
-    assert saved.files_dock_geometry
+    assert saved.files_dock_geometry == ""
     window.close()
 
 
@@ -234,40 +385,37 @@ def test_files_changed_signal_updates_document_row_highlight(window_env, qt_app:
 
 
 def test_files_dock_state_restored_from_settings(window_env, qt_app: QApplication) -> None:
-    """При запуске док восстанавливает область стыковки и видимость из настроек."""
+    """Старое положение игнорируется, а сохранённая видимость восстанавливается."""
     settings, db, manager = window_env
     settings.files_dock_area = str(int(Qt.LeftDockWidgetArea))
+    settings.files_dock_floating = "true"
     settings.files_dock_visible = "false"
     window = MainWindow(settings, db, manager)
     window.show()
     qt_app.processEvents()
 
-    assert window.dockWidgetArea(window.files_dock) == Qt.LeftDockWidgetArea
+    assert window.dockWidgetArea(window.files_dock) == Qt.RightDockWidgetArea
+    assert not window.files_dock.isFloating()
     assert window.files_dock.isHidden()
     assert not window.files_dock_action.isChecked()
     window.close()
 
 
-def test_files_dock_floating_geometry_roundtrip(window_env, qt_app: QApplication) -> None:
-    """Откреплённый отдельным окном док восстанавливается с той же геометрией."""
+def test_files_dock_legacy_floating_state_is_discarded(window_env, qt_app: QApplication) -> None:
+    """Сохранённое плавающее состояние больше не отделяет панель от окна."""
     settings, db, manager = window_env
+    settings.files_dock_floating = "true"
+    settings.files_dock_geometry = "legacy-geometry"
     window = MainWindow(settings, db, manager)
     window.show()
-    window.files_dock.setFloating(True)
-    window.files_dock.setGeometry(40, 60, 420, 300)
+    qt_app.processEvents()
+
+    assert not window.files_dock.isFloating()
+    assert window.dockWidgetArea(window.files_dock) == Qt.RightDockWidgetArea
+
     window._save_ui_state()
 
     saved = manager.load()
-    assert saved.files_dock_floating == "true"
-    assert saved.files_dock_geometry
+    assert saved.files_dock_floating == "false"
+    assert saved.files_dock_geometry == ""
     window.close()
-
-    restored = MainWindow(saved, db, manager)
-    restored.show()
-    qt_app.processEvents()
-    assert restored.files_dock.isFloating()
-    assert (
-        restored.files_dock.saveGeometry().toBase64().data().decode("ascii")
-        == saved.files_dock_geometry
-    )
-    restored.close()
