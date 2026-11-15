@@ -87,3 +87,14 @@ def pack_enum_choices(enum_name: str) -> List[Tuple[int, str]]:
         label = enum_label(enum_name, code)
         choices.append((int(member), f"{label} ({code})"))
     return choices
+
+
+def pack_key_for_enum_class(enum_class_name: str) -> Optional[str]:
+    """Возвращает ключ пакетного перечисления по имени IntEnum-класса.
+
+    Неизвестному классу соответствует None.
+    """
+    for pack_key, enum_class in PACK_ENUMS.items():
+        if enum_class.__name__ == enum_class_name:
+            return pack_key
+    return None

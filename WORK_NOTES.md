@@ -1650,3 +1650,97 @@ subcontrol QSS. Классический стиль заодно оставля�
 ### Отложено
 - Нет.
 
+
+---
+
+## 2026-11-15 — Подсветка строк: QSS глушил BackgroundRole; цвета тёмной темы
+
+### Проблема
+Перестало работать выделение неэкспортированных и без входящего номера
+строк материалов/телеграмм в обеих темах.
+
+### Причина (пиксельная диагностика offscreen)
+Новый общий QSS-шаблон (application.qss, редизайн тем) содержал базовое
+правило «QTableView::item, ... { padding: 5px 7px; border: 0 }». Наличие
+любого правила ::item переводит отрисовку фона элементов на
+QStyleSheetStyle, который фон из модели (BackgroundRole) не использует —
+подсветка пропадала полностью. Проверено снятием пикселей: без правила
+цвета строк видны, с ним — только фон/чередование таблицы.
+
+Дополнительно значения подсветки тёмной темы остались от старой палитры
+и на новой (base #1D2430, stripe #242D3A) почти неразличимы.
+
+### Изменения
+- `gui/application.qss`: базовое правило ::item (padding/border) удалено;
+  правила ::item:hover и ::item:selected сохранены — на BackgroundRole
+  они не влияют (проверено). Цена: у ячеек нет отступа 5px.
+- `gui/theme.py` (DARK_THEME): modified_row #574A2B → #7E6434,
+  no_incoming_row #2F3B4C → #35496B — контраст к новой палитре.
+  Светлая тема без изменений (значения контрастные).
+- `tests/test_theme.py`:
+  - test_item_background_role_visible_in_both_themes — пиксельный тест:
+    таблица с BackgroundRole рендерится с реальным QSS темы, цвета
+    modified_row/no_incoming_row присутствуют в пикселях (падает при
+    возврате правила ::item);
+  - test_row_highlight_colors_contrast_with_table — цвета подсветки
+    отличны от фона и чередования таблицы в обеих темах.
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests -q` — 327 passed
+  (1 предупреждение zipfile «Duplicate name» — предсуществующее,
+  из тестов генерации отчётов, не связано).
+- Пиксельная проверка: обе темы рисуют оба цвета подсветки.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-15 — Фильтры документов: «None» в строке, пустые значения, перечисления
+
+### Запрос пользователя
+1. В диалоге фильтров в строке условия вместо наименования поля — «None».
+2. Для nullable-полей — возможность выбрать пустое значение.
+3. Для полей-перечислений (IntEnum) — выбор значений из списка
+   (уточнён вариант: QListWidget с галочками, мультивыбор «одно из»).
+
+### Изменения
+- `gui/filter_dialog.py`:
+  - FilterDialog._build_row: заголовок колонки с fallback на
+    field_short_label (у большинства колонок ColumnDef.header = None —
+    отсюда «None» в строке условия);
+  - AddFilterDialog: страница значения «enum» — QListWidget с галочками
+    (пакетные варианты через pack_enum_choices); операторы строятся с
+    учётом nullability; унарные операторы блокируют редактор значения;
+    загрузка сохранённого условия восстанавливает галочки/оператор.
+- `gui/filter_model.py`:
+  - новый тип значения «enum» (IntEnumType до проверки Integer — раньше
+    перечисления падали в «text»); хелперы resolve_nullable/
+    resolve_pack_enum/_resolve_column;
+  - операторы: ENUM_OPERATORS [in «одно из»], NULL_OPERATORS
+    [empty/not_empty] для nullable колонок (любого типа);
+    operators_for(value_type, nullable); валидация from_dict с nullability;
+  - FilterCondition.matches: «in» по множеству кодов (устойчиво к мусору),
+    унарные проверки пустоты (None и пустая строка) до типового разбора;
+  - describe: унарные условия без значения; enum подписывается метками
+    пакета; format_filter_value(value, type, pack_enum).
+- `core/enum_registry.py`: pack_key_for_enum_class — общий маппинг
+  имя IntEnum-класса → ключ пакета.
+- `gui/edit_elements.py`: локальный _ENUM_PACK_KEYS удалён, используется
+  общий хелпер (заодно подхватывает ReportType).
+- `utils/string_resources.py`: filter_op_in/filter_op_empty/
+  filter_op_not_empty; секция strings пакета перегенерирована (398 ключей).
+- Тесты: test_filters.py — распознавание enum/nullable, операторы,
+  сопоставление «одно из» и пустоты, describe, from_dict, модель таблицы,
+  регрессия «None», чек-лист диалога, блокировка редактора, загрузка
+  условия; test_filters_persistence.py — roundtrip «in»/«empty».
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests -q` — 338 passed
+  (1 предупреждение zipfile — предсуществующее, не связано).
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"` — OK.
+
+### Отложено
+- Старые подписи операторов («содержит», «≠» и т.п.) остались
+  строковыми константами filter_model (до редизайна); новые строки —
+  через AppStrings по инварианту white-label.

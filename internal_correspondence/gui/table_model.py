@@ -1,4 +1,5 @@
 """Модель QTableView для отображения данных SQLAlchemy."""
+"""Модель QTableView для отображения данных SQLAlchemy."""
 
 from datetime import date, datetime
 from typing import Any, Callable, Dict, List, Optional, Type

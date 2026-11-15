@@ -62,6 +62,8 @@ def test_filters_serialize_roundtrip(documents) -> None:
     filters = [
         FilterCondition("outgoing_number", "contains", "М-1"),
         FilterCondition("outgoing_date", "ge", "2026-01-03"),
+        FilterCondition("type", "in", "0,1"),
+        FilterCondition("incoming_number", "empty", ""),
     ]
     raw = serialize_filters(filters)
     restored = deserialize_filters(raw, ScientificMaterial)

@@ -48,7 +48,10 @@ from PyQt5.QtWidgets import (
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
-from internal_correspondence.core.enum_registry import pack_enum_choices
+from internal_correspondence.core.enum_registry import (
+    pack_enum_choices,
+    pack_key_for_enum_class,
+)
 from internal_correspondence.orm.base import IntEnumType
 from internal_correspondence.orm.labels import (
     entity_label,
@@ -900,17 +903,6 @@ class NumberDateEditElement(EditElement):
         self.number_edit.setFocus()
 
 
-# Карта пакетных перечислений: имя IntEnum-класса → ключ перечисления пакета
-_ENUM_PACK_KEYS: Dict[str, str] = {
-    "MaterialType": "material_type",
-    "TelegramType": "telegram_type",
-    "TelegramReportType": "telegram_report_type",
-    "ScientificTaskType": "scientific_task_type",
-    "SourceType": "source_type",
-    "EvaluationValue": "evaluation_value",
-}
-
-
 def create_element(
     attribute,
     session: Optional[Session] = None,
@@ -926,7 +918,7 @@ def create_element(
     if hasattr(prop, "columns"):
         column = prop.columns[0]
         if isinstance(column.type, IntEnumType):
-            pack_key = _ENUM_PACK_KEYS.get(column.type._enum_class.__name__)
+            pack_key = pack_key_for_enum_class(column.type._enum_class.__name__)
             if pack_key:
                 return EnumEditElement(attribute, pack_key, parent=parent, label=label)
         if column.foreign_keys:

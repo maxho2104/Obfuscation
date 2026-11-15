@@ -15,6 +15,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -24,9 +26,12 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from internal_correspondence.core.enum_registry import pack_enum_choices
 from internal_correspondence.gui.filter_model import (
     FilterCondition,
     operators_for,
+    resolve_nullable,
+    resolve_pack_enum,
     resolve_value_type,
 )
 from internal_correspondence.gui.table_model import ColumnDef
@@ -40,6 +45,7 @@ _VALUE_PAGES = {
     "number": 3,
     "bool": 4,
     "integer": 5,
+    "enum": 6,
 }
 
 
@@ -100,6 +106,8 @@ class AddFilterDialog(QDialog):
         self.bool_combo = QComboBox()
         self.bool_combo.addItem("Да", "true")
         self.bool_combo.addItem("Нет", "false")
+        self.enum_list = QListWidget()
+        self.enum_list.setMaximumHeight(150)
 
         for widget in (
             self.text_edit,
@@ -108,6 +116,7 @@ class AddFilterDialog(QDialog):
             self.number_edit,
             self.bool_combo,
             self.int_edit,
+            self.enum_list,
         ):
             self.value_stack.addWidget(widget)
         layout.addRow(STRINGS.label_value, self.value_stack)
@@ -118,14 +127,36 @@ class AddFilterDialog(QDialog):
         layout.addRow(self.buttons)
 
         self.column_combo.currentIndexChanged.connect(self._on_column_changed)
+        self.operator_combo.currentIndexChanged.connect(self._on_operator_changed)
 
     def _on_column_changed(self) -> None:
         column_name = self.column_combo.currentData()
         self._value_type = resolve_value_type(self.model_class, column_name)
+        nullable = resolve_nullable(self.model_class, column_name)
         self.operator_combo.clear()
-        for operator, label in operators_for(self._value_type):
+        for operator, label in operators_for(self._value_type, nullable):
             self.operator_combo.addItem(label, operator)
+        if self._value_type == "enum":
+            self._reload_enum_choices(resolve_pack_enum(self.model_class, column_name))
         self.value_stack.setCurrentIndex(_VALUE_PAGES.get(self._value_type, 0))
+        self._on_operator_changed()
+
+    def _reload_enum_choices(self, pack_enum: Optional[str]) -> None:
+        """Наполняет чек-лист вариантами пакетного перечисления."""
+        self.enum_list.clear()
+        if pack_enum is None:
+            return
+        for value, text in pack_enum_choices(pack_enum):
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, value)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.enum_list.addItem(item)
+
+    def _on_operator_changed(self) -> None:
+        """У унарных условий (пусто/не пусто) значение не требуется."""
+        operator = self.operator_combo.currentData()
+        self.value_stack.setEnabled(operator not in ("empty", "not_empty"))
 
     def _load_condition(self, condition: FilterCondition) -> None:
         """Заполняет редакторы существующим условием (режим изменения)."""
@@ -135,7 +166,15 @@ class AddFilterDialog(QDialog):
         operator_index = self.operator_combo.findData(condition.operator)
         if operator_index >= 0:
             self.operator_combo.setCurrentIndex(operator_index)
-        if self._value_type == "date":
+        if condition.operator in ("empty", "not_empty"):
+            return
+        if self._value_type == "enum":
+            codes = {part.strip() for part in condition.value.split(",")}
+            for row in range(self.enum_list.count()):
+                item = self.enum_list.item(row)
+                checked = str(item.data(Qt.UserRole)) in codes
+                item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        elif self._value_type == "date":
             self.date_edit.setDate(
                 QDate.fromString(condition.value, "yyyy-MM-dd")
             )
@@ -161,6 +200,13 @@ class AddFilterDialog(QDialog):
             self.text_edit.setText(condition.value)
 
     def _current_value(self) -> str:
+        if self._value_type == "enum":
+            codes = []
+            for row in range(self.enum_list.count()):
+                item = self.enum_list.item(row)
+                if item.checkState() == Qt.Checked:
+                    codes.append(str(item.data(Qt.UserRole)))
+            return ",".join(codes)
         if self._value_type == "date":
             return self.date_edit.date().toString("yyyy-MM-dd")
         if self._value_type == "datetime":
@@ -175,12 +221,14 @@ class AddFilterDialog(QDialog):
 
     def condition(self) -> Optional[FilterCondition]:
         """Возвращает созданное (изменённое) условие; None, если пусто."""
-        value = self._current_value()
-        if self._value_type == "text" and not value:
-            return None
+        operator = self.operator_combo.currentData()
+        value = "" if operator in ("empty", "not_empty") else self._current_value()
+        if operator not in ("empty", "not_empty"):
+            if self._value_type in ("text", "enum") and not value:
+                return None
         return FilterCondition(
             column_name=self.column_combo.currentData(),
-            operator=self.operator_combo.currentData(),
+            operator=operator,
             value=value,
         )
 
@@ -263,7 +311,12 @@ class FilterDialog(QDialog):
 
     def _build_row(self, condition: FilterCondition) -> QFrame:
         column = self._columns_by_name.get(condition.column_name)
-        header = column.header if column else condition.column_name
+        if column is not None:
+            header = column.header or field_short_label(
+                self.model_class, condition.column_name
+            )
+        else:
+            header = condition.column_name
         value_type = resolve_value_type(self.model_class, condition.column_name)
 
         row = QFrame()
@@ -274,7 +327,8 @@ class FilterDialog(QDialog):
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(6, 4, 6, 4)
 
-        label = QLabel(condition.describe(header, value_type))
+        pack_enum = resolve_pack_enum(self.model_class, condition.column_name)
+        label = QLabel(condition.describe(header, value_type, pack_enum))
         label.setWordWrap(True)
         row_layout.addWidget(label, 1, Qt.AlignVCenter)
 
