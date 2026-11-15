@@ -810,6 +810,34 @@ def test_widget_selection_highlights_lines_and_pie(
         session.close()
 
 
+def test_widget_header_fixed_and_content_stretches(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """Блок заголовка фиксирован по вертикали, область таблицы/графика растягивается."""
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        widget.show()
+        qt_app.processEvents()
+
+        widget.resize(900, 400)
+        qt_app.processEvents()
+        header_height = widget.header_widget.height()
+        splitter_height = widget.content_splitter.height()
+
+        widget.resize(900, 800)
+        qt_app.processEvents()
+        # Заголовок не меняет высоту, сплиттер забирает всё добавленное место
+        assert widget.header_widget.height() == header_height
+        assert widget.content_splitter.height() > splitter_height
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
 def test_widget_chart_elements_are_thick(
     statistics_setup, db_manager: DatabaseManager, qt_app
 ) -> None:

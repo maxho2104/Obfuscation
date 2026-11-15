@@ -29,6 +29,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -194,7 +195,7 @@ class StatisticsWidget(QWidget):
         actions.addWidget(self.calculate_btn)
         layout.addLayout(actions)
 
-        # Заголовок, период и сводка — одной компактной строкой
+        # Заголовок, период и сводка — одной компактной строкой фиксированной высоты
         header_row = QHBoxLayout()
         self.title_label = QLabel()
         self.title_label.setStyleSheet("font-weight: bold;")
@@ -205,10 +206,18 @@ class StatisticsWidget(QWidget):
         self.summary_label.setStyleSheet("font-weight: bold;")
         header_row.addWidget(self.summary_label)
         header_row.addStretch()
-        layout.addLayout(header_row)
+        header_widget = QWidget()
+        header_widget.setLayout(header_row)
+        # Блок заголовка не растягивается по вертикали — только область таблицы/графика
+        header_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.header_widget = header_widget
+        layout.addWidget(header_widget)
 
-        # Таблица и график с привычным разделителем (splitter)
+        # Таблица и график с привычным разделителем (splitter) — занимают всё место по вертикали
         self.content_splitter = QSplitter(Qt.Horizontal)
+        self.content_splitter.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding
+        )
 
         self.table = QTableWidget()
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
