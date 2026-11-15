@@ -443,11 +443,10 @@ def test_statistics_widget_displays_table(
             "Декабрь",
         ]
 
-                # Таблица и график разделены привычным сплиттером
-        assert widget.content_splitter.count() == 2
-        assert widget.content_splitter.widget(0) is widget.table
-        assert widget.content_splitter.widget(1) is not widget.table
-        assert widget.content_splitter.sizes()[0] > 0
+                # Таблица — центральный элемент, график — док-панель
+        assert widget.main_window.centralWidget() is widget.table
+        assert widget.chart_dock.widget() is not widget.table
+        assert widget.chart_dock.isVisibleTo(widget)
 
         widget.period_combo.setCurrentIndex(3)
         widget.refresh()
@@ -720,6 +719,293 @@ def test_widget_grouped_chart_shades(
         task_index = widget.criterion_combo.findData(CRITERION_TASK)
         widget.criterion_combo.setCurrentIndex(task_index)
         assert widget.subcategory_combo.count() == 2  # «—» и «Сотрудники»
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
+def test_widget_selection_highlights_bars(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """Выделение строки таблицы перекрашивает её набор столбцов."""
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+    from internal_correspondence.gui.theme import current_theme
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        widget.refresh()
+
+        bar_sets = widget.chart_view.chart().series()[0].barSets()
+        assert len(bar_sets) >= 2
+        key1 = widget.table.item(0, 0).data(Qt.UserRole)
+        key2 = widget.table.item(1, 0).data(Qt.UserRole)
+        assert key1 != key2
+
+        original = bar_sets[0].color()
+        widget.table.selectRow(0)
+        assert bar_sets[0].color().name() == current_theme().chart_selection.name()
+        assert bar_sets[1].color().name() != current_theme().chart_selection.name()
+
+        # Смена выделения переносит подсветку
+        widget.table.selectRow(1)
+        assert bar_sets[1].color().name() == current_theme().chart_selection.name()
+        assert bar_sets[0].color() == original
+
+        # Снятие выделения убирает подсветку
+        widget.table.clearSelection()
+        assert bar_sets[0].color() == original
+        assert bar_sets[1].color().name() != current_theme().chart_selection.name()
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
+def test_widget_selection_highlights_lines_and_pie(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """Подсветка выделенной строки на линейной и круговой диаграммах."""
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+    from internal_correspondence.gui.theme import current_theme
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        widget.refresh()
+
+        lines_index = 1  # линейная диаграмма — второй пункт
+        widget.chart_type_combo.setCurrentIndex(lines_index)
+        widget.refresh()
+
+        series_list = widget.chart_view.chart().series()
+        assert len(series_list) >= 2
+        normal_pen = series_list[0].pen()
+        widget.table.selectRow(0)
+        highlight_pen = series_list[0].pen()
+        assert highlight_pen.color().name() == current_theme().chart_selection.name()
+        assert highlight_pen.width() > normal_pen.width()
+        assert series_list[1].pen().color().name() != current_theme().chart_selection.name()
+
+        # Круговая диаграмма: подсветка — «взрыв» сектора
+        pie_index = widget.chart_type_combo.count() - 1
+        widget.chart_type_combo.setCurrentIndex(pie_index)
+        widget.refresh()
+        pie_series = widget.chart_view.chart().series()[0]
+        slices = pie_series.slices()
+        assert slices
+        widget.table.selectRow(0)
+        assert slices[0].isExploded()
+        assert all(not slc.isExploded() for slc in slices[1:])
+        # «ИТОГО» подсвечивает все сектора, снятие выделения — ни одного
+        widget.table.selectRow(widget.table.rowCount() - 1)
+        assert all(slc.isExploded() for slc in slices)
+        widget.table.clearSelection()
+        assert all(not slc.isExploded() for slc in slices)
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
+def test_widget_header_fixed_and_content_stretches(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """Блок заголовка фиксирован по вертикали, область таблицы/графика растягивается."""
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        widget.show()
+        qt_app.processEvents()
+
+        widget.resize(900, 400)
+        qt_app.processEvents()
+        header_height = widget.header_widget.height()
+        content_height = widget.main_window.height()
+
+        widget.resize(900, 800)
+        qt_app.processEvents()
+        # Заголовок не меняет высоту, область таблицы/графика забирает всё место
+        assert widget.header_widget.height() == header_height
+        assert widget.main_window.height() > content_height
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
+def test_widget_chart_dock_is_floatable(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """График — док-панель: открепляется в отдельное окно и переносится по краям."""
+    from PyQt5.QtWidgets import QDockWidget
+
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        widget.show()
+        qt_app.processEvents()
+
+        features = widget.chart_dock.features()
+        assert features & QDockWidget.DockWidgetFloatable
+        assert features & QDockWidget.DockWidgetMovable
+        # Панель нельзя закрыть и потерять
+        assert not features & QDockWidget.DockWidgetClosable
+
+        # Открепление в отдельное окно
+        widget.chart_dock.setFloating(True)
+        assert widget.chart_dock.isFloating()
+        widget.chart_dock.setFloating(False)
+        assert not widget.chart_dock.isFloating()
+
+        # Перенос к левому краю области
+        widget.main_window.addDockWidget(
+            Qt.LeftDockWidgetArea, widget.chart_dock
+        )
+        assert widget.main_window.dockWidgetArea(widget.chart_dock) == (
+            Qt.LeftDockWidgetArea
+        )
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
+def test_widget_chart_elements_are_thick(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """Столбцы и линии нарисованы толще дефолтных."""
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        widget.refresh()
+
+        bar_series = widget.chart_view.chart().series()[0]
+        assert bar_series.barWidth() > 0.5
+
+        widget.chart_type_combo.setCurrentIndex(1)  # линейная
+        widget.refresh()
+        line_series = widget.chart_view.chart().series()[0]
+        assert line_series.pen().width() >= 3
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
+def test_widget_group_selection_highlights_members(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """Выделение групповой строки подсвечивает все её элементы на графике."""
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+    from internal_correspondence.gui.theme import current_theme
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        dept_index = widget.criterion_combo.findData(CRITERION_DEPARTMENT)
+        widget.criterion_combo.setCurrentIndex(dept_index)
+        widget.subcategory_combo.setCurrentIndex(
+            widget.subcategory_combo.findData(CRITERION_EMPLOYEE)
+        )
+        widget.refresh()
+
+        bar_sets = widget.chart_view.chart().series()[0].barSets()
+        assert len(bar_sets) == 2
+        assert bar_sets[0].color().name() != current_theme().chart_selection.name()
+        assert bar_sets[1].color().name() != current_theme().chart_selection.name()
+
+        # Строка 0 — группа (отдел), строки 1-2 — её сотрудники
+        widget.table.selectRow(0)
+        assert bar_sets[0].color().name() == current_theme().chart_selection.name()
+        assert bar_sets[1].color().name() == current_theme().chart_selection.name()
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
+def test_widget_totals_selection_highlights_whole_chart(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """Выбор строки «ИТОГО» подсвечивает всю диаграмму."""
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+    from internal_correspondence.gui.theme import current_theme
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        widget.refresh()
+
+        bar_sets = widget.chart_view.chart().series()[0].barSets()
+        assert len(bar_sets) >= 2
+        assert bar_sets[0].color().name() != current_theme().chart_selection.name()
+
+        # Последняя строка таблицы — «ИТОГО»; выделение подсвечивает все наборы
+        widget.table.selectRow(widget.table.rowCount() - 1)
+        for bar_set in bar_sets:
+            assert bar_set.color().name() == current_theme().chart_selection.name()
+
+        # Возврат к обычной строке подсвечивает только её
+        widget.table.selectRow(0)
+        assert bar_sets[0].color().name() == current_theme().chart_selection.name()
+        assert bar_sets[1].color().name() != current_theme().chart_selection.name()
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
+def test_widget_chart_click_selects_table_row(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """Клик по элементу диаграммы выделяет соответствующую строку таблицы."""
+    from PyQt5.QtCore import QPointF
+
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        widget.refresh()
+
+        def selected_label() -> str:
+            # выделение строки откладывается таймером на следующую итерацию цикла событий
+            qt_app.processEvents()
+            rows = widget.table.selectionModel().selectedRows()
+            assert len(rows) == 1
+            return widget.table.item(rows[0].row(), 0).text().strip()
+
+        # Столбцы: клик по второму набору выделяет вторую строку
+        bar_series = widget.chart_view.chart().series()[0]
+        bar_sets = bar_series.barSets()
+        second_label = widget.table.item(1, 0).text().strip()
+        bar_series.clicked.emit(0, bar_sets[1])
+        assert selected_label() == second_label
+
+        # Линии: клик по точке первой серии выделяет первую строку
+        widget.chart_type_combo.setCurrentIndex(1)
+        widget.refresh()
+        line_series = widget.chart_view.chart().series()[0]
+        first_label = widget.table.item(0, 0).text().strip()
+        line_series.clicked.emit(QPointF(0, 0))
+        assert selected_label() == first_label
+
+        # Круговая: клик по сектору выделяет его строку
+        widget.chart_type_combo.setCurrentIndex(widget.chart_type_combo.count() - 1)
+        widget.refresh()
+        pie_series = widget.chart_view.chart().series()[0]
+        slices = pie_series.slices()
+        slice_label = slices[1].label().strip()
+        pie_series.clicked.emit(slices[1])
+        assert selected_label() == slice_label
 
         widget.deleteLater()
     finally:

@@ -86,7 +86,7 @@ class OSHMTreeWidget(QTreeWidget):
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setDefaultDropAction(Qt.IgnoreAction)
-        self.setHeaderLabels([STRINGS.oshm_col_element])
+        self.setHeaderHidden(True)
 
     def dropEvent(self, event) -> None:
         """Перехватывает перенос: передаёт узлы и цель диалогу."""
@@ -123,10 +123,18 @@ class OSHMDialog(QDialog):
         self.can_edit_people = not self.is_head_office
         self.branch_id = branch_id
         self._active_tree: Optional[OSHMTreeWidget] = None
-        self.setWindowTitle(STRINGS.title_oshm)
+        self.setWindowTitle(self._window_title())
         self.setMinimumSize(700, 600)
         self._setup_ui()
         self._load_data()
+
+    def _window_title(self) -> str:
+        """Заголовок окна: от кого открыт диалог (головной офис или филиал)."""
+        if self.is_head_office or not self.branch_id:
+            return f"{STRINGS.title_oshm} — {STRINGS.role_head_office}"
+        branch = self.session.get(Branch, self.branch_id)
+        branch_name = branch.name if branch is not None else self.branch_id
+        return STRINGS.oshm_window_title.format(branch_name=branch_name)
 
     # ------------------------------------------------------------------
     # Построение интерфейса
@@ -296,7 +304,8 @@ class OSHMDialog(QDialog):
         departments = (
             self.session.query(Department)
             .filter(Department.branch_id == branch_id)
-            .order_by(Department.name)
+            # Действующие отделы — выше сокращённых, внутри группы — по имени
+            .order_by(Department.active.desc(), Department.name)
             .all()
         )
         for dept in departments:
@@ -308,7 +317,7 @@ class OSHMDialog(QDialog):
             employees = (
                 self.session.query(Employee)
                 .filter(Employee.department_id == dept.id)
-                .order_by(Employee.last_name)
+                .order_by(Employee.active.desc(), Employee.last_name)
                 .all()
             )
             for emp in employees:
@@ -322,7 +331,7 @@ class OSHMDialog(QDialog):
             workgroups = (
                 self.session.query(WorkingGroup)
                 .filter(WorkingGroup.department_id == dept.id)
-                .order_by(WorkingGroup.name)
+                .order_by(WorkingGroup.active.desc(), WorkingGroup.name)
                 .all()
             )
             for wg in workgroups:
@@ -340,7 +349,7 @@ class OSHMDialog(QDialog):
                         WorkGroupMembership.working_group_id == wg.id,
                         WorkGroupMembership.end_date.is_(None),
                     )
-                    .order_by(Employee.last_name)
+                    .order_by(Employee.active.desc(), Employee.last_name)
                     .all()
                 )
                 for emp in members:

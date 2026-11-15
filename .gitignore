@@ -58,6 +58,9 @@ demo/
 *.db-wal
 *.db-shm
 
+# Local settings (machine-specific)
+settings.ini
+
 # IDEs
 .vscode/
 .idea/
