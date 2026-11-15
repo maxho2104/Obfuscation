@@ -282,14 +282,14 @@ def test_header_hidden(qt_app, db_manager, oshm_data) -> None:
 
 def test_window_title_shows_origin(qt_app, db_manager, oshm_data) -> None:
     """В названии окна видно, от кого открыт диалог."""
-    # Филиал: наименование и код филиала
+    # Филиал: наименование филиала
     dialog = OSHMDialog(
         db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
     )
     title = dialog.windowTitle()
     assert "ОШС" in title
     assert "Филиал 1" in title
-    assert "F1" in title
+    assert "F1" not in title
     dialog.deleteLater()
 
     # Головной офис

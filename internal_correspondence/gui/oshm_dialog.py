@@ -134,9 +134,7 @@ class OSHMDialog(QDialog):
             return f"{STRINGS.title_oshm} — {STRINGS.role_head_office}"
         branch = self.session.get(Branch, self.branch_id)
         branch_name = branch.name if branch is not None else self.branch_id
-        return STRINGS.oshm_window_title.format(
-            branch_name=branch_name, branch_id=self.branch_id
-        )
+        return STRINGS.oshm_window_title.format(branch_name=branch_name)
 
     # ------------------------------------------------------------------
     # Построение интерфейса
