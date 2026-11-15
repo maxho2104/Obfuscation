@@ -154,6 +154,7 @@ class AppStrings:
     chart_type_pie: str = "Круговая"
     chart_by_totals: str = "{title}: итоги периода"
     stats_avg_score: str = "Средний балл: {value}"
+    stats_chart_dock_title: str = "График"
     button_export_excel: str = "Экспорт в Excel"
     dialog_save_excel: str = "Сохранить результат в Excel"
     file_filter_excel: str = "Файлы Excel (*.xlsx)"

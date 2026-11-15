@@ -23,14 +23,15 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QDockWidget,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMainWindow,
     QMessageBox,
     QPushButton,
     QSizePolicy,
-    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -213,11 +214,10 @@ class StatisticsWidget(QWidget):
         self.header_widget = header_widget
         layout.addWidget(header_widget)
 
-        # Таблица и график с привычным разделителем (splitter) — занимают всё место по вертикали
-        self.content_splitter = QSplitter(Qt.Horizontal)
-        self.content_splitter.setSizePolicy(
-            QSizePolicy.Expanding, QSizePolicy.Expanding
-        )
+        # Область содержимого: встроенное QMainWindow — таблица центральным
+        # элементом, график отсоединяемой док-панелью (как виджет файлов)
+        self.main_window = QMainWindow()
+        self.main_window.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self.table = QTableWidget()
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -231,7 +231,7 @@ class StatisticsWidget(QWidget):
         self._line_keys: Dict[int, str] = {}
         self._slice_keys: Dict[int, str] = {}
         self.table.itemSelectionChanged.connect(self._sync_chart_highlight)
-        self.content_splitter.addWidget(self.table)
+        self.main_window.setCentralWidget(self.table)
 
         # Правая часть: выбор типа графика над самим графиком
         chart_container = QWidget()
@@ -252,10 +252,19 @@ class StatisticsWidget(QWidget):
         self.chart_view.setRenderHint(QPainter.Antialiasing)
         self.chart_view.setMinimumSize(320, 240)
         chart_layout.addWidget(self.chart_view)
-        self.content_splitter.addWidget(chart_container)
-        self.content_splitter.setSizes([500, 500])
 
-        layout.addWidget(self.content_splitter)
+        # График — док-панель: можно открепить в отдельное окно, перенести
+        # к другому краю области или вернуть обратно. Закрытие недоступно,
+        # чтобы панель нельзя было потерять.
+        self.chart_dock = QDockWidget(STRINGS.stats_chart_dock_title, self.main_window)
+        self.chart_dock.setObjectName("statistics_chart_dock")
+        self.chart_dock.setFeatures(
+            QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable
+        )
+        self.chart_dock.setWidget(chart_container)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.chart_dock)
+
+        layout.addWidget(self.main_window)
 
         self.period_combo.currentIndexChanged.connect(self._update_index_combo)
         self.object_combo.currentIndexChanged.connect(self._update_year_combo)

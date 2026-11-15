@@ -443,11 +443,10 @@ def test_statistics_widget_displays_table(
             "Декабрь",
         ]
 
-                # Таблица и график разделены привычным сплиттером
-        assert widget.content_splitter.count() == 2
-        assert widget.content_splitter.widget(0) is widget.table
-        assert widget.content_splitter.widget(1) is not widget.table
-        assert widget.content_splitter.sizes()[0] > 0
+                # Таблица — центральный элемент, график — док-панель
+        assert widget.main_window.centralWidget() is widget.table
+        assert widget.chart_dock.widget() is not widget.table
+        assert widget.chart_dock.isVisibleTo(widget)
 
         widget.period_combo.setCurrentIndex(3)
         widget.refresh()
@@ -825,13 +824,52 @@ def test_widget_header_fixed_and_content_stretches(
         widget.resize(900, 400)
         qt_app.processEvents()
         header_height = widget.header_widget.height()
-        splitter_height = widget.content_splitter.height()
+        content_height = widget.main_window.height()
 
         widget.resize(900, 800)
         qt_app.processEvents()
-        # Заголовок не меняет высоту, сплиттер забирает всё добавленное место
+        # Заголовок не меняет высоту, область таблицы/графика забирает всё место
         assert widget.header_widget.height() == header_height
-        assert widget.content_splitter.height() > splitter_height
+        assert widget.main_window.height() > content_height
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
+def test_widget_chart_dock_is_floatable(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """График — док-панель: открепляется в отдельное окно и переносится по краям."""
+    from PyQt5.QtWidgets import QDockWidget
+
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        widget.show()
+        qt_app.processEvents()
+
+        features = widget.chart_dock.features()
+        assert features & QDockWidget.DockWidgetFloatable
+        assert features & QDockWidget.DockWidgetMovable
+        # Панель нельзя закрыть и потерять
+        assert not features & QDockWidget.DockWidgetClosable
+
+        # Открепление в отдельное окно
+        widget.chart_dock.setFloating(True)
+        assert widget.chart_dock.isFloating()
+        widget.chart_dock.setFloating(False)
+        assert not widget.chart_dock.isFloating()
+
+        # Перенос к левому краю области
+        widget.main_window.addDockWidget(
+            Qt.LeftDockWidgetArea, widget.chart_dock
+        )
+        assert widget.main_window.dockWidgetArea(widget.chart_dock) == (
+            Qt.LeftDockWidgetArea
+        )
 
         widget.deleteLater()
     finally:

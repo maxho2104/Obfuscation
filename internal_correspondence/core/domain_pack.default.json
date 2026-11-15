@@ -785,6 +785,7 @@
     "chart_type_pie": "Круговая",
     "chart_by_totals": "{title}: итоги периода",
     "stats_avg_score": "Средний балл: {value}",
+    "stats_chart_dock_title": "График",
     "button_export_excel": "Экспорт в Excel",
     "dialog_save_excel": "Сохранить результат в Excel",
     "file_filter_excel": "Файлы Excel (*.xlsx)",
