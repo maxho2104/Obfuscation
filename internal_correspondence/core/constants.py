@@ -69,6 +69,13 @@ class TelegramReportType(IntEnum):
     URGENTLY_REPORTED = 1
 
 
+class ReportType(IntEnum):
+    """Тип формируемого аналитического отчёта."""
+
+    MONTH = 0
+    HALF_YEAR = 1
+
+
 class SourceType(IntEnum):
     """Тип источника научного материала."""
 

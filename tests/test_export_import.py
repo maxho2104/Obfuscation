@@ -14,6 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from internal_correspondence.core.constants import (
     ChangeOperation,
     MaterialType,
+    ReportType,
     Role,
     TelegramType,
 )
@@ -29,6 +30,7 @@ from internal_correspondence.orm.models import (
     FileRecord,
     Leader,
     ReportAddress,
+    ReportDraft,
     ScientificMaterial,
     Telegram,
     TerritorialUnit,
@@ -119,6 +121,57 @@ def test_export_json_groups_by_entity_and_primary_key(
     assert "changes" not in data
     assert set(data) == {"TerritorialUnit", "Branch", "Country"}
     assert data["Country"]["RUS"] == {"id": "RUS", "name": "Россия"}
+
+
+def test_report_draft_export_import_roundtrip(tmp_path: Path) -> None:
+    """Ручные разделы отчёта передаются вместе с филиалом через ZIP-обмен."""
+    register_change_tracking()
+    source_db = DatabaseManager(f"sqlite:///{tmp_path / 'source-report.db'}")
+    target_db = DatabaseManager(f"sqlite:///{tmp_path / 'target-report.db'}")
+    source_db.create_tables()
+    target_db.create_tables()
+    source_storage = tmp_path / "source-storage"
+    target_storage = tmp_path / "target-storage"
+    source_storage.mkdir()
+    target_storage.mkdir()
+    try:
+        with source_db.get_session() as session:
+            session.add(TerritorialUnit(id="TU", name="Единица"))
+            session.add(
+                Branch(
+                    id="BR",
+                    name="Филиал",
+                    short_name="Ф",
+                    territorial_unit_id="TU",
+                )
+            )
+            session.add(
+                ReportDraft(
+                    report_type=ReportType.MONTH,
+                    year=2026,
+                    period_number=7,
+                    conclusion="Проверенный вывод",
+                    branch_id="BR",
+                )
+            )
+            session.commit()
+            archive = ExportService(session, source_storage).export()
+            session.commit()
+
+        with target_db.get_session() as session:
+            result = ImportService(
+                session,
+                target_storage,
+                Role.HEAD_OFFICE.value,
+            ).import_archive(archive)
+            imported = session.query(ReportDraft).one()
+            assert result["skipped"] == 0
+            assert imported.report_type == ReportType.MONTH
+            assert imported.period_number == 7
+            assert imported.conclusion == "Проверенный вывод"
+    finally:
+        source_db.close()
+        target_db.close()
 
 
 def test_export_removes_highlight_in_open_table(

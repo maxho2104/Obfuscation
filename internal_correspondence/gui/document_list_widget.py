@@ -90,6 +90,11 @@ class DocumentListWidget(QWidget):
         self.delete_btn = QPushButton(STRINGS.button_delete)
         self.refresh_btn = QPushButton(STRINGS.button_refresh)
 
+        # Те же роли, что в редакторе «Данные → Страны»:
+        # добавление — акцентное, изменение — нейтральное, удаление — опасное.
+        self.add_btn.setProperty("role", "primary")
+        self.delete_btn.setProperty("role", "danger")
+
         self.add_btn.clicked.connect(self._add)
         self.edit_btn.clicked.connect(self._edit)
         self.delete_btn.clicked.connect(self._delete)

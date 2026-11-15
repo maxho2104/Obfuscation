@@ -39,6 +39,7 @@ _TRACKED_TABLES = {
     "scientific_materials",
     "telegrams",
     "report_addresses",
+    "report_drafts",
     "evaluations",
     "evaluation_lists",
 }

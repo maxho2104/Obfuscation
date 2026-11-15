@@ -16,6 +16,7 @@ from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.base import Base
 from internal_correspondence.orm.models import (
     Evaluation,
+    ReportDraft,
     ScientificMaterial,
     ScientificTask,
     Source,
@@ -32,6 +33,7 @@ ENUM_COLUMNS: List[Tuple[Type[Base], str, str]] = [
     (ScientificTask, "type", "scientific_task_type"),
     (Source, "type", "source_type"),
     (Evaluation, "value", "evaluation_value"),
+    (ReportDraft, "report_type", "report_type"),
 ]
 
 

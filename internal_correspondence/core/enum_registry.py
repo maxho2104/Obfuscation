@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple, Type
 from internal_correspondence.core.constants import (
     EvaluationValue,
     MaterialType,
+    ReportType,
     ScientificTaskType,
     SourceType,
     TelegramReportType,
@@ -31,6 +32,7 @@ PACK_ENUMS: Dict[str, Type[IntEnum]] = {
     "telegram_type": TelegramType,
     "telegram_report_type": TelegramReportType,
     "source_type": SourceType,
+    "report_type": ReportType,
 }
 
 

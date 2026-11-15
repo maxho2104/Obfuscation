@@ -9,7 +9,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from internal_correspondence.core.constants import MaterialType
+from internal_correspondence.core.constants import MaterialType, ReportType
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.core.domain_pack import (
     dir_name,
@@ -19,7 +19,12 @@ from internal_correspondence.core.domain_pack import (
 )
 from internal_correspondence.importexport.export_service import ExportService
 from internal_correspondence.importexport.import_service import ImportService
-from internal_correspondence.orm.models import Branch, Country, TerritorialUnit
+from internal_correspondence.orm.models import (
+    Branch,
+    Country,
+    ReportDraft,
+    TerritorialUnit,
+)
 from internal_correspondence.services.change_tracking import register_change_tracking
 from internal_correspondence.services.enum_validation import validate_enum_codes
 from internal_correspondence.utils.string_resources import STRINGS, reload_strings
@@ -202,6 +207,14 @@ class TestEnumValidation:
             from internal_correspondence.orm.models import ScientificMaterial
 
             session.add(ScientificMaterial(type=MaterialType.DOCUMENT, name="М", branch_id="F1"))
+            session.add(
+                ReportDraft(
+                    report_type=ReportType.HALF_YEAR,
+                    year=2026,
+                    period_number=2,
+                    branch_id="F1",
+                )
+            )
             session.commit()
             assert validate_enum_codes(session) == []
 
