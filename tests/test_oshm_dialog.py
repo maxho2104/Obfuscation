@@ -280,6 +280,26 @@ def test_header_hidden(qt_app, db_manager, oshm_data) -> None:
     dialog.deleteLater()
 
 
+def test_window_title_shows_origin(qt_app, db_manager, oshm_data) -> None:
+    """В названии окна видно, от кого открыт диалог."""
+    # Филиал: наименование и код филиала
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    title = dialog.windowTitle()
+    assert "ОШС" in title
+    assert "Филиал 1" in title
+    assert "F1" in title
+    dialog.deleteLater()
+
+    # Головной офис
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id=None, role=Role.HEAD_OFFICE.value
+    )
+    assert "Головной офис" in dialog.windowTitle()
+    dialog.deleteLater()
+
+
 def test_active_first_order(qt_app, db_manager, oshm_data) -> None:
     """Действующие элементы идут выше неактивных (по алфавиту внутри группы)."""
     session = db_manager.get_session()

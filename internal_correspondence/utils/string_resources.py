@@ -100,7 +100,7 @@ class AppStrings:
     msg_no_branch_selected: str = "Не выбран филиал в настройках."
     dialog_select_branch: str = "Выбор филиала"
     label_branch: str = "Филиал:"
-    oshm_window_title: str = "ОШС филиала {branch_id}"
+    oshm_window_title: str = "ОШС филиала «{branch_name}» ({branch_id})"
     oshm_tree_structure: str = "Штатная структура"
     oshm_tree_workgroups: str = "Рабочие группы"
     oshm_select_branch_first: str = "Выберите филиал, в который нужно добавить отдел"

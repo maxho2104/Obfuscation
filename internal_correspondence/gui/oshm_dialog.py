@@ -123,10 +123,20 @@ class OSHMDialog(QDialog):
         self.can_edit_people = not self.is_head_office
         self.branch_id = branch_id
         self._active_tree: Optional[OSHMTreeWidget] = None
-        self.setWindowTitle(STRINGS.title_oshm)
+        self.setWindowTitle(self._window_title())
         self.setMinimumSize(700, 600)
         self._setup_ui()
         self._load_data()
+
+    def _window_title(self) -> str:
+        """Заголовок окна: от кого открыт диалог (головной офис или филиал)."""
+        if self.is_head_office or not self.branch_id:
+            return f"{STRINGS.title_oshm} — {STRINGS.role_head_office}"
+        branch = self.session.get(Branch, self.branch_id)
+        branch_name = branch.name if branch is not None else self.branch_id
+        return STRINGS.oshm_window_title.format(
+            branch_name=branch_name, branch_id=self.branch_id
+        )
 
     # ------------------------------------------------------------------
     # Построение интерфейса
