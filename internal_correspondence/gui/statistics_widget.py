@@ -520,27 +520,31 @@ class StatisticsWidget(QWidget):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _chart_series(result: StatisticsResult) -> List[Tuple[str, StatisticsRow, QColor]]:
-        """Серии диаграммы: (подпись, строка, цвет).
+    def _chart_series(
+        result: StatisticsResult,
+    ) -> List[Tuple[str, StatisticsRow, QColor, Optional[str]]]:
+        """Серии диаграммы: (подпись, строка, цвет, группа).
 
         При выбранной подкатегории на график выводятся элементы групп
-        оттенками цвета своей группы; иначе — строки критерия.
+        оттенками цвета своей группы; иначе — строки критерия (группа None).
         """
         if not any(row.is_group for row in result.rows):
             return [
-                (row.label, row, _chart_color(index))
+                (row.label, row, _chart_color(index), None)
                 for index, row in enumerate(result.rows)
             ]
-        series: List[Tuple[str, StatisticsRow, QColor]] = []
+        series: List[Tuple[str, StatisticsRow, QColor, Optional[str]]] = []
         group_index = -1
         member_index = 0
+        group_label: Optional[str] = None
         for row in result.rows:
             if row.is_group:
                 group_index += 1
                 member_index = 0
+                group_label = row.label
             else:
                 color = _member_color(_chart_color(group_index), member_index)
-                series.append((row.label, row, color))
+                series.append((row.label, row, color, group_label))
                 member_index += 1
         return series
 
@@ -586,7 +590,7 @@ class StatisticsWidget(QWidget):
             # Строка «ИТОГО» подсвечивает всю диаграмму целиком
             targets = set(self._chart_highlight)
         else:
-            targets = set()
+            targets = set(selected_keys)
             for key in selected_keys:
                 targets.update(self._chart_target_keys(key))
         for key, apply_highlight in self._chart_highlight.items():
@@ -712,7 +716,7 @@ class StatisticsWidget(QWidget):
         series.clicked.connect(self._on_bar_clicked)
         max_value = 0
         self._bar_keys: Dict[int, str] = {}
-        for label, row, color in series_data:
+        for label, row, color, _group in series_data:
             bar_set = QBarSet(label)
             bar_set.setColor(color)
             self._chart_highlight[row.key] = self._bar_highlight(bar_set, color)
@@ -754,7 +758,7 @@ class StatisticsWidget(QWidget):
         max_value = 0
         series_list = []
         self._line_keys = {}
-        for label, row, color in series_data:
+        for label, row, color, _group in series_data:
             series = QLineSeries()
             series.setName(label)
             series.setColor(color)
@@ -789,18 +793,26 @@ class StatisticsWidget(QWidget):
         return chart
 
     def _build_pie(self, result: StatisticsResult) -> QChart:
-        """Круговая диаграмма долей по итогам периода."""
+        """Круговая диаграмма долей по итогам периода.
+
+        Без подкатегории — одиночная. При выбранной подкатегории — вложенная:
+        внутреннее кольцо — категории (группы), внешнее — элементы
+        подкатегории с подписями «категория - подкатегория».
+        """
         chart = self._new_chart(STRINGS.chart_by_totals.format(title=result.title))
 
         series_data = [entry for entry in self._chart_series(result) if entry[1].total > 0]
         self._chart_highlight = {}
+        self._slice_keys = {}
         if not series_data:
             chart.setTitle(STRINGS.chart_no_data)
             return chart
 
+        if any(row.is_group for row in result.rows):
+            return self._build_nested_pie(chart, result)
+
         series = QPieSeries()
-        self._slice_keys = {}
-        for label, row, color in series_data:
+        for label, row, color, _group in series_data:
             slice_ = series.append(label, row.total)
             slice_.setColor(color)
             slice_.setLabelVisible(True)
@@ -809,6 +821,60 @@ class StatisticsWidget(QWidget):
         series.clicked.connect(self._on_pie_clicked)
         chart.addSeries(series)
         chart.legend().setAlignment(Qt.AlignBottom)
+        return chart
+
+    def _build_nested_pie(
+        self, chart: QChart, result: StatisticsResult
+    ) -> QChart:
+        """Вложенная круговая диаграмма: внутри категории, снаружи подкатегории."""
+        inner = QPieSeries()
+        outer = QPieSeries()
+        group_index = -1
+        member_index = 0
+        group_color: Optional[QColor] = None
+        group_label = ""
+        for row in result.rows:
+            if row.is_group:
+                group_index += 1
+                member_index = 0
+                group_color = _chart_color(group_index)
+                group_label = row.label
+                if row.total <= 0:
+                    continue
+                slice_ = inner.append(row.label, row.total)
+                slice_.setColor(group_color)
+                self._chart_highlight[row.key] = self._slice_highlight(slice_)
+                self._slice_keys[sip.unwrapinstance(slice_)] = row.key
+            else:
+                color = _member_color(group_color, member_index)
+                member_index += 1
+                if row.total <= 0:
+                    continue
+                # Подпись только снаружи: «категория - подкатегория»
+                label = STRINGS.chart_slice_grouped_label.format(
+                    group=group_label, member=row.label
+                )
+                slice_ = outer.append(label, row.total)
+                slice_.setColor(color)
+                slice_.setLabelVisible(True)
+                slice_.setLabelPosition(QPieSlice.LabelOutside)
+                self._chart_highlight[row.key] = self._slice_highlight(slice_)
+                self._slice_keys[sip.unwrapinstance(slice_)] = row.key
+
+        # Геометрия колец: pieSize/holeSize — доли от минимального размера
+        # сцены (не от размера серии). Внутренний диск (категории) 0.38,
+        # внешнее кольцо (подкатегории) вплотную к нему: отверстие кольца
+        # равно радиусу диска, без зазора; внешний край 0.65 оставляет место
+        # для подписей с выносками
+        outer.setPieSize(0.65)
+        outer.setHoleSize(0.38)
+        inner.setPieSize(0.38)
+        inner.clicked.connect(self._on_pie_clicked)
+        outer.clicked.connect(self._on_pie_clicked)
+        chart.addSeries(outer)
+        chart.addSeries(inner)
+        # Подписи секторов несут обе части имени — легенда не нужна
+        chart.legend().setVisible(False)
         return chart
 
     @staticmethod

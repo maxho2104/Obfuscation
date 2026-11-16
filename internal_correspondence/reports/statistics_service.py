@@ -12,6 +12,8 @@ from internal_correspondence.core.domain_pack import enum_label, enum_weight
 from internal_correspondence.core.enum_registry import pack_enum_display
 from internal_correspondence.orm.base import Base
 from internal_correspondence.orm.labels import entity_label
+from internal_correspondence.orm.models import AddedTask
+from internal_correspondence.services.task_distribution_service import NODE_EMPLOYEE
 from internal_correspondence.utils.string_resources import STRINGS
 
 # Типы периодов
@@ -58,9 +60,17 @@ SUBCRITERIA = {
 
 
 def _parent_links(
-    group_criterion: str, subcriterion: str, member: Any, document_date: date
+    group_criterion: str,
+    subcriterion: str,
+    member: Any,
+    document_date: date,
+    task_map: Optional[Dict[str, set]] = None,
 ) -> List[Any]:
-    """Возвращает ключи групп, которым принадлежит элемент подкатегории."""
+    """Возвращает ключи групп, которым принадлежит элемент подкатегории.
+
+    ``task_map`` — задачи, назначенные сотрудникам (механизм распределения
+    задач): ключ — строковый id сотрудника, значение — id задач.
+    """
     if subcriterion == CRITERION_EMPLOYEE:
         if group_criterion == CRITERION_DEPARTMENT:
             return [member.department_id]
@@ -72,7 +82,10 @@ def _parent_links(
             department = member.department
             return [department.branch_id] if department is not None else []
         if group_criterion == CRITERION_TASK:
-            return [task.id for task in member.tasks]
+            # Назначения сотруднику через added_tasks (не историческая связь)
+            if task_map is None:
+                return []
+            return sorted(task_map.get(str(member.id), set()))
     if subcriterion == CRITERION_WORKGROUP:
         if group_criterion == CRITERION_DEPARTMENT:
             return [member.department_id]
@@ -350,6 +363,21 @@ class StatisticsService:
             summary=self._evaluation_summary(documents, query, search_period),
         )
 
+    def _employee_task_map(self) -> Dict[str, set]:
+        """Задачи, назначенные сотрудникам (таблица added_tasks).
+
+        Возвращает словарь «строковый id сотрудника -> id задач».
+        """
+        rows = (
+            self.session.query(AddedTask)
+            .filter(AddedTask.node_type == NODE_EMPLOYEE)
+            .all()
+        )
+        mapping: Dict[str, set] = {}
+        for row in rows:
+            mapping.setdefault(row.node_id, set()).add(row.task_id)
+        return mapping
+
     def _count_plain(
         self,
         documents: List[Base],
@@ -410,6 +438,10 @@ class StatisticsService:
         Итог группы — сумма значений её элементов.
         """
         groups: Dict[Any, Dict[str, Any]] = {}
+        # Назначения задач сотрудникам — одним запросом для всего подсчёта
+        task_map: Optional[Dict[str, set]] = None
+        if query.criterion == CRITERION_TASK and query.subcriterion == CRITERION_EMPLOYEE:
+            task_map = self._employee_task_map()
 
         for document in documents:
             document_date = self._document_date(document)
@@ -435,7 +467,11 @@ class StatisticsService:
                 parents = [
                     key
                     for key in _parent_links(
-                        query.criterion, query.subcriterion, member, document_date
+                        query.criterion,
+                        query.subcriterion,
+                        member,
+                        document_date,
+                        task_map,
                     )
                     if key in group_keys
                 ]

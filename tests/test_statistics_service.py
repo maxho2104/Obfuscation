@@ -20,6 +20,7 @@ from internal_correspondence.core.constants import (
     TelegramType,
 )
 from internal_correspondence.orm.models import (
+    AddedTask,
     Branch,
     Consumer,
     Department,
@@ -107,8 +108,10 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
     session.add(Source(id="S2", type=SourceType.EXPERIMENTAL_EQUIPMENT, comment=None))
     session.flush()
 
-    # Иванов назначен исполнителем задачи T1
-    employee1.tasks.append(task)
+    # Иванов назначен исполнителем задачи T1 (механизм распределения задач)
+    session.add(
+        AddedTask(task_id="T1", node_type="employee", node_id=str(employee1.id))
+    )
     session.flush()
 
     material1 = ScientificMaterial(
@@ -870,6 +873,66 @@ def test_widget_chart_dock_is_floatable(
         assert widget.main_window.dockWidgetArea(widget.chart_dock) == (
             Qt.LeftDockWidgetArea
         )
+
+        widget.deleteLater()
+    finally:
+        session.close()
+
+
+def test_widget_nested_pie_with_subcategory(
+    statistics_setup, db_manager: DatabaseManager, qt_app
+) -> None:
+    """Подкатегория + круговая: внутри категории, снаружи подкатегории
+    с подписями «категория - подкатегория»."""
+    from PyQt5.QtChart import QPieSeries
+
+    from internal_correspondence.gui.statistics_widget import StatisticsWidget
+
+    session = db_manager.get_session()
+    try:
+        widget = StatisticsWidget(session)
+        dept_index = widget.criterion_combo.findData(CRITERION_DEPARTMENT)
+        widget.criterion_combo.setCurrentIndex(dept_index)
+        widget.subcategory_combo.setCurrentIndex(
+            widget.subcategory_combo.findData(CRITERION_EMPLOYEE)
+        )
+        widget.chart_type_combo.setCurrentIndex(widget.chart_type_combo.count() - 1)
+        widget.refresh()
+
+        series = widget.chart_view.chart().series()
+        assert len(series) == 2  # два кольца
+        outer, inner = series[0], series[1]
+        assert isinstance(outer, QPieSeries) and isinstance(inner, QPieSeries)
+
+        # Внутреннее кольцо — категории (1 отдел), без подписей
+        inner_slices = inner.slices()
+        assert len(inner_slices) == 1
+        assert not inner_slices[0].isLabelVisible()
+        assert inner_slices[0].label() == "Отдел"
+
+        # Внешнее кольцо — подкатегории с подписями «категория - подкатегория»
+        outer_slices = outer.slices()
+        assert len(outer_slices) == 2
+        for slice_ in outer_slices:
+            assert slice_.isLabelVisible()
+            assert slice_.label().startswith("Отдел - ")
+        assert {s.label() for s in outer_slices} == {
+            "Отдел - Иванов И.",
+            "Отдел - Петров П.",
+        }
+
+        # Выделение групповой строки взрывает и категорию, и её элементы
+        widget.table.selectRow(0)
+        assert inner_slices[0].isExploded()
+        assert all(s.isExploded() for s in outer_slices)
+
+        # Клик по сектору внутреннего кольца выделяет групповую строку
+        qt_app.processEvents()
+        inner.clicked.emit(inner_slices[0])
+        qt_app.processEvents()
+        rows = widget.table.selectionModel().selectedRows()
+        assert len(rows) == 1
+        assert widget.table.item(rows[0].row(), 0).text() == "Отдел"
 
         widget.deleteLater()
     finally:

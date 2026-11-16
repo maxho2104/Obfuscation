@@ -102,7 +102,6 @@ ASSOCIATIONS: Dict[str, Tuple[str, str]] = {
     "telegram_workgroups": ("telegrams", "working_groups"),
     "evaluation_materials": ("evaluations", "scientific_materials"),
     "evaluation_telegrams": ("evaluations", "telegrams"),
-    "task_employees": ("scientific_tasks", "employees"),
 }
 
 # Описания сущностей (первая строка docstring модели используется как fallback).
