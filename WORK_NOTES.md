@@ -1801,3 +1801,10 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 - `scripts_dev/test_migration_task_distribution.py`: обновлён под новую миграцию (upgrade — таблица удалена; downgrade — пересоздана пустой). Проверен: upgrade → downgrade → повторный upgrade.
 - Демо-база `demo/demo.db` приведена к head (`f4c6a8d0e2b1`).
 - `pytest tests`: **341/341 passed**; импорт GUI — OK.
+
+
+### Дополнение (2026-11-17) — формат подписи вложенной круговой в пакете строк
+- `gui/statistics_widget.py`: формат подписи сектора внешнего кольца («категория - подкатегория») вместо f-строки — через `STRINGS.chart_slice_grouped_label` (`{group} - {member}`).
+- Проверка полноты пакета: все 399 ключей `AppStrings` присутствуют в секции `strings` `domain_pack.default.json`, лишних нет (регенерация скриптом `update_pack_strings.py`).
+- Аудит `statistics_widget.py` на захардкоженные строки: чисто (месяцы — осознанно вне пакета как локализация, сообщения лога — не UI).
+- `pytest tests`: **341/341 passed**; импорт GUI — OK.

@@ -154,6 +154,7 @@ class AppStrings:
     chart_type_lines: str = "Линии"
     chart_type_pie: str = "Круговая"
     chart_by_totals: str = "{title}: итоги периода"
+    chart_slice_grouped_label: str = "{group} - {member}"
     stats_avg_score: str = "Средний балл: {value}"
     stats_chart_dock_title: str = "График"
     button_export_excel: str = "Экспорт в Excel"

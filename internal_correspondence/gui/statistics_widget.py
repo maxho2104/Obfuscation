@@ -851,7 +851,10 @@ class StatisticsWidget(QWidget):
                 if row.total <= 0:
                     continue
                 # Подпись только снаружи: «категория - подкатегория»
-                slice_ = outer.append(f"{group_label} - {row.label}", row.total)
+                label = STRINGS.chart_slice_grouped_label.format(
+                    group=group_label, member=row.label
+                )
+                slice_ = outer.append(label, row.total)
                 slice_.setColor(color)
                 slice_.setLabelVisible(True)
                 slice_.setLabelPosition(QPieSlice.LabelOutside)
