@@ -20,6 +20,7 @@ from internal_correspondence.core.constants import (
     TelegramType,
 )
 from internal_correspondence.orm.models import (
+    AddedTask,
     Branch,
     Consumer,
     Department,
@@ -107,8 +108,10 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
     session.add(Source(id="S2", type=SourceType.EXPERIMENTAL_EQUIPMENT, comment=None))
     session.flush()
 
-    # Иванов назначен исполнителем задачи T1
-    employee1.tasks.append(task)
+    # Иванов назначен исполнителем задачи T1 (механизм распределения задач)
+    session.add(
+        AddedTask(task_id="T1", node_type="employee", node_id=str(employee1.id))
+    )
     session.flush()
 
     material1 = ScientificMaterial(
