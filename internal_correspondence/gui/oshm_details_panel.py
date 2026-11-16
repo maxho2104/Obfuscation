@@ -41,7 +41,13 @@ from internal_correspondence.orm.models import (
     WorkGroupMembership,
     WorkingGroup,
 )
-from internal_correspondence.services.task_distribution_service import NODE_EMPLOYEE
+from internal_correspondence.services.task_distribution_service import (
+    NODE_BRANCH,
+    NODE_DEPARTMENT,
+    NODE_EMPLOYEE,
+    NODE_REGION,
+    NODE_WORKGROUP,
+)
 from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("oshm_details_panel")
@@ -64,14 +70,20 @@ def _bool_text(value: bool) -> str:
 
 
 class TaskPickerDialog(QDialog):
-    """Диалог выбора научных задач, ещё не назначенных сотруднику."""
+    """Диалог выбора научных задач для назначения узлу."""
 
     def __init__(
-        self, session, excluded_ids: Optional[List[str]] = None, parent=None
+        self,
+        session,
+        excluded_ids: Optional[List[str]] = None,
+        allowed_ids: Optional[set] = None,
+        parent=None,
     ) -> None:
         super().__init__(parent)
         self.session = session
         self._excluded_ids = set(excluded_ids or [])
+        # Ограничение выбора задачами старшего элемента (None — без ограничения)
+        self._allowed_ids = allowed_ids
         self._tasks: List[ScientificTask] = []
         self.setWindowTitle(STRINGS.picker_tasks_title)
         self.setMinimumSize(500, 400)
@@ -93,6 +105,8 @@ class TaskPickerDialog(QDialog):
         query = self.session.query(ScientificTask).order_by(ScientificTask.name)
         if self._excluded_ids:
             query = query.filter(ScientificTask.id.notin_(list(self._excluded_ids)))
+        if self._allowed_ids is not None:
+            query = query.filter(ScientificTask.id.in_(list(self._allowed_ids)))
         self._tasks = query.all()
         self.list_widget.clear()
         for task in self._tasks:
@@ -120,6 +134,10 @@ class ElementDetailsPanel(QWidget):
         self.session = session
         self.current_node: Optional[NodeRef] = None
         self._employee: Optional[Employee] = None
+        # Узел, для которого показывается таблица задач, и его старший
+        # элемент (ограничение назначения: задача должна быть у старшего)
+        self._tasks_node: Optional[NodeRef] = None
+        self._tasks_parent: Optional[NodeRef] = None
         self.setMinimumWidth(340)
         self._setup_ui()
 
@@ -207,6 +225,8 @@ class ElementDetailsPanel(QWidget):
             return False
         self._clear_fields()
         self._employee = None
+        self._tasks_node = None
+        self._tasks_parent = None
         if not loader():
             return False
         self.current_node = node
@@ -216,7 +236,16 @@ class ElementDetailsPanel(QWidget):
             node_type == "employee" and can_edit_people
         )
         self.edit_btn.setEnabled(can_edit)
-        self.set_tasks_editable(can_edit_people)
+        # Задачи: филиал/отдел/группа — обеим ролям; сотрудник — только филиалу
+        can_edit_tasks = node_type in ("branch", "department", "workgroup") or (
+            node_type == "employee" and can_edit_people
+        )
+        self.set_tasks_editable(can_edit_tasks)
+        if self._tasks_node is not None:
+            self._fill_tasks()
+            self.tasks_group.show()
+        else:
+            self.tasks_group.hide()
         return True
 
     def _clear_fields(self) -> None:
@@ -246,7 +275,10 @@ class ElementDetailsPanel(QWidget):
                 field_label(Branch, "territorial_unit_id"),
                 branch.territorial_unit.name,
             )
-        self.tasks_group.hide()
+        # Задачи филиала — из пула региона (как во вкладке «Задачи»)
+        self._tasks_node = (NODE_BRANCH, str(branch.id))
+        if branch.territorial_unit_id:
+            self._tasks_parent = (NODE_REGION, str(branch.territorial_unit_id))
         return True
 
     def _show_department(self, node_id: str) -> bool:
@@ -262,7 +294,10 @@ class ElementDetailsPanel(QWidget):
         self._add_field(
             field_label(Department, "active"), _bool_text(department.active)
         )
-        self.tasks_group.hide()
+        # Задачи отдела — только из назначенных филиалу
+        self._tasks_node = (NODE_DEPARTMENT, str(department.id))
+        if department.branch_id:
+            self._tasks_parent = (NODE_BRANCH, str(department.branch_id))
         return True
 
     def _show_workgroup(self, node_id: str) -> bool:
@@ -279,7 +314,11 @@ class ElementDetailsPanel(QWidget):
         self._add_field(
             field_label(WorkingGroup, "active"), _bool_text(workgroup.active)
         )
-        self.tasks_group.hide()
+        # Задачи группы — только из назначенных отделу
+        self._tasks_node = (NODE_WORKGROUP, str(workgroup.id))
+        if workgroup.department_id:
+            self._tasks_parent = (NODE_DEPARTMENT, str(workgroup.department_id))
+        return True
         return True
 
     def _show_employee(self, node_id: str) -> bool:
@@ -327,24 +366,32 @@ class ElementDetailsPanel(QWidget):
                 period,
             )
         self._add_field(field_label(Employee, "active"), _bool_text(employee.active))
-        self._fill_tasks(employee)
-        self.tasks_group.show()
+        # Задачи сотрудника — только из назначенных его отделу
+        self._tasks_node = (NODE_EMPLOYEE, str(employee.id))
+        if employee.department_id is not None:
+            self._tasks_parent = (
+                NODE_DEPARTMENT,
+                str(employee.department_id),
+            )
         return True
 
-    def _assigned_tasks(self, employee: Employee) -> List[AddedTask]:
-        """Назначения задач сотруднику (механизм распределения задач)."""
+    def _assigned_tasks(self, node_type: str, node_id: str) -> List[AddedTask]:
+        """Назначения задач узлу (механизм распределения задач)."""
         return (
             self.session.query(AddedTask)
             .filter(
-                AddedTask.node_type == NODE_EMPLOYEE,
-                AddedTask.node_id == str(employee.id),
+                AddedTask.node_type == node_type,
+                AddedTask.node_id == node_id,
             )
             .all()
         )
 
-    def _fill_tasks(self, employee: Employee) -> None:
-        """Заполняет таблицу задач, назначенных сотруднику."""
-        assignments = self._assigned_tasks(employee)
+    def _fill_tasks(self) -> None:
+        """Заполняет таблицу задач, назначенных текущему узлу."""
+        if self._tasks_node is None:
+            return
+        node_type, node_id = self._tasks_node
+        assignments = self._assigned_tasks(node_type, node_id)
         tasks = sorted(
             (assignment.task for assignment in assignments),
             key=lambda task: task.name,
@@ -382,11 +429,25 @@ class ElementDetailsPanel(QWidget):
             self.statistics_requested.emit(self.current_node)
 
     def _add_tasks(self) -> None:
-        """Назначает сотруднику задачи, выбранные в диалоге выбора."""
-        if self._employee is None:
+        """Назначает узлу задачи, выбранные в диалоге выбора.
+
+        Доступны только задачи, назначенные старшему элементу
+        (филиалу — из пула региона и т.д.), как во вкладке «Задачи».
+        """
+        if self._tasks_node is None:
             return
-        assigned_ids = {a.task_id for a in self._assigned_tasks(self._employee)}
-        dialog = TaskPickerDialog(self.session, excluded_ids=assigned_ids, parent=self)
+        node_type, node_id = self._tasks_node
+        assigned_ids = {a.task_id for a in self._assigned_tasks(node_type, node_id)}
+        allowed_ids: Optional[set] = None
+        if self._tasks_parent is not None:
+            parent_type, parent_id = self._tasks_parent
+            allowed_ids = {
+                a.task_id for a in self._assigned_tasks(parent_type, parent_id)
+            }
+        dialog = TaskPickerDialog(
+            self.session, excluded_ids=assigned_ids, allowed_ids=allowed_ids,
+            parent=self,
+        )
         if dialog.exec_() != QDialog.Accepted:
             return
         try:
@@ -394,24 +455,21 @@ class ElementDetailsPanel(QWidget):
                 if task.id in assigned_ids:
                     continue
                 self.session.add(
-                    AddedTask(
-                        task_id=task.id,
-                        node_type=NODE_EMPLOYEE,
-                        node_id=str(self._employee.id),
-                    )
+                    AddedTask(task_id=task.id, node_type=node_type, node_id=node_id)
                 )
             self.session.commit()
         except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("Ошибка назначения задачи сотруднику")
+            logger.exception("Ошибка назначения задачи")
             QMessageBox.critical(self, STRINGS.title_error, str(exc))
             self.session.rollback()
             return
-        self._fill_tasks(self._employee)
+        self._fill_tasks()
 
     def _remove_tasks(self) -> None:
-        """Снимает с сотрудника назначения, выбранные в таблице задач."""
-        if self._employee is None:
+        """Снимает с узла назначения, выбранные в таблице задач."""
+        if self._tasks_node is None:
             return
+        node_type, node_id = self._tasks_node
         selected_ids = {
             self.tasks_table.item(index.row(), 0).data(Qt.UserRole)
             for index in self.tasks_table.selectionModel().selectedRows()
@@ -419,7 +477,7 @@ class ElementDetailsPanel(QWidget):
         if not selected_ids:
             return
         try:
-            for assignment in self._assigned_tasks(self._employee):
+            for assignment in self._assigned_tasks(node_type, node_id):
                 if assignment.task_id in selected_ids:
                     self.session.delete(assignment)
             self.session.commit()
@@ -428,4 +486,4 @@ class ElementDetailsPanel(QWidget):
             QMessageBox.critical(self, STRINGS.title_error, str(exc))
             self.session.rollback()
             return
-        self._fill_tasks(self._employee)
+        self._fill_tasks()
