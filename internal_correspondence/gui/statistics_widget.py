@@ -858,11 +858,14 @@ class StatisticsWidget(QWidget):
                 self._chart_highlight[row.key] = self._slice_highlight(slice_)
                 self._slice_keys[sip.unwrapinstance(slice_)] = row.key
 
-        # Геометрия колец: внешнее кольцо (подкатегории) толще, внутренний
-        # диск (категории) помещается в его отверстие
-        outer.setPieSize(0.95)
-        outer.setHoleSize(0.55)
-        inner.setPieSize(0.52)
+        # Геометрия колец: pieSize/holeSize — доли от минимального размера
+        # сцены (не от размера серии). Внутренний диск (категории) 0.38,
+        # внешнее кольцо (подкатегории) вплотную к нему: отверстие кольца
+        # равно радиусу диска, без зазора; внешний край 0.65 оставляет место
+        # для подписей с выносками
+        outer.setPieSize(0.65)
+        outer.setHoleSize(0.38)
+        inner.setPieSize(0.38)
         inner.clicked.connect(self._on_pie_clicked)
         outer.clicked.connect(self._on_pie_clicked)
         chart.addSeries(outer)
