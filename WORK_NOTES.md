@@ -1792,3 +1792,12 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 - `tests/test_statistics_service.py`: фикстура назначает исполнителя через `AddedTask`.
 - Теперь панель сведений ОШС, вкладка «Задачи» и статистика работают на одном механизме (`added_tasks`) — данные не расходятся.
 - `pytest tests`: **341/341 passed**; импорт GUI — OK.
+
+
+### Дополнение (2026-11-16) — удаление исторической связи «задача — сотрудник»
+- **Модель (`orm/models.py`):** удалены ассоциативная таблица `task_employee_association` (`task_employees`) и связи `ScientificTask.employees` / `Employee.tasks`. Последними потребителями были панель сведений ОШС и статистика — обе переведены на `AddedTask` (см. предыдущие записи).
+- **Миграция `alembic/versions/f4c6a8d0e2b1_drop_task_employees.py`** (после `e1a4b7c9d2f6`): upgrade удаляет `task_employees` (с проверкой существования через инспектор — портибельно SQLite/PostgreSQL); downgrade пересоздаёт таблицу пустой (данные не восстанавливаются — задокументировано в docstring).
+- `scripts_dev/schema_docs/model.py`: убрана разметка таблицы `task_employees` из генератора схемы.
+- `scripts_dev/test_migration_task_distribution.py`: обновлён под новую миграцию (upgrade — таблица удалена; downgrade — пересоздана пустой). Проверен: upgrade → downgrade → повторный upgrade.
+- Демо-база `demo/demo.db` приведена к head (`f4c6a8d0e2b1`).
+- `pytest tests`: **341/341 passed**; импорт GUI — OK.
