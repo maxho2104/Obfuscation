@@ -17,6 +17,7 @@ from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.gui.oshm_dialog import OSHMDialog
 from internal_correspondence.gui.employee_picker import EmployeePickerDialog
 from internal_correspondence.orm.models import (
+    AddedTask,
     Branch,
     Department,
     Employee,
@@ -85,7 +86,10 @@ def oshm_data(db_manager: DatabaseManager) -> dict:
     )
     session.add_all([task1, task2])
     session.flush()
-    emp1.tasks.append(task1)
+    # Назначение через механизм распределения задач (added_tasks)
+    session.add(
+        AddedTask(task_id=task1.id, node_type="employee", node_id=str(emp1.id))
+    )
     session.commit()
     return {
         "dept_a": dept_a, "dept_b": dept_b, "workgroup": workgroup,
@@ -536,7 +540,12 @@ def test_details_panel_remove_task(qt_app, db_manager, oshm_data) -> None:
     panel._remove_tasks()
 
     session = db_manager.get_session()
-    assert session.get(Employee, emp1.id).tasks == []
+    assert (
+        session.query(AddedTask)
+        .filter(AddedTask.node_type == "employee", AddedTask.node_id == str(emp1.id))
+        .count()
+        == 0
+    )
     assert panel.tasks_table.rowCount() == 0
     dialog.deleteLater()
 

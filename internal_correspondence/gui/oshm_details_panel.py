@@ -33,6 +33,7 @@ from PyQt5.QtWidgets import (
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.orm.labels import field_label, field_short_label
 from internal_correspondence.orm.models import (
+    AddedTask,
     Branch,
     Department,
     Employee,
@@ -40,6 +41,7 @@ from internal_correspondence.orm.models import (
     WorkGroupMembership,
     WorkingGroup,
 )
+from internal_correspondence.services.task_distribution_service import NODE_EMPLOYEE
 from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("oshm_details_panel")
@@ -329,9 +331,24 @@ class ElementDetailsPanel(QWidget):
         self.tasks_group.show()
         return True
 
+    def _assigned_tasks(self, employee: Employee) -> List[AddedTask]:
+        """Назначения задач сотруднику (механизм распределения задач)."""
+        return (
+            self.session.query(AddedTask)
+            .filter(
+                AddedTask.node_type == NODE_EMPLOYEE,
+                AddedTask.node_id == str(employee.id),
+            )
+            .all()
+        )
+
     def _fill_tasks(self, employee: Employee) -> None:
         """Заполняет таблицу задач, назначенных сотруднику."""
-        tasks = sorted(employee.tasks, key=lambda task: task.name)
+        assignments = self._assigned_tasks(employee)
+        tasks = sorted(
+            (assignment.task for assignment in assignments),
+            key=lambda task: task.name,
+        )
         self.tasks_table.setRowCount(len(tasks))
         for row, task in enumerate(tasks):
             cells = [
@@ -368,14 +385,21 @@ class ElementDetailsPanel(QWidget):
         """Назначает сотруднику задачи, выбранные в диалоге выбора."""
         if self._employee is None:
             return
-        excluded = [task.id for task in self._employee.tasks]
-        dialog = TaskPickerDialog(self.session, excluded_ids=excluded, parent=self)
+        assigned_ids = {a.task_id for a in self._assigned_tasks(self._employee)}
+        dialog = TaskPickerDialog(self.session, excluded_ids=assigned_ids, parent=self)
         if dialog.exec_() != QDialog.Accepted:
             return
         try:
             for task in dialog.selected_tasks():
-                if task not in self._employee.tasks:
-                    self._employee.tasks.append(task)
+                if task.id in assigned_ids:
+                    continue
+                self.session.add(
+                    AddedTask(
+                        task_id=task.id,
+                        node_type=NODE_EMPLOYEE,
+                        node_id=str(self._employee.id),
+                    )
+                )
             self.session.commit()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка назначения задачи сотруднику")
@@ -395,9 +419,9 @@ class ElementDetailsPanel(QWidget):
         if not selected_ids:
             return
         try:
-            self._employee.tasks = [
-                task for task in self._employee.tasks if task.id not in selected_ids
-            ]
+            for assignment in self._assigned_tasks(self._employee):
+                if assignment.task_id in selected_ids:
+                    self.session.delete(assignment)
             self.session.commit()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка снятия назначения задачи")
