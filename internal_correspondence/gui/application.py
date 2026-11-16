@@ -41,6 +41,7 @@ from internal_correspondence.core.settings import AppSettings, SettingsManager
 from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
 from internal_correspondence.gui.document_list_widget import DocumentListWidget
 from internal_correspondence.gui.evaluation_import_dialog import EvaluationImportDialog
+from internal_correspondence.gui.evaluation_lists_dialog import EvaluationListsDialog
 from internal_correspondence.gui.filter_model import (
     deserialize_filters,
     serialize_filters,
@@ -536,6 +537,10 @@ class MainWindow(QMainWindow):
         import_evaluations_action.setEnabled(is_head_office)
         import_evaluations_action.triggered.connect(self._import_evaluations)
         data_menu.addAction(import_evaluations_action)
+        evaluation_lists_action = QAction(STRINGS.menu_evaluation_lists, self)
+        evaluation_lists_action.setObjectName("evaluationListsAction")
+        evaluation_lists_action.triggered.connect(self._open_evaluation_lists)
+        data_menu.addAction(evaluation_lists_action)
         data_menu.addSeparator()
 
         generate_report_action = QAction(STRINGS.action_generate_report, self)
@@ -819,6 +824,11 @@ class MainWindow(QMainWindow):
         self.materials_tab.refresh()
         self.telegram_tab.refresh()
         self.statistics_tab.refresh()
+
+    def _open_evaluation_lists(self) -> None:
+        """Открывает просмотр журналов импорта оценок (только чтение)."""
+        dialog = EvaluationListsDialog(self.db_manager.engine, self)
+        dialog.exec_()
 
     def _generate_report(self) -> None:
         """Открывает диалог и формирует аналитический отчёт в DOCX."""
