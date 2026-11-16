@@ -854,6 +854,7 @@
     "chart_type_lines": "Линии",
     "chart_type_pie": "Круговая",
     "chart_by_totals": "{title}: итоги периода",
+    "chart_slice_grouped_label": "{group} - {member}",
     "stats_avg_score": "Средний балл: {value}",
     "stats_chart_dock_title": "График",
     "button_export_excel": "Экспорт в Excel",

@@ -132,16 +132,6 @@ telegram_file_association = Table(
     Column("file_id", PGUUID(as_uuid=True), ForeignKey("file_records.id", ondelete="CASCADE"), primary_key=True),
 )
 
-# Связь "Научная задача - Сотрудник" (N-N).
-# Сохранена для совместимости с панелью ОШС и статистикой по исполнителям;
-# распределение задач по иерархии ведётся через AddedTask.
-task_employee_association = Table(
-    "task_employees",
-    Base.metadata,
-    Column("task_id", String(50), ForeignKey("scientific_tasks.id", ondelete="CASCADE"), primary_key=True),
-    Column("employee_id", PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), primary_key=True),
-)
-
 # Связь "Научный материал - Научная задача" (N-N)
 material_task_association = Table(
     "material_tasks",
@@ -679,11 +669,6 @@ class Employee(Base, ChangeTrackedMixin):
         self.workgroup_memberships.append(membership)
         return membership
 
-    tasks: Mapped[List["ScientificTask"]] = relationship(
-        "ScientificTask",
-        secondary=task_employee_association,
-        back_populates="employees",
-    )
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
         secondary=material_employee_association,
@@ -743,11 +728,6 @@ class ScientificTask(Base, ChangeTrackedMixin):
         "AddedTask",
         back_populates="task",
         cascade="all, delete-orphan",
-    )
-    employees: Mapped[List["Employee"]] = relationship(
-        "Employee",
-        secondary=task_employee_association,
-        back_populates="tasks",
     )
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
