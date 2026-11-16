@@ -123,3 +123,33 @@ def test_task_model_provides_drag_mime_data(qt_app, db_manager: DatabaseManager)
 
         invalid = model.mimeData([QModelIndex()])
         assert invalid is None
+
+
+def test_task_model_search_by_type_label(
+    qt_app, db_manager: DatabaseManager
+) -> None:
+    """Поиск по типу задачи работает и для IntEnum-значений."""
+    from internal_correspondence.gui.task_table_model import TaskTableModel
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        session.add(
+            ScientificTask(
+                id="T2",
+                name="Дополнительная задача",
+                type=ScientificTaskType.ADDITIONAL,
+                start_date=date(2026, 2, 1),
+            )
+        )
+        session.commit()
+        tasks = session.query(ScientificTask).order_by(ScientificTask.id).all()
+        model = TaskTableModel()
+        model.set_tasks(tasks)
+
+        model.set_search("дополнительная")
+        assert model.rowCount() == 1
+        assert model.task_at(0).id == "T2"
+
+        model.set_search("основная")
+        assert model.rowCount() == 1
+        assert model.task_at(0).id == "T1"

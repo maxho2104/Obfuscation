@@ -1744,3 +1744,36 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 - Старые подписи операторов («содержит», «≠» и т.п.) остались
   строковыми константами filter_model (до редизайна); новые строки —
   через AppStrings по инварианту white-label.
+
+---
+
+## 2026-11-16 — Исправление поиска задач и обновления дерева ОШС
+
+### Запрос пользователя
+1. Ошибка поиска по задачам: `AttributeError: 'ScientificTaskType'
+   object has no attribute 'lower'`.
+2. После первичной загрузки дерево ОШС не обновляется после добавления
+   отдела или сотрудника.
+
+### Изменения
+- `gui/task_table_model.py`: тип задачи переводится из IntEnum в код
+  пакета через `pack_enum_display`, затем в метку через `enum_label`;
+  хелпер `_type_label` используется в поиске, сортировке и отображении.
+  Убрано сравнение `(task.type or "").lower()` — IntEnum не строка.
+- `gui/oshm_dialog.py`: `_tree_state`/`_restore_tree_state` запоминают
+  раскрытые и выбранные узлы до перестройки деревьев и восстанавливают
+  их после; родители выбранных узлов раскрываются, поэтому добавленный
+  отдел/сотрудник не остаётся внутри свёрнутого узла.
+- `services/reference_service.py`: `EmployeeService.create` проверяет
+  `wg_id is not _UNSET` (раньше sentinel `_UNSET` попадал в
+  `session.get(WorkingGroup, ...)` и добавление сотрудника без группы
+  падало с `AttributeError: 'object' object has no attribute 'hex'`).
+
+### Проверка
+- `pytest tests -q` — 341 passed (1 предупреждение zipfile —
+  предсуществующее, из тестов отчётов).
+- `PYTHONPATH=. .venv/Scripts/python.exe -c "import
+  internal_correspondence.gui.application"` — OK.
+- Добавлены тесты: поиск по метке типа задачи; сохранение раскрытия
+  отдела после добавления сотрудника; сохранение раскрытия филиала
+  после добавления отдела.

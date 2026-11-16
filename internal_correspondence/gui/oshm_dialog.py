@@ -11,7 +11,7 @@ drag&drop переподчинение сотрудников и подсвет�
 """
 
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Set, Tuple
 from uuid import UUID
 
 from PyQt5.QtCore import QDate, Qt, pyqtSignal
@@ -249,6 +249,7 @@ class OSHMDialog(QDialog):
 
     def _load_data(self) -> None:
         """Перестраивает оба дерева от корня текущей роли."""
+        expanded, selected = self._tree_state()
         self.tree_structure.clear()
         self.tree_workgroups.clear()
 
@@ -277,7 +278,63 @@ class OSHMDialog(QDialog):
                 self.tree_workgroups, None, "branch", branch.id, branch.name
             )
             self._fill_branch(root_s, root_w, branch.id)
+        self._restore_tree_state(expanded, selected)
         self._refresh_details_panel()
+
+    def _iter_items(self, tree: QTreeWidget) -> Iterator[QTreeWidgetItem]:
+        """Обходит все узлы дерева в глубину."""
+        for index in range(tree.topLevelItemCount()):
+            yield from self._iter_item(tree.topLevelItem(index))
+
+    def _iter_item(self, item: QTreeWidgetItem) -> Iterator[QTreeWidgetItem]:
+        yield item
+        for index in range(item.childCount()):
+            yield from self._iter_item(item.child(index))
+
+    def _tree_state(self) -> Tuple[Set[NodeRef], Dict[int, Set[NodeRef]]]:
+        """Запоминает раскрытые и выбранные узлы перед перестройкой дерева."""
+        expanded: Set[NodeRef] = set()
+        selected: Dict[int, Set[NodeRef]] = {}
+        for tree in (self.tree_structure, self.tree_workgroups):
+            tree_selected: Set[NodeRef] = set()
+            for item in self._iter_items(tree):
+                key = item.data(0, Qt.UserRole)
+                if not key:
+                    continue
+                if item.isExpanded():
+                    expanded.add(key)
+                if item.isSelected():
+                    tree_selected.add(key)
+            selected[id(tree)] = tree_selected
+        return expanded, selected
+
+    def _restore_tree_state(
+        self,
+        expanded: Set[NodeRef],
+        selected: Dict[int, Set[NodeRef]],
+    ) -> None:
+        """Возвращает раскрытие и выделение после перестройки деревьев.
+
+        Родители выбранных узлов раскрываются: только что добавленный
+        отдел или сотрудник не должны оставаться внутри свёрнутого узла.
+        """
+        for tree in (self.tree_structure, self.tree_workgroups):
+            tree.blockSignals(True)
+            try:
+                for item in self._iter_items(tree):
+                    key = item.data(0, Qt.UserRole)
+                    if not key:
+                        continue
+                    if key in expanded:
+                        item.setExpanded(True)
+                    if key in selected.get(id(tree), set()):
+                        item.setSelected(True)
+                        parent = item.parent()
+                        while parent is not None:
+                            parent.setExpanded(True)
+                            parent = parent.parent()
+            finally:
+                tree.blockSignals(False)
 
     def _add_branch_nodes(
         self,
