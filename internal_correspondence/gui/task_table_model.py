@@ -7,6 +7,7 @@ from PyQt5.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt
 from PyQt5.QtGui import QBrush
 
 from internal_correspondence.core.domain_pack import enum_label
+from internal_correspondence.core.enum_registry import pack_enum_display
 from internal_correspondence.gui.theme import current_theme
 from internal_correspondence.orm.labels import field_short_label
 from internal_correspondence.orm.models import ScientificTask
@@ -89,6 +90,15 @@ class TaskTableModel(QAbstractTableModel):
         self._apply_filter_and_sort()
         self.endResetModel()
 
+    def _type_label(self, task: ScientificTask) -> str:
+        """Метка типа задачи: IntEnum -> код пакета -> человекочитаемая метка."""
+        value = task.type
+        try:
+            code = pack_enum_display("scientific_task_type", int(value))
+        except (TypeError, ValueError):
+            return str(value or "")
+        return enum_label("scientific_task_type", code)
+
     def _apply_filter_and_sort(self) -> None:
         tasks = self._tasks
         if self._search:
@@ -97,10 +107,8 @@ class TaskTableModel(QAbstractTableModel):
                 for task in tasks
                 if self._search in (task.id or "").lower()
                 or self._search in (task.name or "").lower()
-                or self._search in (task.type or "").lower()
+                or self._search in self._type_label(task).lower()
                 or self._search in (task.comment or "").lower()
-                or self._search
-                in enum_label("scientific_task_type", task.type).lower()
             ]
         tasks = sorted(tasks, key=self._sort_key, reverse=self._sort_order == Qt.DescendingOrder)
         self._visible = tasks
@@ -109,7 +117,7 @@ class TaskTableModel(QAbstractTableModel):
         field = TASK_COLUMNS[self._sort_column][0]
         value = getattr(task, field, None)
         if field == "type":
-            value = enum_label("scientific_task_type", task.type)
+            value = self._type_label(task)
         if isinstance(value, date):
             return (value is None, value or date.min)
         if isinstance(value, (int, float)) or hasattr(value, "as_tuple"):
@@ -181,7 +189,7 @@ class TaskTableModel(QAbstractTableModel):
             if field in ("partial_threshold", "full_threshold"):
                 return _format_number(value)
             if field == "type":
-                return enum_label("scientific_task_type", task.type)
+                return self._type_label(task)
             return "" if value is None else str(value)
 
         if role == Qt.BackgroundRole and task.id in self._undistributed:

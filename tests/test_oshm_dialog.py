@@ -27,6 +27,10 @@ from internal_correspondence.orm.models import (
     WorkingGroup,
 )
 from internal_correspondence.services.change_tracking import register_change_tracking
+from internal_correspondence.services.reference_service import (
+    DepartmentService,
+    EmployeeService,
+)
 from internal_correspondence.utils.string_resources import STRINGS
 
 
@@ -348,6 +352,67 @@ def test_active_first_order(qt_app, db_manager, oshm_data) -> None:
     # Активные сотрудники (Борисов, Иванов) выше неактивных (Андреев, Петров)
     assert child_names.index("Борисов Б.") < child_names.index("Андреев А.")
     assert child_names.index("Иванов И.") < child_names.index("Петров П.")
+    dialog.deleteLater()
+
+
+def test_tree_refreshes_after_adding_employee(
+    qt_app, db_manager, oshm_data
+) -> None:
+    """После добавления сотрудника выбранный отдел остаётся раскрытым."""
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    dept_item = _find_node(dialog, dialog.tree_structure, ("department", str(oshm_data["dept_a"].id)))
+    dept_item.setExpanded(True)
+    dept_item.setSelected(True)
+    dialog._activate_tree(dialog.tree_structure)
+    before = dept_item.childCount()
+
+    dialog._apply(
+        lambda: EmployeeService(dialog.session).create(
+            {
+                "last_name": "Новиков",
+                "first_name": "Николай",
+                "department_id": oshm_data["dept_a"].id,
+                "active": True,
+            }
+        ),
+        "Ошибка добавления сотрудника",
+    )
+
+    dept_item = _find_node(dialog, dialog.tree_structure, ("department", str(oshm_data["dept_a"].id)))
+    names = [dept_item.child(i).text(0) for i in range(dept_item.childCount())]
+    assert dept_item.isExpanded()
+    assert dept_item.childCount() == before + 1
+    assert any(name.startswith("Новиков") for name in names)
+    dialog.deleteLater()
+
+
+def test_tree_refreshes_after_adding_department(
+    qt_app, db_manager, oshm_data
+) -> None:
+    """После добавления отдела выбранный филиал остаётся раскрытым."""
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    branch_item = dialog.tree_structure.topLevelItem(0)
+    branch_item.setExpanded(True)
+    branch_item.setSelected(True)
+    dialog._activate_tree(dialog.tree_structure)
+    before = branch_item.childCount()
+
+    dialog._apply(
+        lambda: DepartmentService(dialog.session).create(
+            {"name": "Новый отдел", "branch_id": "F1", "active": True}
+        ),
+        "Ошибка добавления отдела",
+    )
+
+    branch_item = dialog.tree_structure.topLevelItem(0)
+    names = [branch_item.child(i).text(0) for i in range(branch_item.childCount())]
+    assert branch_item.isExpanded()
+    assert branch_item.childCount() == before + 1
+    assert "Новый отдел" in names
     dialog.deleteLater()
 
 

@@ -63,6 +63,27 @@ def test_data_menu_contains_generate_report_action(
     window.close()
 
 
+def test_data_menu_contains_evaluation_lists_action(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """Пункт «Оценочные листы» идёт сразу после импорта оценок."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    action = window.findChild(QAction, "evaluationListsAction")
+    assert action is not None
+    assert action.text() == STRINGS.menu_evaluation_lists
+    data_menu = next(
+        item.menu()
+        for item in window.menuBar().actions()
+        if item.text() == STRINGS.menu_data
+    )
+    texts = [item.text() for item in data_menu.actions()]
+    index = texts.index(STRINGS.menu_evaluation_lists)
+    assert texts[index - 1] == STRINGS.menu_import_evaluations
+    window.close()
+
+
 def test_document_action_button_styles_apply_to_both_tabs(
     window_env,
     qt_app: QApplication,

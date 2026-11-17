@@ -238,7 +238,7 @@ class EmployeeService(BaseService[Employee]):
         """Создаёт сотрудника; поля рабочей группы открывают первое участие."""
         wg_id, wg_start, wg_end = self._pop_workgroup_fields(data)
         instance = super().create(data)
-        if wg_id is not None:
+        if wg_id is not _UNSET and wg_id is not None:
             self._open_membership(instance, wg_id, wg_start, wg_end)
         return instance
 
