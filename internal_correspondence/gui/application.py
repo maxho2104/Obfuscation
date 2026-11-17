@@ -63,6 +63,7 @@ from internal_correspondence.gui.reference_editor import ReferenceEditorDialog
 from internal_correspondence.gui.report_dialog import ReportDialog
 from internal_correspondence.gui.settings_dialog import SettingsDialog
 from internal_correspondence.gui.statistics_widget import StatisticsWidget
+from internal_correspondence.gui.dashboard_widget import DashboardWidget
 from internal_correspondence.gui.task_distribution_widget import TaskDistributionWidget
 from internal_correspondence.gui.table_model import ColumnDef
 from internal_correspondence.gui.theme import THEMES, apply_theme, current_theme
@@ -399,7 +400,13 @@ class MainWindow(QMainWindow):
             self.settings.role,
             self.settings.branch_id,
         )
+        self.dashboard_tab = DashboardWidget(
+            self.db_manager.get_session(),
+            self.settings.role,
+            self.settings.branch_id,
+        )
 
+        self.tabs.addTab(self.dashboard_tab, STRINGS.tab_dashboard)
         self.tabs.addTab(self.materials_tab, entity_label(ScientificMaterial, plural=True))
         self.tabs.addTab(self.telegram_tab, entity_label(Telegram, plural=True))
         self.tabs.addTab(self.tasks_tab, STRINGS.tab_tasks)
@@ -435,11 +442,12 @@ class MainWindow(QMainWindow):
     def _on_files_changed(self, document_id) -> None:
         """Обновляет подсветку строки после операций док-виджета с файлами.
 
-        Записи Change создаются в сессии док-виджета, поэтому табличная
-        модель перечитывает служебное состояние записи явно.
+        Записи Change создаются в сессии док-виджета, поэтому табличные
+        модели перечитывают служебное состояние записи явно. Обновляем обе
+        вкладки документов: док может быть привязан к записи, даже если
+        активна другая вкладка (например, «Дашборд»).
         """
-        tab = self.tabs.currentWidget()
-        if isinstance(tab, DocumentListWidget):
+        for tab in (self.materials_tab, self.telegram_tab):
             tab.reload_document_state(document_id)
 
     def _sync_files_dock(self) -> None:
@@ -694,6 +702,7 @@ class MainWindow(QMainWindow):
         self.telegram_tab.refresh()
         self.tasks_tab.apply_theme()
         self.statistics_tab.apply_theme()
+        self.dashboard_tab.apply_theme()
 
     def _export(self) -> None:
         """Формирует экспортный ZIP-архив."""
@@ -708,6 +717,7 @@ class MainWindow(QMainWindow):
             session.commit()
             self.materials_tab.refresh()
             self.telegram_tab.refresh()
+            self.dashboard_tab.refresh()
             QMessageBox.information(
                 self, STRINGS.title_export, STRINGS.msg_export_done.format(output=output)
             )
@@ -750,6 +760,7 @@ class MainWindow(QMainWindow):
             self.telegram_tab.refresh()
             self.tasks_tab.refresh_all()
             self.statistics_tab.refresh()
+            self.dashboard_tab.refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка импорта")
             session.rollback()
@@ -783,6 +794,7 @@ class MainWindow(QMainWindow):
         try:
             results = importer(session, path)
             session.commit()
+            self.dashboard_tab.refresh()
             QMessageBox.information(
                 self,
                 STRINGS.title_import,
@@ -824,6 +836,7 @@ class MainWindow(QMainWindow):
         self.materials_tab.refresh()
         self.telegram_tab.refresh()
         self.statistics_tab.refresh()
+        self.dashboard_tab.refresh()
 
     def _open_evaluation_lists(self) -> None:
         """Открывает просмотр журналов импорта оценок (только чтение)."""
