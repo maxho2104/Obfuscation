@@ -37,13 +37,16 @@ from internal_correspondence.orm.base import Base
 from internal_correspondence.utils.string_resources import STRINGS
 from internal_correspondence.orm.labels import deletion_confirmation_text
 from internal_correspondence.orm.models import (
-    Evaluation,
     ScientificMaterial,
     Telegram,
 )
 from internal_correspondence.services.document_service import (
     ScientificMaterialService,
     TelegramService,
+)
+from internal_correspondence.services.evaluation_service import (
+    EvaluationError,
+    EvaluationService,
 )
 
 logger = get_logger("document_list_widget")
@@ -426,26 +429,27 @@ class DocumentListWidget(QWidget):
             self._assign_evaluation()
 
     def _assign_evaluation(self) -> None:
-        """Выставляет одну ручную оценку всем выделенным записям."""
+        """Выставляет оценку выделенным записям по правилам смены оценки."""
         items = self._selected_items()
         if not items:
             return
-        dialog = EvaluationAssignDialog(self)
+        dialog = EvaluationAssignDialog(self.session, self)
         if dialog.exec_() != dialog.Accepted:
             return
-        value, assigned_date = dialog.get_data()
+        value, assigned_date, mode, number, list_date, existing_list = (
+            dialog.get_data()
+        )
         try:
-            evaluation = Evaluation(
-                value=value,
-                date=assigned_date,
-            )
-            self.session.add(evaluation)
-            if self.is_material:
-                for item in items:
-                    evaluation.materials.append(item)
+            service = EvaluationService(self.session)
+            if mode == "new":
+                if not number:
+                    raise EvaluationError(STRINGS.msg_evaluation_list_required)
+                evaluation_list = service.create_list(number, list_date)
             else:
-                for item in items:
-                    evaluation.telegrams.append(item)
+                evaluation_list = existing_list
+                if evaluation_list is None:
+                    raise EvaluationError(STRINGS.msg_evaluation_list_required)
+            service.assign_evaluation(items, value, assigned_date, evaluation_list)
             self.session.commit()
             self.refresh()
             QMessageBox.information(

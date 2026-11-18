@@ -1,6 +1,7 @@
 """Тесты статистических подсчётов."""
 
 import os
+import uuid
 from datetime import date
 from pathlib import Path
 
@@ -104,8 +105,22 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
         start_date=date(2026, 1, 1),
     )
     session.add(task)
-    session.add(Source(id="S1", type=SourceType.SCIENTIFIC_WORK, comment="Первый"))
-    session.add(Source(id="S2", type=SourceType.EXPERIMENTAL_EQUIPMENT, comment=None))
+    session.add(
+        Source(
+            id=uuid.uuid4(),
+            index="S1",
+            type=SourceType.SCIENTIFIC_WORK,
+            comment="Первый",
+        )
+    )
+    session.add(
+        Source(
+            id=uuid.uuid4(),
+            index="S2",
+            type=SourceType.EXPERIMENTAL_EQUIPMENT,
+            comment=None,
+        )
+    )
     session.flush()
 
     # Иванов назначен исполнителем задачи T1 (механизм распределения задач)
@@ -153,9 +168,13 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
     session.flush()
 
     material1.employees = [employee1]
-    material1.sources = [session.get(Source, "S1")]
+    material1.sources = [
+        session.query(Source).filter_by(index="S1").one()
+    ]
     material2.employees = [employee1, employee2]
-    material2.sources = [session.get(Source, "S2")]
+    material2.sources = [
+        session.query(Source).filter_by(index="S2").one()
+    ]
     material3.employees = [employee2]
     material0.employees = [employee1]
     telegram.employees = [employee1]

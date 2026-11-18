@@ -5,11 +5,12 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from PyQt5.QtCore import QByteArray, Qt
+from PyQt5.QtCore import QByteArray, Qt, QThread
 from PyQt5.QtWidgets import (
     QAction,
     QActionGroup,
     QApplication,
+    QDialog,
     QFileDialog,
     QMainWindow,
     QMenu,
@@ -42,6 +43,11 @@ from internal_correspondence.gui.attached_files_widget import AttachedFilesWidge
 from internal_correspondence.gui.document_list_widget import DocumentListWidget
 from internal_correspondence.gui.evaluation_import_dialog import EvaluationImportDialog
 from internal_correspondence.gui.evaluation_lists_dialog import EvaluationListsDialog
+from internal_correspondence.gui.exchange_dialogs import (
+    ExportBranchesDialog,
+    ExportWorker,
+    ImportPreviewDialog,
+)
 from internal_correspondence.gui.filter_model import (
     deserialize_filters,
     serialize_filters,
@@ -232,6 +238,7 @@ def material_columns(role: Optional[str] = None) -> List[ColumnDef]:
         )
     columns.extend(
         [
+            ColumnDef("tasks_display", width=140),
             ColumnDef("incoming_number", width=100),
             ColumnDef("incoming_date", width=110),
             ColumnDef("evaluation_display", width=90),
@@ -263,6 +270,7 @@ def telegram_columns(role: Optional[str] = None) -> List[ColumnDef]:
         )
     columns.extend(
         [
+            ColumnDef("tasks_display", width=140),
             ColumnDef("incoming_number", width=100),
             ColumnDef("incoming_date", width=110),
             ColumnDef("evaluation_display", width=90),
@@ -323,7 +331,7 @@ LEADER_COLUMNS = [
 ]
 
 SOURCE_COLUMNS = [
-    ColumnDef("id", width=100),
+    ColumnDef("index", width=100),
     ColumnDef("type", width=100, formatter=_format_source_type),
     ColumnDef("comment", width=300),
 ]
@@ -705,33 +713,131 @@ class MainWindow(QMainWindow):
         self.dashboard_tab.apply_theme()
 
     def _export(self) -> None:
-        """Формирует экспортный ZIP-архив."""
-        session = self.db_manager.get_session()
-        try:
-            service = ExportService(
-                session,
-                self.settings.storage_path_obj(),
-                retention_days=_changes_retention_days(self.settings),
+        """Формирует экспортные ZIP-архивы (в отдельном потоке)."""
+        storage_root = self.settings.storage_path_obj()
+        retention_days = _changes_retention_days(self.settings)
+
+        branch_ids: Optional[List[str]] = None
+        if self.settings.role == Role.HEAD_OFFICE.value:
+            session = self.db_manager.get_session()
+            try:
+                service = ExportService(
+                    session,
+                    storage_root,
+                    retention_days=retention_days,
+                    role=self.settings.role,
+                    branch_id=self.settings.branch_id,
+                )
+                pending = service.pending_branches()
+            finally:
+                session.close()
+            if not pending:
+                QMessageBox.information(
+                    self, STRINGS.title_export, STRINGS.msg_export_no_changes
+                )
+                return
+            dialog = ExportBranchesDialog(pending, self)
+            if dialog.exec_() != QDialog.Accepted:
+                return
+            branch_ids = dialog.selected_branch_ids()
+            if not branch_ids:
+                return
+
+        self._run_export_worker(storage_root, retention_days, branch_ids)
+
+    def _run_export_worker(
+        self,
+        storage_root: Path,
+        retention_days: int,
+        branch_ids: Optional[List[str]],
+    ) -> None:
+        """Запускает формирование архивов в потоке с прогресс-диалогом."""
+        thread = QThread(self)
+        worker = ExportWorker(
+            self.db_manager,
+            storage_root,
+            retention_days,
+            self.settings.role,
+            self.settings.branch_id,
+            branch_ids,
+        )
+        worker.moveToThread(thread)
+
+        progress = QProgressDialog(
+            STRINGS.progress_export_caption,
+            STRINGS.button_cancel,
+            0,
+            100,
+            self,
+        )
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        worker.progressed.connect(
+            lambda current, total, message: self._on_export_progress(
+                progress, current, total, message
             )
-            output = service.export()
-            session.commit()
-            self.materials_tab.refresh()
-            self.telegram_tab.refresh()
-            self.dashboard_tab.refresh()
-            QMessageBox.information(
-                self, STRINGS.title_export, STRINGS.msg_export_done.format(output=output)
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("Ошибка экспорта")
-            session.rollback()
-            QMessageBox.critical(
-                self, STRINGS.title_error, STRINGS.msg_export_error.format(error=exc)
-            )
-        finally:
-            session.close()
+        )
+        worker.succeeded.connect(
+            lambda outputs: self._on_export_finished(thread, worker, progress, outputs)
+        )
+        worker.failed.connect(
+            lambda error: self._on_export_failed(thread, worker, progress, error)
+        )
+        thread.started.connect(worker.run)
+        # Пока поток жив, держим ссылки на объекты в атрибутах окна.
+        self._export_thread = thread
+        self._export_worker = worker
+        thread.start()
+
+    @staticmethod
+    def _on_export_progress(
+        progress: QProgressDialog, current: int, total: int, message: str
+    ) -> None:
+        """Обновляет прогресс-диалог экспорта."""
+        progress.setMaximum(max(total, 1))
+        progress.setLabelText(message)
+        progress.setValue(current)
+
+    def _on_export_finished(
+        self,
+        thread: QThread,
+        worker: ExportWorker,
+        progress: QProgressDialog,
+        outputs: List[str],
+    ) -> None:
+        """Завершает экспорт: освобождает поток, показывает результат."""
+        thread.quit()
+        thread.wait()
+        progress.close()
+        self.materials_tab.refresh()
+        self.telegram_tab.refresh()
+        self.dashboard_tab.refresh()
+        QMessageBox.information(
+            self,
+            STRINGS.title_export,
+            STRINGS.msg_export_files_done.format(files="\n".join(outputs)),
+        )
+
+    def _on_export_failed(
+        self,
+        thread: QThread,
+        worker: ExportWorker,
+        progress: QProgressDialog,
+        error: str,
+    ) -> None:
+        """Показывает ошибку экспорта; изменения остаются неэкспортированными."""
+        thread.quit()
+        thread.wait()
+        progress.close()
+        logger.exception("Ошибка экспорта")
+        QMessageBox.critical(
+            self, STRINGS.title_error, STRINGS.msg_export_error.format(error=error)
+        )
 
     def _import(self) -> None:
-        """Импортирует ZIP-архив."""
+        """Импортирует ZIP-архив: анализ, подтверждение, применение."""
         path, _ = QFileDialog.getOpenFileName(
             self, STRINGS.dialog_select_export_file, "", "ZIP (*.zip)"
         )
@@ -745,16 +851,32 @@ class MainWindow(QMainWindow):
                 self.settings.role,
                 self.settings.branch_id,
             )
-            result = service.import_archive(Path(path))
+            analysis = service.analyze_archive(Path(path))
+            entries = analysis["entries"]
+            preview = ImportPreviewDialog(entries, self)
+            if preview.exec_() != QDialog.Accepted:
+                QMessageBox.information(
+                    self, STRINGS.title_import, STRINGS.msg_import_canceled
+                )
+                return
+            exclude = preview.excluded_keys(entries)
+            result = service.import_archive(Path(path), exclude=exclude)
+            rejected = [entry for entry in entries if entry["status"] == "error"]
+            recorded = service.record_missing_requests(rejected)
+            session.commit()
             message = STRINGS.msg_import_result.format(
                 imported=result["imported"],
                 deleted=result["deleted"],
                 skipped=result["skipped"],
                 conflicts=len(result["conflicts"]),
             )
-            warnings = result.get("warnings") or []
+            warnings = list(analysis.get("warnings") or []) + list(
+                result.get("warnings") or []
+            )
             if warnings:
                 message += f"\n\n{STRINGS.msg_import_warnings}\n" + "\n".join(warnings)
+            if recorded:
+                message += "\n" + STRINGS.msg_missing_recorded.format(count=recorded)
             QMessageBox.information(self, STRINGS.title_import, message)
             self.materials_tab.refresh()
             self.telegram_tab.refresh()

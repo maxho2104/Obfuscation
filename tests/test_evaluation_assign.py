@@ -81,11 +81,18 @@ def test_manual_evaluation_without_list(qapp, env) -> None:
         assert material.latest_evaluation.value == EvaluationValue.IMPORTANT
 
 
-def test_evaluation_assign_dialog_data(qapp) -> None:
-    """Диалог выставления оценки отдаёт выбранные значение и дату."""
-    dialog = EvaluationAssignDialog()
-    dialog.value_combo.setCurrentIndex(2)
-    dialog.date_edit.setDate(date(2026, 6, 15))
-    value, assigned_date = dialog.get_data()
-    assert value == EvaluationValue(dialog.value_combo.itemData(2))
-    assert assigned_date == date(2026, 6, 15)
+def test_evaluation_assign_dialog_data(qapp, env) -> None:
+    """Диалог выставления оценки отдаёт значение, дату и параметры списка."""
+    db, _ids = env
+    with db.get_session() as session:
+        dialog = EvaluationAssignDialog(session)
+        dialog.value_combo.setCurrentIndex(2)
+        dialog.date_edit.setDate(date(2026, 6, 15))
+        value, assigned_date, mode, number, list_date, existing = dialog.get_data()
+        assert value == EvaluationValue(dialog.value_combo.itemData(2))
+        assert assigned_date == date(2026, 6, 15)
+        # Режим «новый список»: номер предложен, дата списка — сегодня.
+        assert mode == "new"
+        assert number.startswith("ОЦ-")
+        assert existing is None
+        dialog.close()

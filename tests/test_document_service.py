@@ -7,6 +7,7 @@ import pytest
 
 from internal_correspondence.core.constants import (
     MaterialType,
+    ScientificTaskType,
     TelegramType,
 )
 from internal_correspondence.core.database import DatabaseManager
@@ -139,3 +140,53 @@ def test_delete_material(db_manager: DatabaseManager, tmp_path: Path) -> None:
         session.commit()
 
         assert session.query(ScientificMaterial).count() == 0
+
+
+def test_tasks_display_lists_sorted_task_codes(db_manager: DatabaseManager) -> None:
+    """Колонка «Задачи» показывает коды задач документа через запятую."""
+    from internal_correspondence.orm.models import ScientificTask
+
+    with db_manager.get_session() as session:
+        _setup_refs(session)
+        session.add_all(
+            [
+                ScientificTask(
+                    id="TASK-0002",
+                    name="Задача 2",
+                    type=ScientificTaskType.MAIN,
+                    start_date=date(2024, 1, 1),
+                ),
+                ScientificTask(
+                    id="TASK-0001",
+                    name="Задача 1",
+                    type=ScientificTaskType.MAIN,
+                    start_date=date(2024, 1, 1),
+                ),
+            ]
+        )
+        material = ScientificMaterial(
+            type=MaterialType.MESSAGE,
+            outgoing_number="М-9",
+            outgoing_date=date(2024, 2, 1),
+            name="Материал с задачами",
+            branch_id="FIL001",
+            tasks=[
+                session.get(ScientificTask, "TASK-0002"),
+                session.get(ScientificTask, "TASK-0001"),
+            ],
+        )
+        session.add(material)
+        session.commit()
+
+        assert material.tasks_display == "TASK-0001, TASK-0002"
+
+        empty = ScientificMaterial(
+            type=MaterialType.MESSAGE,
+            outgoing_number="М-10",
+            outgoing_date=date(2024, 2, 2),
+            name="Материал без задач",
+            branch_id="FIL001",
+        )
+        session.add(empty)
+        session.commit()
+        assert empty.tasks_display == ""

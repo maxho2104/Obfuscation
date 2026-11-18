@@ -424,3 +424,52 @@ def test_extra_fields_toggle(qapp, base_data) -> None:
         assert incoming.isHidden()
         dialog.more_button.click()
         assert not incoming.isHidden()
+
+
+# ---------------------------------------------------------------------------
+# Обязательные связи N-N: страны и сотрудники (роль «филиал»)
+# ---------------------------------------------------------------------------
+
+
+def test_countries_and_employees_required_for_branch(qapp, base_data) -> None:
+    """Диалог филиала требует заполнения стран и сотрудников документа."""
+    from internal_correspondence.orm.models import Country, Department, Employee
+
+    with base_data.get_session() as session:
+        session.add(Country(id="RUS", name="Россия"))
+        department = Department(name="Отдел", branch_id="F1")
+        department.employees.append(
+            Employee(last_name="Иванов", first_name="Иван")
+        )
+        session.add(department)
+        session.commit()
+
+        dialog = MaterialEditDialog(
+            session, branch_id="F1", role=Role.BRANCH.value
+        )
+        countries = dialog.element("countries")
+        employees = dialog.element("employees")
+        assert countries.is_required()
+        assert employees.is_required()
+
+        # Незаполненные обязательные связи дают сообщение-предупреждение.
+        assert countries.validate() is not None
+        assert employees.validate() is not None
+
+        # После заполнения проверка проходит.
+        countries.set_value(session.query(Country).all())
+        employees.set_value(session.query(Employee).all())
+        assert countries.validate() is None
+        assert employees.validate() is None
+        dialog.close()
+
+
+def test_countries_optional_for_head_office(qapp, base_data) -> None:
+    """Головной офис правит реквизиты: обязательности списков нет."""
+    with base_data.get_session() as session:
+        dialog = MaterialEditDialog(
+            session, branch_id="F1", role=Role.HEAD_OFFICE.value
+        )
+        countries = dialog.element("countries")
+        assert countries is None or not countries.is_required()
+        dialog.close()
