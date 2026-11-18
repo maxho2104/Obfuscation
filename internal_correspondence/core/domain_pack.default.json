@@ -175,6 +175,27 @@
         }
       }
     },
+    "MissingRequest": {
+      "label": "Запрос контрагенту",
+      "label_plural": "Запросы контрагенту",
+      "fields": {
+        "id": {
+          "label": "Идентификатор"
+        },
+        "branch_id": {
+          "label": "Филиал"
+        },
+        "entity_name": {
+          "label": "Сущность"
+        },
+        "entity_pk": {
+          "label": "Ключ сущности"
+        },
+        "created_at": {
+          "label": "Дата обращения"
+        }
+      }
+    },
     "TaskEntityLink": {
       "label": "Связь задачи с сущностью",
       "label_plural": "Связи задач с сущностями",
@@ -281,6 +302,9 @@
       "label_plural": "Источники",
       "fields": {
         "id": {
+          "label": "Идентификатор"
+        },
+        "index": {
           "label": "Индекс"
         },
         "type": {
@@ -550,6 +574,9 @@
         },
         "evaluation_display": {
           "label": "Оценка"
+        },
+        "tasks_display": {
+          "label": "Задачи"
         }
       }
     },
@@ -622,6 +649,9 @@
         },
         "evaluation_display": {
           "label": "Оценка"
+        },
+        "tasks_display": {
+          "label": "Задачи"
         }
       }
     },
@@ -796,6 +826,29 @@
     "dialog_select_export_file": "Выберите экспортный файл",
     "dialog_primary_data_file": "Файл первичных данных",
     "dialog_actual_data_file": "Файл актуальных данных",
+    "dialog_export_branches_title": "Выбор филиалов для экспорта",
+    "label_all_branches": "Все",
+    "column_branch": "Филиал",
+    "msg_export_no_changes": "Нет неэкспортированных изменений.",
+    "msg_export_files_done": "Экспорт завершён. Сформированы файлы:\n{files}",
+    "progress_export_caption": "Формирование экспортных файлов",
+    "progress_export_entity": "Обработка: {entity}",
+    "button_apply": "Применить",
+    "dialog_import_preview_title": "Анализ импортируемых изменений",
+    "label_import_summary": "Всего записей: {total}; применится: {ok}; требуют внимания: {warning}; отклонено: {error}",
+    "column_entity": "Сущность",
+    "column_key": "Ключ",
+    "column_operation": "Операция",
+    "column_status": "Статус",
+    "column_reason": "Пояснение",
+    "op_create": "Создание",
+    "op_update": "Изменение",
+    "op_delete": "Удаление",
+    "status_ok": "Применится",
+    "status_warning": "Внимание",
+    "status_error": "Отклонено",
+    "msg_import_canceled": "Импорт отменён пользователем.",
+    "msg_missing_recorded": "Запросов контрагенту добавлено: {count}",
     "dialog_domain_pack_save": "Выгрузить пакет предметной области",
     "msg_pack_save_error": "Не удалось сохранить файл:\n{error}",
     "msg_pack_saved_use": "Пакет сохранён:\n{path}\n\nИспользовать этот файл как активный пакет?\n(изменение вступит в силу после перезапуска приложения)",
@@ -1004,6 +1057,12 @@
     "action_reveal": "Расположение файла",
     "action_assign_evaluation": "Выставить оценку",
     "dialog_assign_evaluation_title": "Выставить оценку",
+    "evaluation_mode_new_list": "Создать новый список оценок",
+    "evaluation_mode_existing_list": "Привязать к существующему списку",
+    "label_evaluation_list_number": "Номер списка",
+    "label_evaluation_list_date": "Дата списка",
+    "label_evaluation_list_filter": "Поиск по номеру списка",
+    "msg_evaluation_list_required": "Выберите существующий список оценок или переключитесь на создание нового.",
     "label_evaluation_value": "Оценка:",
     "label_evaluation_date": "Дата выставления:",
     "msg_evaluation_assigned": "Оценка выставлена для {count} записей.",

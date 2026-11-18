@@ -109,6 +109,14 @@ class MaterialEditDialog(EntityEditDialog):
             m.ScientificMaterial.employees,
             session,
             query_factory=_branch_employees_query(branch_id) if is_branch else None,
+            # Обязательность — для роли филиала (создание документа);
+            # головной офис правит реквизиты и не обязан заполнять списки.
+            required=is_branch,
+        )
+        countries = ManyToManyEditElement(
+            m.ScientificMaterial.countries,
+            session,
+            required=is_branch,
         )
 
         branch_main: List[FieldSpec] = [
@@ -120,7 +128,7 @@ class MaterialEditDialog(EntityEditDialog):
             permit,
             m.ScientificMaterial.name,
             m.ScientificMaterial.tasks,
-            m.ScientificMaterial.countries,
+            countries,
             m.ScientificMaterial.consumer_id,
             employees,
             m.ScientificMaterial.comment,
@@ -187,6 +195,13 @@ class TelegramEditDialog(EntityEditDialog):
             m.Telegram.employees,
             session,
             query_factory=_branch_employees_query(branch_id) if is_branch else None,
+            # Обязательность — для роли филиала (создание документа).
+            required=is_branch,
+        )
+        countries = ManyToManyEditElement(
+            m.Telegram.countries,
+            session,
+            required=is_branch,
         )
 
         branch_main: List[FieldSpec] = [
@@ -194,7 +209,7 @@ class TelegramEditDialog(EntityEditDialog):
             m.Telegram.type,
             m.Telegram.name,
             m.Telegram.tasks,
-            m.Telegram.countries,
+            countries,
             report_addresses,
             employees,
             m.Telegram.comment,

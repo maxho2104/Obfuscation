@@ -553,11 +553,21 @@ class ManyToManyEditElement(EditElement):
         parent=None,
         label=None,
         query_factory: Optional[Callable[[Session], Any]] = None,
+        required: bool = False,
     ) -> None:
         self.session = session
         self.query_factory = query_factory
         self._items: List[Any] = []
+        self._required = required
         super().__init__(attribute, parent=parent, label=label)
+
+    def is_required(self) -> bool:
+        """Обязательность: явный флаг или метаданные модели."""
+        return self._required or super().is_required()
+
+    def is_empty(self) -> bool:
+        """Связь не заполнена, если не выбран ни один элемент."""
+        return not self._items
 
     def _build_editor(self) -> QWidget:
         container = QWidget()

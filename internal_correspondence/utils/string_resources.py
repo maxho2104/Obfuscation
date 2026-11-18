@@ -83,6 +83,34 @@ class AppStrings:
     dialog_primary_data_file: str = "Файл первичных данных"
     dialog_actual_data_file: str = "Файл актуальных данных"
 
+    # --- Экспорт по филиалам и анализ импорта ---
+    dialog_export_branches_title: str = "Выбор филиалов для экспорта"
+    label_all_branches: str = "Все"
+    column_branch: str = "Филиал"
+    msg_export_no_changes: str = "Нет неэкспортированных изменений."
+    msg_export_files_done: str = "Экспорт завершён. Сформированы файлы:\n{files}"
+    progress_export_caption: str = "Формирование экспортных файлов"
+    progress_export_entity: str = "Обработка: {entity}"
+    button_apply: str = "Применить"
+    dialog_import_preview_title: str = "Анализ импортируемых изменений"
+    label_import_summary: str = (
+        "Всего записей: {total}; применится: {ok}; "
+        "требуют внимания: {warning}; отклонено: {error}"
+    )
+    column_entity: str = "Сущность"
+    column_key: str = "Ключ"
+    column_operation: str = "Операция"
+    column_status: str = "Статус"
+    column_reason: str = "Пояснение"
+    op_create: str = "Создание"
+    op_update: str = "Изменение"
+    op_delete: str = "Удаление"
+    status_ok: str = "Применится"
+    status_warning: str = "Внимание"
+    status_error: str = "Отклонено"
+    msg_import_canceled: str = "Импорт отменён пользователем."
+    msg_missing_recorded: str = "Запросов контрагенту добавлено: {count}"
+
     # --- Пакет предметной области ---
     dialog_domain_pack_save: str = "Выгрузить пакет предметной области"
     msg_pack_save_error: str = "Не удалось сохранить файл:\n{error}"
@@ -335,6 +363,15 @@ class AppStrings:
     action_reveal: str = "Расположение файла"
     action_assign_evaluation: str = "Выставить оценку"
     dialog_assign_evaluation_title: str = "Выставить оценку"
+    evaluation_mode_new_list: str = "Создать новый список оценок"
+    evaluation_mode_existing_list: str = "Привязать к существующему списку"
+    label_evaluation_list_number: str = "Номер списка"
+    label_evaluation_list_date: str = "Дата списка"
+    label_evaluation_list_filter: str = "Поиск по номеру списка"
+    msg_evaluation_list_required: str = (
+        "Выберите существующий список оценок "
+        "или переключитесь на создание нового."
+    )
     label_evaluation_value: str = "Оценка:"
     label_evaluation_date: str = "Дата выставления:"
     msg_evaluation_assigned: str = "Оценка выставлена для {count} записей."
