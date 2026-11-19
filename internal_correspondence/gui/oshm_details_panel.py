@@ -491,11 +491,18 @@ class ElementDetailsPanel(QWidget):
     def _print_panel(self) -> None:
         """Выводит панель сведений на печать."""
         printer = QPrinter(QPrinter.HighResolution)
+        # QPrintDialog с невалидным принтером падает нативно — проверяем заранее
+        if not printer.isValid():
+            QMessageBox.warning(self, STRINGS.button_print, STRINGS.msg_print_unavailable)
+            return
         dialog = QPrintDialog(printer, self)
         if dialog.exec_() != QPrintDialog.Accepted:
             return
         pixmap = self.grab()
-        painter = QPainter(printer)
+        painter = QPainter()
+        if not painter.begin(printer):
+            QMessageBox.warning(self, STRINGS.button_print, STRINGS.msg_print_unavailable)
+            return
         try:
             rect = painter.viewport()
             scaled = pixmap.scaled(

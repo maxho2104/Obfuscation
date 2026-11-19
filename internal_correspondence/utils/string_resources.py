@@ -142,6 +142,7 @@ class AppStrings:
     oshm_avatar_remove: str = "Удалить аватарку"
     msg_avatar_remove_confirm: str = "Удалить аватарку элемента?"
     oshm_avatar_placeholder: str = "Нет изображения"
+    msg_print_unavailable: str = "Печать недоступна: не найден установленный принтер"
     button_print: str = "Печать"
     oshm_chart_materials: str = "НМ"
     oshm_chart_telegrams: str = "ТГ"

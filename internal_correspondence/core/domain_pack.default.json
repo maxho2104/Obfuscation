@@ -870,6 +870,7 @@
     "oshm_avatar_remove": "Удалить аватарку",
     "msg_avatar_remove_confirm": "Удалить аватарку элемента?",
     "oshm_avatar_placeholder": "Нет изображения",
+    "msg_print_unavailable": "Печать недоступна: не найден установленный принтер",
     "button_print": "Печать",
     "oshm_chart_materials": "НМ",
     "oshm_chart_telegrams": "ТГ",
