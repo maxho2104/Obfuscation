@@ -115,7 +115,7 @@ def _create_new_tables(source_columns: Dict[str, sa.types.TypeEngine]) -> None:
             sa.ForeignKey("scientific_materials.id", ondelete="CASCADE"),
             primary_key=True,
         ),
-        sa.Column("source_id", source_pk_type, nullable=False),
+        sa.Column("source_id", source_pk_type, nullable=False, primary_key=True),
         sa.ForeignKeyConstraint(
             ["source_id"],
             ["sources_new.id"],
@@ -131,7 +131,7 @@ def _create_new_tables(source_columns: Dict[str, sa.types.TypeEngine]) -> None:
             sa.ForeignKey("telegrams.id", ondelete="CASCADE"),
             primary_key=True,
         ),
-        sa.Column("source_id", source_pk_type, nullable=False),
+        sa.Column("source_id", source_pk_type, nullable=False, primary_key=True),
         sa.ForeignKeyConstraint(
             ["source_id"],
             ["sources_new.id"],
