@@ -471,15 +471,17 @@ class ElementDetailsPanel(QWidget):
         # Диаграммы: текущий период и аналогичный период прошлого года
         self.current_chart.set_data(
             period.label,
-            stats.material_type_counts,
-            stats.telegram_type_counts,
-            stats.evaluation_counts,
+            stats.materials,
+            stats.telegrams,
+            stats.material_evaluation_counts,
+            stats.telegram_evaluation_counts,
         )
         self.previous_chart.set_data(
             shift_period_year(period, -1).label,
-            previous.material_type_counts,
-            previous.telegram_type_counts,
-            previous.evaluation_counts,
+            previous.materials,
+            previous.telegrams,
+            previous.material_evaluation_counts,
+            previous.telegram_evaluation_counts,
         )
 
     # ------------------------------------------------------------------

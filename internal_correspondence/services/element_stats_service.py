@@ -28,6 +28,9 @@ class ElementPeriodStats:
     evaluations: int = 0  # количество оцененных документов
     # распределение оценок: код значения перечисления -> количество
     evaluation_counts: Dict[int, int] = field(default_factory=dict)
+    # распределение оценок отдельно по классам документов
+    material_evaluation_counts: Dict[int, int] = field(default_factory=dict)
+    telegram_evaluation_counts: Dict[int, int] = field(default_factory=dict)
     # распределение документов по типам: код перечисления -> количество
     material_type_counts: Dict[int, int] = field(default_factory=dict)
     telegram_type_counts: Dict[int, int] = field(default_factory=dict)
@@ -151,6 +154,8 @@ class ElementStatsService:
             telegrams=telegrams_count,
             evaluations=evaluated,
             evaluation_counts=evaluation_counts,
+            material_evaluation_counts=dict(mat_counts),
+            telegram_evaluation_counts=dict(tel_counts),
             material_type_counts=mat_types,
             telegram_type_counts=tel_types,
             avg_weight=avg,

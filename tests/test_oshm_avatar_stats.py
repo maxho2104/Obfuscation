@@ -281,6 +281,78 @@ def test_details_panel_new_structure(qt_app, db_manager, element_data, tmp_path)
     dialog.deleteLater()
 
 
+def test_donut_structure_example(qt_app):
+    """Диаграмма по эскизу: мантия телеграмм/материалов + оценки с легендой."""
+    from PyQt5.QtChart import QPieSeries
+
+    from internal_correspondence.core.constants import EvaluationValue
+    from internal_correspondence.gui.oshm_element_charts import (
+        ElementDonutWidget,
+    )
+
+    widget = ElementDonutWidget()
+    widget.set_data(
+        "Июнь 2026",
+        materials=12,
+        telegrams=8,
+        material_evaluations={
+            int(EvaluationValue.IMPORTANT): 2,
+            int(EvaluationValue.USEFUL): 4,
+            int(EvaluationValue.INTERESTING): 6,
+        },
+        telegram_evaluations={
+            int(EvaluationValue.IMPORTANT): 2,
+            int(EvaluationValue.USEFUL): 4,
+            int(EvaluationValue.INTERESTING): 2,
+        },
+    )
+
+    series = widget._view.chart().series()
+    assert len(series) == 2  # мантия + внешнее кольцо
+    mantle, outer = series[0], series[1]
+    assert isinstance(mantle, QPieSeries) and isinstance(outer, QPieSeries)
+
+    # Мантия: два сектора, пропорционально количествам, с подписями
+    assert mantle.count() == 2
+    assert mantle.sum() == 20
+    labels = {s.label() for s in mantle.slices()}
+    assert any("ТЕЛЕГР." in label and "8" in label for label in labels)
+    assert any("НАУЧ." in label and "12" in label for label in labels)
+
+    # Внешнее кольцо: сектора оценок (2+4+2 телеграммы, 2+4+6 материалов)
+    assert outer.sum() == 20
+    outer_counts = sorted(int(float(s.value())) for s in outer.slices())
+    assert outer_counts == [2, 2, 2, 4, 4, 6]
+    # на секторах — только числа (названия оценок не подписываются)
+    for slice_ in outer.slices():
+        assert slice_.label().isdigit()
+
+    # Центр: «ВСЕГО 20»
+    assert "20" in widget._view._center.text()
+    assert "ВСЕГО" in widget._view._center.text()
+
+    # Легенда: три значения оценок, цветными маркерами
+    legend_texts = [
+        widget._legend_row.itemAt(i).widget().text().strip()
+        for i in range(widget._legend_row.count())
+        if widget._legend_row.itemAt(i).widget() is not None
+        and hasattr(widget._legend_row.itemAt(i).widget(), "text")
+    ]
+    assert len([t for t in legend_texts if t]) == 3  # Важно, Полезно, Интересно
+    widget.deleteLater()
+
+
+def test_donut_no_data(qt_app):
+    """Пустой период: надпись «Нет данных» и нулевой центр."""
+    from internal_correspondence.gui.oshm_element_charts import ElementDonutWidget
+
+    widget = ElementDonutWidget()
+    widget.set_data("Июнь 2026", 0, 0, {}, {})
+    assert widget._view.chart().series() == []
+    assert "0" in widget._view._center.text()
+    widget.deleteLater()
+
+
 def test_dialog_minimum_sizes(qt_app, db_manager, element_data):
     """У диалога и половин сплиттера заданы минимальные размеры."""
     from internal_correspondence.core.constants import Role

@@ -1,16 +1,21 @@
 """Диаграммы и выбор периода панели сведений об элементе ОШС."""
 
 from datetime import date
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
-from PyQt5.QtChart import QChart, QChartView, QPieSeries
+from PyQt5.QtChart import QChart, QChartView, QPieSeries, QPieSlice
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QPainter
-from PyQt5.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt5.QtGui import QColor, QPainter
+from PyQt5.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
 
-from internal_correspondence.core.domain_pack import enum_label
+from internal_correspondence.core.domain_pack import enum_label, enum_weight
 from internal_correspondence.core.enum_registry import pack_enum_display
-from internal_correspondence.gui.statistics_widget import _chart_color
 from internal_correspondence.gui.theme import current_theme
 from internal_correspondence.reports.statistics_service import (
     _MONTH_NAMES,
@@ -25,31 +30,57 @@ from internal_correspondence.reports.statistics_service import (
 )
 from internal_correspondence.utils.string_resources import STRINGS
 
-# Смещение базового цвета палитры для каждого кольца, чтобы кольца различались
-_RING_COLOR_OFFSET = (0, 2, 4)
+# Цвета слоёв диаграммы (зафиксированы, чтобы мантия и легенда читались)
+_MANTLE_COLORS = {
+    "telegrams": QColor("#9B59B6"),  # телеграммы — фиолетовый
+    "materials": QColor("#3498DB"),  # научные материалы — синий
+}
+# Цвета оценок по коду значения перечисления (Б, И, П, В)
+_EVALUATION_COLORS = (
+    QColor("#95A5A6"),  # 0 — бесполезно, серый
+    QColor("#F1C40F"),  # 1 — интересно, жёлтый
+    QColor("#2ECC71"),  # 2 — полезно, зелёный
+    QColor("#E74C3C"),  # 3 — важно, красный
+)
 
 
-class ElementDonutWidget(QChartView):
-    """Круговая диаграмма из трёх концентрических колец.
+def _evaluation_color(value: int) -> QColor:
+    """Возвращает цвет оценки по коду значения перечисления."""
+    known = (0, 1, 2, 3)
+    if value in known:
+        return _EVALUATION_COLORS[value]
+    return QColor("#BDC3C7")
 
-    Внутреннее кольцо — материалы по типам, среднее — телеграммы по типам,
-    внешнее — оценки по значениям. В центре — общее количество материалов.
-    """
+
+def _evaluation_sort_key(value: int) -> Tuple[int, int]:
+    """Сортировка оценок: по убыванию веса (В, П, И, Б)."""
+    code = pack_enum_display("evaluation_value", value)
+    weight = enum_weight("evaluation_value", code)
+    return (-weight if weight is not None else 0, value)
+
+
+class _DonutView(QChartView):
+    """Вид диаграммы с надписью в центре кольца."""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(QChart())
         self.setRenderHint(QPainter.Antialiasing)
-        self.setMinimumSize(230, 230)
         self._center = QLabel(self)
         self._center.setAlignment(Qt.AlignCenter)
         self._center.setStyleSheet(
-            "font-size: 16pt; font-weight: bold; background: transparent;"
+            "font-size: 12pt; font-weight: bold; background: transparent;"
         )
+        self._center.hide()
+
+    def set_center_text(self, text: str) -> None:
+        self._center.setText(text)
+        self._center.show()
+        self._center.raise_()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         side = min(self.width(), self.height())
-        inner = int(side * 0.45)
+        inner = int(side * 0.34)
         self._center.setGeometry(
             (self.width() - inner) // 2,
             (self.height() - inner) // 2,
@@ -57,14 +88,36 @@ class ElementDonutWidget(QChartView):
             inner,
         )
 
+
+class ElementDonutWidget(QWidget):
+    """Диаграмма показателей элемента за период.
+
+    В центре — общее количество материалов и телеграмм; «мантия» из двух
+    пропорциональных секторов (телеграммы и материалы) с подписями;
+    внешнее кольцо — сектора оценок внутри каждого класса документов
+    (числа на секторах), названия оценок — цветная легенда внизу.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._view = _DonutView()
+        self._view.setMinimumSize(230, 230)
+        layout.addWidget(self._view)
+        self._legend_row = QHBoxLayout()
+        self._legend_row.addStretch()
+        layout.addLayout(self._legend_row)
+
     def set_data(
         self,
         title: str,
-        materials: Dict[int, int],
-        telegrams: Dict[int, int],
-        evaluations: Dict[int, int],
+        materials: int,
+        telegrams: int,
+        material_evaluations: Dict[int, int],
+        telegram_evaluations: Dict[int, int],
     ) -> None:
-        """Строит диаграмму: словари «код перечисления -> количество»."""
+        """Строит диаграмму: количества документов и оценки по классам."""
         chart = QChart()
         chart.setTheme(
             QChart.ChartThemeDark
@@ -72,40 +125,80 @@ class ElementDonutWidget(QChartView):
             else QChart.ChartThemeLight
         )
         chart.setTitle(title)
-        total_materials = sum(materials.values())
-        total_all = total_materials + sum(telegrams.values()) + sum(evaluations.values())
-        if total_all == 0:
+        chart.legend().setVisible(False)
+        total = materials + telegrams
+        if total == 0:
             chart.setTitle(f"{title} — {STRINGS.chart_no_data}")
-            self.setChart(chart)
-            self._center.setText("0")
-            self._center.show()
+            self._view.setChart(chart)
+            self._view.set_center_text(f"{STRINGS.oshm_chart_total}\n0")
+            self._clear_legend()
             return
 
-        specs = (
-            (materials, 0.45, 0.0, "material_type"),
-            (telegrams, 0.70, 0.47, "telegram_type"),
-            (evaluations, 0.95, 0.72, "evaluation_value"),
-        )
-        for ring_index, (data, pie_size, hole_size, enum_name) in enumerate(specs):
-            series = QPieSeries()
-            series.setPieSize(pie_size)
-            series.setHoleSize(hole_size)
-            for item_index, (code, count) in enumerate(sorted(data.items())):
+        # «Мантия»: телеграммы и материалы, пропорционально количествам.
+        # Порядок секторов (телеграммы, затем материалы) совпадает с порядком
+        # секторов оценок во внешнем кольце — дуги согласованы.
+        mantle = QPieSeries()
+        mantle.setPieSize(0.62)
+        mantle.setHoleSize(0.34)
+        if telegrams > 0:
+            slice_ = mantle.append(f"{STRINGS.oshm_chart_telegrams} — {telegrams}", telegrams)
+            slice_.setColor(_MANTLE_COLORS["telegrams"])
+            slice_.setLabelVisible(True)
+        if materials > 0:
+            slice_ = mantle.append(f"{STRINGS.oshm_chart_materials} — {materials}", materials)
+            slice_.setColor(_MANTLE_COLORS["materials"])
+            slice_.setLabelVisible(True)
+        chart.addSeries(mantle)
+
+        # Внешнее кольцо: оценки телеграмм, затем оценки материалов
+        outer = QPieSeries()
+        outer.setPieSize(0.95)
+        outer.setHoleSize(0.64)
+        legend_values: List[int] = []
+        for evaluations in (telegram_evaluations, material_evaluations):
+            for value in sorted(evaluations, key=_evaluation_sort_key):
+                count = evaluations[value]
                 if count <= 0:
                     continue
-                short = pack_enum_display(enum_name, code)
-                label = f"{enum_label(enum_name, short)} ({count})"
-                slice_ = series.append(label, count)
-                color_index = _RING_COLOR_OFFSET[ring_index] + item_index
-                slice_.setColor(_chart_color(color_index))
-            if series.count() > 0:
-                chart.addSeries(series)
-        chart.legend().setVisible(True)
-        chart.legend().setAlignment(Qt.AlignBottom)
-        self.setChart(chart)
-        self._center.setText(str(total_materials))
-        self._center.show()
-        self._center.raise_()
+                slice_ = outer.append(str(count), count)
+                slice_.setColor(_evaluation_color(value))
+                slice_.setLabelVisible(True)
+                slice_.setLabelPosition(QPieSlice.LabelInsideHorizontal)
+                if value not in legend_values:
+                    legend_values.append(value)
+        if outer.count() > 0:
+            chart.addSeries(outer)
+
+        self._view.setChart(chart)
+        self._view.set_center_text(f"{STRINGS.oshm_chart_total}\n{total}")
+        self._build_legend(legend_values)
+
+    def _clear_legend(self) -> None:
+        while self._legend_row.count():
+            item = self._legend_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _build_legend(self, values: List[int]) -> None:
+        """Строит цветную легенду оценок внизу диаграммы."""
+        self._clear_legend()
+        first = True
+        for value in sorted(values, key=_evaluation_sort_key):
+            if not first:
+                spacer = QLabel("  ")
+                self._legend_row.addWidget(spacer)
+            first = False
+            marker = QLabel()
+            marker.setFixedSize(12, 12)
+            color = _evaluation_color(value)
+            marker.setStyleSheet(
+                f"background-color: {color.name()}; border: 1px solid #888;"
+            )
+            self._legend_row.addWidget(marker)
+            short = pack_enum_display("evaluation_value", value)
+            self._legend_row.addWidget(QLabel(enum_label("evaluation_value", short)))
+        self._legend_row.addStretch()
 
 
 class PeriodSelectorWidget(QWidget):
