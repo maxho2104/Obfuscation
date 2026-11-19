@@ -153,8 +153,6 @@ class EntityEditDialog(QDialog):
         for column in mapper.columns:
             if column.name == "change_id":
                 continue
-            if column.info.get("system"):
-                continue
             if column.primary_key and (
                 column.default is not None or column.autoincrement is True
             ):

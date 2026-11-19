@@ -1,19 +1,21 @@
 """Управление аватарками элементов ОШС.
 
-Файл аватарки хранится в директории ``Аватарки`` файлового хранилища
-(ключ ``avatars`` пакета предметной области) под уникальным именем на
-основе идентификатора элемента: ``<тип узла>_<id>.<расширение>``.
-Изображение при сохранении приводится к фиксированному размеру 150x200
-(обрезка с сохранением пропорций). Путь (имя файла) записывается в колонку
-``avatar_file`` соответствующей сущности.
+Аватарка хранится в директории ``Аватарки`` файлового хранилища
+(ключ ``avatars`` пакета предметной области) под детерминированным именем,
+однозначно определяемым данными элемента:
+``<тип узла>_<наименование>_<первые 8 символов id>.jpg``.
+Запись в базе данных не ведётся: файл находится по соглашению об именовании.
+При добавлении изображение переносится (move) из указанного места в
+хранилище и приводится к фиксированному размеру 150x200
+(обрезка с сохранением пропорций).
 """
 
+import re
+import shutil
 from pathlib import Path
 from typing import Optional, Tuple, Type
-from uuid import UUID
 
 from PIL import Image
-from sqlalchemy.orm import Session
 
 from internal_correspondence.core.domain_pack import dir_name
 from internal_correspondence.orm.models import (
@@ -32,6 +34,11 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
 
 # Модели ОШС, для которых доступны аватарки
 AVATAR_MODELS: Tuple[Type, ...] = (Branch, Department, WorkingGroup, Employee)
+
+# Длина хвоста id в имени файла (однозначность при совпадении наименований)
+_ID_TAIL_LENGTH = 8
+
+_FILE_NAME_FORBIDDEN = re.compile(r"[^\w\-]+", re.UNICODE)
 
 
 class AvatarError(Exception):
@@ -55,17 +62,36 @@ def _avatar_dir(storage_root: Path) -> Path:
     return storage_root / dir_name("avatars")
 
 
-def avatar_file_name(node_type: str, node_id: str, extension: str) -> str:
-    """Формирует уникальное имя файла аватарки на основе id элемента."""
-    ext = extension.lower()
-    if ext == ".jpeg":
-        ext = ".jpg"
-    return f"{node_type}_{node_id}{ext}"
+def _sanitize_label(label: str) -> str:
+    """Приводит человекочитаемую часть имени к допустимой в имени файла."""
+    cleaned = _FILE_NAME_FORBIDDEN.sub("_", label).strip("_")
+    return cleaned or "element"
 
 
-def avatar_path(storage_root: Path, node_type: str, node_id: str, file_name: str) -> Path:
+def avatar_label(entity, node_type: str) -> str:
+    """Возвращает человекочитаемую часть имени аватарки по данным элемента."""
+    if node_type == "employee":
+        return entity.display_name()
+    if node_type == "branch":
+        return entity.short_name or entity.id
+    return entity.name
+
+
+def avatar_file_name(entity, node_type: str) -> str:
+    """Формирует однозначно интерпретируемое имя файла аватарки.
+
+    ``<тип узла>_<наименование>_<хвост id>.jpg`` — по имени файла видно,
+    аватарка какого элемента перед нами; хвост id устраняет коллизии
+    одноимённых элементов.
+    """
+    label = _sanitize_label(avatar_label(entity, node_type))
+    id_tail = str(entity.id).replace("-", "")[:_ID_TAIL_LENGTH]
+    return f"{node_type}_{label}_{id_tail}.jpg"
+
+
+def avatar_path(storage_root: Path, entity, node_type: str) -> Path:
     """Возвращает полный путь файла аватарки в хранилище."""
-    return _avatar_dir(storage_root) / file_name
+    return _avatar_dir(storage_root) / avatar_file_name(entity, node_type)
 
 
 def _resize_cover(source: Path, target: Path) -> None:
@@ -90,23 +116,12 @@ def _resize_cover(source: Path, target: Path) -> None:
         raise AvatarError(f"Не удалось обработать изображение: {exc}") from exc
 
 
-def _entity_key(model: Type, node_id: str):
-    """Приводит строковый id узла к типу первичного ключа модели."""
-    if model is Branch:
-        return node_id
-    return UUID(node_id)
+def save_avatar(entity, node_type: str, storage_root: Path, source_path: Path) -> Path:
+    """Переносит изображение в хранилище как аватарку элемента.
 
-
-def save_avatar(
-    session: Session,
-    storage_root: Path,
-    node_type: str,
-    node_id: str,
-    source_path: Path,
-) -> str:
-    """Сохраняет аватарку элемента из файла. Возвращает имя файла."""
-    model = avatar_models_map().get(node_type)
-    if model is None:
+    Исходный файл удаляется (перенос). Возвращает путь сохранённого файла.
+    """
+    if node_type not in avatar_models_map():
         raise AvatarError(f"Аватарки не поддерживаются для узла '{node_type}'")
     extension = source_path.suffix.lower()
     if extension not in IMAGE_EXTENSIONS:
@@ -114,52 +129,23 @@ def save_avatar(
 
     target_dir = _avatar_dir(storage_root)
     target_dir.mkdir(parents=True, exist_ok=True)
-    file_name = avatar_file_name(node_type, node_id, extension)
-    target = target_dir / file_name
-    # Имя фиксировано: перед записью убираем прежний файл с другим расширением
-    remove_avatar_file(storage_root, node_type, node_id)
+    target = avatar_path(storage_root, entity, node_type)
+    source_resolved = source_path.resolve()
+    target_resolved = target.resolve()
     _resize_cover(source_path, target)
-
-    entity = session.get(model, _entity_key(model, node_id))
-    if entity is None:
-        target.unlink(missing_ok=True)
-        raise AvatarError("Элемент не найден в базе данных")
-    entity.avatar_file = file_name
-    session.commit()
-    return file_name
+    if source_resolved != target_resolved:
+        source_path.unlink(missing_ok=True)
+    return target
 
 
-def remove_avatar_file(storage_root: Path, node_type: str, node_id: str) -> None:
-    """Удаляет файл(ы) аватарки элемента из хранилища (без правки БД)."""
-    directory = _avatar_dir(storage_root)
-    if not directory.exists():
-        return
-    prefix = f"{node_type}_{node_id}."
-    for path in directory.iterdir():
-        if path.is_file() and path.name.startswith(prefix):
-            path.unlink(missing_ok=True)
-
-
-def remove_avatar(
-    session: Session, storage_root: Path, node_type: str, node_id: str
-) -> None:
-    """Удаляет аватарку элемента: файл из хранилища и запись в БД."""
-    model = avatar_models_map().get(node_type)
-    if model is None:
-        raise AvatarError(f"Аватарки не поддерживаются для узла '{node_type}'")
-    entity = session.get(model, _entity_key(model, node_id))
-    if entity is None:
-        raise AvatarError("Элемент не найден в базе данных")
-    remove_avatar_file(storage_root, node_type, node_id)
-    entity.avatar_file = None
-    session.commit()
+def remove_avatar(entity, node_type: str, storage_root: Path) -> None:
+    """Удаляет файл аватарки элемента из хранилища."""
+    avatar_path(storage_root, entity, node_type).unlink(missing_ok=True)
 
 
 def resolve_avatar(
-    storage_root: Path, node_type: str, node_id: str, file_name: Optional[str]
+    storage_root: Path, entity, node_type: str
 ) -> Optional[Path]:
     """Возвращает путь файла аватарки или None (выводится заглушка)."""
-    if not file_name:
-        return None
-    path = _avatar_dir(storage_root) / file_name
+    path = avatar_path(storage_root, entity, node_type)
     return path if path.is_file() else None

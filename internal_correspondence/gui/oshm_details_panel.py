@@ -207,17 +207,22 @@ class ElementDetailsPanel(QWidget):
         top_row.addLayout(avatar_column)
 
         center_column = QVBoxLayout()
+        title_row = QHBoxLayout()
         self.title_label = QLabel()
         title_font = self.title_label.font()
         title_font.setBold(True)
         self.title_label.setFont(title_font)
         self.title_label.setWordWrap(True)
-        center_column.addWidget(self.title_label)
-        self.coef_label = QLabel()
-        coef_font = self.coef_label.font()
+        title_row.addWidget(self.title_label, stretch=1)
+        # Коэффициент эффективности — просто цифра справа от наименования
+        self.coef_value = QLabel()
+        coef_font = self.coef_value.font()
         coef_font.setBold(True)
-        self.coef_label.setFont(coef_font)
-        center_column.addWidget(self.coef_label)
+        coef_font.setPointSize(coef_font.pointSize() + 4)
+        self.coef_value.setFont(coef_font)
+        title_row.addWidget(self.coef_value)
+        title_row.addSpacing(8)
+        center_column.addLayout(title_row)
         self.fields_layout = QFormLayout()
         center_column.addLayout(self.fields_layout)
         center_column.addStretch()
@@ -354,7 +359,7 @@ class ElementDetailsPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _avatar_entity(self):
-        """Возвращает сущность текущего узла (для чтения avatar_file)."""
+        """Возвращает сущность текущего узла (для аватарки и подписей)."""
         if self._tasks_node is None:
             return None
         node_type, node_id = self._tasks_node
@@ -369,15 +374,12 @@ class ElementDetailsPanel(QWidget):
         entity = self._avatar_entity()
         can_edit = entity is not None and self._storage_root is not None
         self.avatar_add_btn.setEnabled(can_edit)
-        self.avatar_remove_btn.setEnabled(can_edit and bool(entity.avatar_file))
+        self.avatar_remove_btn.setEnabled(can_edit)
         self.print_btn.setEnabled(self.current_node is not None)
         path = None
         if entity is not None and self._storage_root is not None:
             path = resolve_avatar(
-                self._storage_root,
-                self._tasks_node[0],
-                self._tasks_node[1],
-                entity.avatar_file,
+                self._storage_root, entity, self._tasks_node[0]
             )
         if path is not None:
             pixmap = QPixmap(str(path))
@@ -395,8 +397,11 @@ class ElementDetailsPanel(QWidget):
         self.avatar_label.setText(STRINGS.oshm_avatar_placeholder)
 
     def _add_avatar(self) -> None:
-        """Сохраняет выбранное изображение как аватарку элемента."""
+        """Переносит выбранное изображение в хранилище как аватарку элемента."""
         if self._tasks_node is None or self._storage_root is None:
+            return
+        entity = self._avatar_entity()
+        if entity is None:
             return
         path, _selected = QFileDialog.getOpenFileName(
             self, STRINGS.dialog_avatar_open, "", STRINGS.file_filter_images
@@ -404,21 +409,18 @@ class ElementDetailsPanel(QWidget):
         if not path:
             return
         try:
-            save_avatar(
-                self.session,
-                self._storage_root,
-                self._tasks_node[0],
-                self._tasks_node[1],
-                Path(path),
-            )
+            save_avatar(entity, self._tasks_node[0], self._storage_root, Path(path))
         except AvatarError as exc:
             QMessageBox.warning(self, STRINGS.oshm_avatar_add, str(exc))
             return
         self._update_avatar()
 
     def _remove_avatar(self) -> None:
-        """Удаляет аватарку элемента (файл и запись в БД)."""
+        """Удаляет аватарку элемента из хранилища."""
         if self._tasks_node is None or self._storage_root is None:
+            return
+        entity = self._avatar_entity()
+        if entity is None:
             return
         answer = QMessageBox.question(
             self,
@@ -429,13 +431,7 @@ class ElementDetailsPanel(QWidget):
         )
         if answer != QMessageBox.Yes:
             return
-        try:
-            remove_avatar(
-                self.session, self._storage_root, *self._tasks_node
-            )
-        except AvatarError as exc:
-            QMessageBox.warning(self, STRINGS.oshm_avatar_remove, str(exc))
-            return
+        remove_avatar(entity, self._tasks_node[0], self._storage_root)
         self._update_avatar()
 
     # ------------------------------------------------------------------
@@ -445,7 +441,7 @@ class ElementDetailsPanel(QWidget):
     def _refresh_stats(self, *_args) -> None:
         """Обновляет коэффициент, таблицу оценок и обе диаграммы."""
         if self._tasks_node is None:
-            self.coef_label.setText(EMPTY)
+            self.coef_value.setText(EMPTY)
             self.eval_table.setRowCount(0)
             return
         node_type, node_id = self._tasks_node
@@ -456,11 +452,9 @@ class ElementDetailsPanel(QWidget):
         previous = self._stats_service.period_stats(
             node_type, node_id, shift_period_year(period, -1)
         )
-        # Коэффициент эффективности — средняя оценка за период
-        self.coef_label.setText(
-            STRINGS.oshm_coef_label.format(value=f"{stats.avg_weight:.2f}")
-            if stats.avg_weight is not None
-            else f"{STRINGS.oshm_coef_label.format(value=EMPTY)}"
+        # Коэффициент эффективности — средняя оценка за период (только цифра)
+        self.coef_value.setText(
+            f"{stats.avg_weight:.2f}" if stats.avg_weight is not None else EMPTY
         )
         # Таблица оценок за период
         values = sorted(stats.evaluation_counts)

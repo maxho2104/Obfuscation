@@ -33,6 +33,7 @@ from internal_correspondence.services.avatar_service import (
     AVATAR_HEIGHT,
     AVATAR_WIDTH,
     AvatarError,
+    avatar_file_name,
     remove_avatar,
     resolve_avatar,
     save_avatar,
@@ -142,38 +143,41 @@ def _make_source_image(path: Path, size=(600, 400)) -> Path:
 def test_save_and_remove_avatar(db_manager, element_data, tmp_path):
     session = db_manager.get_session()
     storage = tmp_path / "storage"
-    node_id = str(element_data["employee"].id)
+    employee = session.get(Employee, element_data["employee"].id)
 
     source = _make_source_image(tmp_path / "source.png")
-    file_name = save_avatar(session, storage, "employee", node_id, source)
+    target = save_avatar(employee, "employee", storage, source)
 
-    assert file_name.startswith(f"employee_{node_id}")
-    path = storage / "Аватарки" / file_name
-    assert path.is_file()
-    with Image.open(path) as saved:
+    # Имя однозначно интерпретируется: тип, наименование, хвост id
+    name = avatar_file_name(employee, "employee")
+    assert target.name == name
+    assert name.startswith("employee_Иванов_")
+    assert target.is_file()
+    assert not source.exists()  # файл перенесён, а не скопирован
+    with Image.open(target) as saved:
         assert saved.size == (AVATAR_WIDTH, AVATAR_HEIGHT)
-    employee = session.get(Employee, element_data["employee"].id)
-    assert employee.avatar_file == file_name
 
-    remove_avatar(session, storage, "employee", node_id)
-    assert not path.exists()
-    employee = session.get(Employee, element_data["employee"].id)
-    assert employee.avatar_file is None
+    assert resolve_avatar(storage, employee, "employee") == target
+    remove_avatar(employee, "employee", storage)
+    assert not target.exists()
+    assert resolve_avatar(storage, employee, "employee") is None
 
 
 def test_resolve_avatar_missing(db_manager, element_data, tmp_path):
+    session = db_manager.get_session()
     storage = tmp_path / "storage"
-    assert resolve_avatar(storage, "employee", "1", None) is None
-    assert resolve_avatar(storage, "employee", "1", "employee_1.png") is None
+    employee = session.get(Employee, element_data["employee"].id)
+    assert resolve_avatar(storage, employee, "employee") is None
 
 
 def test_save_avatar_unsupported_format(db_manager, element_data, tmp_path):
     session = db_manager.get_session()
     storage = tmp_path / "storage"
+    employee = session.get(Employee, element_data["employee"].id)
     bad = tmp_path / "notes.txt"
     bad.write_text("не изображение", encoding="utf-8")
     with pytest.raises(AvatarError):
-        save_avatar(session, storage, "employee", str(element_data["employee"].id), bad)
+        save_avatar(employee, "employee", storage, bad)
 
 
 # ----------------------------------------------------------------------
@@ -267,9 +271,8 @@ def test_details_panel_new_structure(qt_app, db_manager, element_data, tmp_path)
     assert panel.avatar_label.width() == AVATAR_WIDTH
     assert panel.avatar_label.height() == AVATAR_HEIGHT
     assert not panel.avatar_add_btn.isEnabled() is False  # доступна
-    # Коэффициент эффективности показан (период по умолчанию — текущий месяц,
-    # поэтому за него может быть пусто — но метка присутствует)
-    assert panel.coef_label.text()
+    # Коэффициент эффективности — просто цифра справа от наименования
+    assert panel.coef_value is not None
     # Таблица оценок и две диаграммы на месте
     assert panel.eval_table.columnCount() == 2
     assert panel.current_chart is not None

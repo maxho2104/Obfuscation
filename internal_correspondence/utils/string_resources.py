@@ -135,7 +135,6 @@ class AppStrings:
     oshm_tree_workgroups: str = "Рабочие группы"
     oshm_select_branch_first: str = "Выберите филиал, в который нужно добавить отдел"
     oshm_tasks_section: str = "Назначенные задачи"
-    oshm_coef_label: str = "Коэффициент эффективности: {value}"
     oshm_eval_table_title: str = "Оценки за период"
     oshm_eval_col_value: str = "Оценка"
     oshm_eval_col_count: str = "Количество"
