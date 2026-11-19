@@ -321,6 +321,10 @@ class Branch(Base, ChangeTrackedMixin):
     id: Mapped[str] = mapped_column(String(50), primary_key=True, info={"label": "Индекс"})
     name: Mapped[str] = mapped_column(String(255), nullable=False, info={"label": "Наименование"})
     short_name: Mapped[str] = mapped_column(String(100), nullable=False, info={"label": "Сокращенное наименование", "short": "Сокращение"})
+    # Имя файла аватарки в директории «Аватарки» файлового хранилища
+    avatar_file: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, info={"label": "Аватарка", "system": True}
+    )
 
     territorial_unit_id: Mapped[str] = mapped_column(
         ForeignKey("territorial_units.id", ondelete="RESTRICT"),
@@ -482,6 +486,10 @@ class Department(Base, ChangeTrackedMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False, info={"label": "Наименование"})
     short_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Сокращенное наименование", "short": "Сокращение"})
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, info={"label": "Действительный"})
+    # Имя файла аватарки в директории «Аватарки» файлового хранилища
+    avatar_file: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, info={"label": "Аватарка", "system": True}
+    )
 
     branch_id: Mapped[str] = mapped_column(
         ForeignKey("branches.id", ondelete="CASCADE"),
@@ -526,6 +534,10 @@ class WorkingGroup(Base, ChangeTrackedMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False, info={"label": "Наименование"})
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, info={"label": "Действительная"})
+    # Имя файла аватарки в директории «Аватарки» файлового хранилища
+    avatar_file: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, info={"label": "Аватарка", "system": True}
+    )
 
     department_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("departments.id", ondelete="CASCADE"),
@@ -631,6 +643,10 @@ class Employee(Base, ChangeTrackedMixin):
     middle_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, info={"label": "Отчество"})
     position: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, info={"label": "Должность"})
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, info={"label": "Действительный"})
+    # Имя файла аватарки в директории «Аватарки» файлового хранилища
+    avatar_file: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, info={"label": "Аватарка", "system": True}
+    )
 
     academic_title_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("academic_titles.id", ondelete="SET NULL"),

@@ -1087,6 +1087,7 @@ class MainWindow(QMainWindow):
             self.db_manager.get_session(),
             branch_id=branch_id or None,
             role=self.settings.role,
+            storage_root=self.settings.storage_path_obj(),
             parent=self,
         )
         # Кнопка «Статистика» на панели сведений: диалог закрывается,

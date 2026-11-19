@@ -112,6 +112,7 @@ class OSHMDialog(QDialog):
         session,
         branch_id: Optional[str] = None,
         role: str = Role.BRANCH.value,
+        storage_root: Optional[Path] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -122,9 +123,10 @@ class OSHMDialog(QDialog):
         # но не записи о людях — сотрудников ведёт сам филиал
         self.can_edit_people = not self.is_head_office
         self.branch_id = branch_id
+        self._storage_root = storage_root
         self._active_tree: Optional[OSHMTreeWidget] = None
         self.setWindowTitle(self._window_title())
-        self.setMinimumSize(700, 600)
+        self.setMinimumSize(1040, 640)
         self._setup_ui()
         self._load_data()
 
@@ -163,15 +165,23 @@ class OSHMDialog(QDialog):
         splitter.addWidget(workgroups_widget)
 
         splitter.setSizes([350, 350])
+        splitter.setChildrenCollapsible(False)
+        structure_widget.setMinimumHeight(180)
+        workgroups_widget.setMinimumHeight(180)
 
         # Справа — выдвижная панель сведений об элементе (двойной щелчок)
-        self.details_panel = ElementDetailsPanel(self.session, self)
+        self.details_panel = ElementDetailsPanel(
+            self.session, storage_root=self._storage_root, parent=self
+        )
         self.details_panel.hide_requested.connect(self._hide_details)
         self.details_panel.edit_requested.connect(self._edit_node)
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.addWidget(splitter)
         main_splitter.addWidget(self.details_panel)
-        main_splitter.setSizes([700, 340])
+        main_splitter.setSizes([700, 620])
+        main_splitter.setChildrenCollapsible(False)
+        splitter.setMinimumWidth(360)
+        self.details_panel.setMinimumWidth(620)
         layout.addWidget(main_splitter)
         self.details_panel.hide()
 
