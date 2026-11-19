@@ -146,6 +146,7 @@ class AppStrings:
     oshm_chart_total: str = "ВСЕГО"
     oshm_chart_materials: str = "НАУЧ. МАТ."
     oshm_chart_telegrams: str = "ТЕЛЕГР."
+    oshm_chart_no_evaluation: str = "БЕЗ ОЦЕНКИ"
     dialog_avatar_open: str = "Выберите изображение"
     file_filter_images: str = "Изображения (*.png *.jpg *.jpeg *.bmp *.gif *.webp)"
     oshm_membership_history: str = "прежняя группа"

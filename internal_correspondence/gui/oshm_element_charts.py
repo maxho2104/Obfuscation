@@ -42,6 +42,8 @@ _EVALUATION_COLORS = (
     QColor("#2ECC71"),  # 2 — полезно, зелёный
     QColor("#E74C3C"),  # 3 — важно, красный
 )
+# Цвет сектора «без оценки»
+_NO_EVALUATION_COLOR = QColor("#7F8C8D")
 
 
 def _evaluation_color(value: int) -> QColor:
@@ -150,12 +152,18 @@ class ElementDonutWidget(QWidget):
             slice_.setLabelVisible(True)
         chart.addSeries(mantle)
 
-        # Внешнее кольцо: оценки телеграмм, затем оценки материалов
+        # Внешнее кольцо: оценки телеграмм, затем оценки материалов.
+        # Каждая группа секторов занимает ровно дугу своего сектора мантии:
+        # неоценённые документы закрываются сектором «без оценки».
         outer = QPieSeries()
         outer.setPieSize(0.95)
         outer.setHoleSize(0.64)
         legend_values: List[int] = []
-        for evaluations in (telegram_evaluations, material_evaluations):
+        legend_no_evaluation = False
+        for evaluations, class_total in (
+            (telegram_evaluations, telegrams),
+            (material_evaluations, materials),
+        ):
             for value in sorted(evaluations, key=_evaluation_sort_key):
                 count = evaluations[value]
                 if count <= 0:
@@ -166,12 +174,19 @@ class ElementDonutWidget(QWidget):
                 slice_.setLabelPosition(QPieSlice.LabelInsideHorizontal)
                 if value not in legend_values:
                     legend_values.append(value)
+            unevaluated = class_total - sum(evaluations.values())
+            if unevaluated > 0:
+                slice_ = outer.append(str(unevaluated), unevaluated)
+                slice_.setColor(_NO_EVALUATION_COLOR)
+                slice_.setLabelVisible(True)
+                slice_.setLabelPosition(QPieSlice.LabelInsideHorizontal)
+                legend_no_evaluation = True
         if outer.count() > 0:
             chart.addSeries(outer)
 
         self._view.setChart(chart)
         self._view.set_center_text(f"{STRINGS.oshm_chart_total}\n{total}")
-        self._build_legend(legend_values)
+        self._build_legend(legend_values, legend_no_evaluation)
 
     def _clear_legend(self) -> None:
         while self._legend_row.count():
@@ -180,7 +195,7 @@ class ElementDonutWidget(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
-    def _build_legend(self, values: List[int]) -> None:
+    def _build_legend(self, values: List[int], no_evaluation: bool) -> None:
         """Строит цветную легенду оценок внизу диаграммы."""
         self._clear_legend()
         first = True
@@ -198,6 +213,17 @@ class ElementDonutWidget(QWidget):
             self._legend_row.addWidget(marker)
             short = pack_enum_display("evaluation_value", value)
             self._legend_row.addWidget(QLabel(enum_label("evaluation_value", short)))
+        if no_evaluation:
+            if not first:
+                self._legend_row.addWidget(QLabel("  "))
+            marker = QLabel()
+            marker.setFixedSize(12, 12)
+            marker.setStyleSheet(
+                f"background-color: {_NO_EVALUATION_COLOR.name()};"
+                " border: 1px solid #888;"
+            )
+            self._legend_row.addWidget(marker)
+            self._legend_row.addWidget(QLabel(STRINGS.oshm_chart_no_evaluation))
         self._legend_row.addStretch()
 
 

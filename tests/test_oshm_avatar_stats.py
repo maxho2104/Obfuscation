@@ -319,7 +319,8 @@ def test_donut_structure_example(qt_app):
     assert any("ТЕЛЕГР." in label and "8" in label for label in labels)
     assert any("НАУЧ." in label and "12" in label for label in labels)
 
-    # Внешнее кольцо: сектора оценок (2+4+2 телеграммы, 2+4+6 материалов)
+    # Внешнее кольцо: сектора оценок, сумма равна общему количеству
+    # (неоценённые документы закрыты сектором «без оценки»)
     assert outer.sum() == 20
     outer_counts = sorted(int(float(s.value())) for s in outer.slices())
     assert outer_counts == [2, 2, 2, 4, 4, 6]
@@ -339,6 +340,37 @@ def test_donut_structure_example(qt_app):
         and hasattr(widget._legend_row.itemAt(i).widget(), "text")
     ]
     assert len([t for t in legend_texts if t]) == 3  # Важно, Полезно, Интересно
+    widget.deleteLater()
+
+
+def test_donut_unevaluated_fill_class_arcs(qt_app):
+    """Неоценённые документы закрываются сектором «без оценки»:
+    дуги внешнего кольца совпадают с секторами мантии."""
+    from internal_correspondence.core.constants import EvaluationValue
+    from internal_correspondence.gui.oshm_element_charts import ElementDonutWidget
+
+    widget = ElementDonutWidget()
+    widget.set_data(
+        "Июнь 2026",
+        materials=12,
+        telegrams=10,
+        material_evaluations={int(EvaluationValue.USEFUL): 7},
+        telegram_evaluations={int(EvaluationValue.IMPORTANT): 4},
+    )
+    series = widget._view.chart().series()
+    outer = series[1]
+    # 10 телеграмм = 4 важно + 6 без оценки; 12 материалов = 7 полезно + 5 без
+    assert outer.sum() == 22
+    outer_counts = sorted(int(float(s.value())) for s in outer.slices())
+    assert outer_counts == [4, 5, 6, 7]
+    # «без оценки» в легенде
+    legend_texts = [
+        widget._legend_row.itemAt(i).widget().text().strip()
+        for i in range(widget._legend_row.count())
+        if widget._legend_row.itemAt(i).widget() is not None
+        and hasattr(widget._legend_row.itemAt(i).widget(), "text")
+    ]
+    assert any("БЕЗ ОЦЕНКИ" in t for t in legend_texts)
     widget.deleteLater()
 
 
