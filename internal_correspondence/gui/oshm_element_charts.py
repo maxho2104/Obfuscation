@@ -37,13 +37,16 @@ _MANTLE_COLORS = {
 }
 # Цвета оценок по коду значения перечисления (Б, И, П, В)
 _EVALUATION_COLORS = (
-    QColor("#95A5A6"),  # 0 — бесполезно, серый
-    QColor("#F1C40F"),  # 1 — интересно, жёлтый
-    QColor("#2ECC71"),  # 2 — полезно, зелёный
-    QColor("#E74C3C"),  # 3 — важно, красный
+    QColor("#E74C3C"),  # 0 — бесполезно, красный
+    QColor("#E67E22"),  # 1 — интересно, оранжевый
+    QColor("#F1C40F"),  # 2 — полезно, жёлтый
+    QColor("#2ECC71"),  # 3 — важно, зелёный
 )
 # Цвет сектора «без оценки»
-_NO_EVALUATION_COLOR = QColor("#7F8C8D")
+_NO_EVALUATION_COLOR = QColor("#95A5A6")
+
+# Цвет подписей на секторах
+_LABEL_COLOR = Qt.black
 
 
 def _evaluation_color(value: int) -> QColor:
@@ -70,7 +73,8 @@ class _DonutView(QChartView):
         self._center = QLabel(self)
         self._center.setAlignment(Qt.AlignCenter)
         self._center.setStyleSheet(
-            "font-size: 12pt; font-weight: bold; background: transparent;"
+            "font-size: 16pt; font-weight: bold; color: black;"
+            " background: transparent;"
         )
         self._center.hide()
 
@@ -132,7 +136,7 @@ class ElementDonutWidget(QWidget):
         if total == 0:
             chart.setTitle(f"{title} — {STRINGS.chart_no_data}")
             self._view.setChart(chart)
-            self._view.set_center_text(f"{STRINGS.oshm_chart_total}\n0")
+            self._view.set_center_text("0")
             self._clear_legend()
             return
 
@@ -146,10 +150,14 @@ class ElementDonutWidget(QWidget):
             slice_ = mantle.append(f"{STRINGS.oshm_chart_telegrams} — {telegrams}", telegrams)
             slice_.setColor(_MANTLE_COLORS["telegrams"])
             slice_.setLabelVisible(True)
+            slice_.setLabelPosition(QPieSlice.LabelInsideHorizontal)
+            slice_.setLabelColor(_LABEL_COLOR)
         if materials > 0:
             slice_ = mantle.append(f"{STRINGS.oshm_chart_materials} — {materials}", materials)
             slice_.setColor(_MANTLE_COLORS["materials"])
             slice_.setLabelVisible(True)
+            slice_.setLabelPosition(QPieSlice.LabelInsideHorizontal)
+            slice_.setLabelColor(_LABEL_COLOR)
         chart.addSeries(mantle)
 
         # Внешнее кольцо: оценки телеграмм, затем оценки материалов.
@@ -172,6 +180,7 @@ class ElementDonutWidget(QWidget):
                 slice_.setColor(_evaluation_color(value))
                 slice_.setLabelVisible(True)
                 slice_.setLabelPosition(QPieSlice.LabelInsideHorizontal)
+                slice_.setLabelColor(_LABEL_COLOR)
                 if value not in legend_values:
                     legend_values.append(value)
             unevaluated = class_total - sum(evaluations.values())
@@ -180,12 +189,13 @@ class ElementDonutWidget(QWidget):
                 slice_.setColor(_NO_EVALUATION_COLOR)
                 slice_.setLabelVisible(True)
                 slice_.setLabelPosition(QPieSlice.LabelInsideHorizontal)
+                slice_.setLabelColor(_LABEL_COLOR)
                 legend_no_evaluation = True
         if outer.count() > 0:
             chart.addSeries(outer)
 
         self._view.setChart(chart)
-        self._view.set_center_text(f"{STRINGS.oshm_chart_total}\n{total}")
+        self._view.set_center_text(str(total))
         self._build_legend(legend_values, legend_no_evaluation)
 
     def _clear_legend(self) -> None:

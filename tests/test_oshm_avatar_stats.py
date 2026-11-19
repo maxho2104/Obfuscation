@@ -316,8 +316,8 @@ def test_donut_structure_example(qt_app):
     assert mantle.count() == 2
     assert mantle.sum() == 20
     labels = {s.label() for s in mantle.slices()}
-    assert any("ТЕЛЕГР." in label and "8" in label for label in labels)
-    assert any("НАУЧ." in label and "12" in label for label in labels)
+    assert any("ТГ" in label and "8" in label for label in labels)
+    assert any("НМ" in label and "12" in label for label in labels)
 
     # Внешнее кольцо: сектора оценок, сумма равна общему количеству
     # (неоценённые документы закрыты сектором «без оценки»)
@@ -328,9 +328,8 @@ def test_donut_structure_example(qt_app):
     for slice_ in outer.slices():
         assert slice_.label().isdigit()
 
-    # Центр: «ВСЕГО 20»
-    assert "20" in widget._view._center.text()
-    assert "ВСЕГО" in widget._view._center.text()
+    # Центр: только число
+    assert widget._view._center.text() == "20"
 
     # Легенда: три значения оценок, цветными маркерами
     legend_texts = [
