@@ -26,6 +26,7 @@ from internal_correspondence.gui.entity_edit_dialog import EntityEditDialog
 from internal_correspondence.orm.labels import field_unique
 from internal_correspondence.orm.models import (
     Branch,
+    Country,
     Leader,
     ReportAddress,
     ScientificMaterial,
@@ -249,6 +250,53 @@ def test_format_report_addresses() -> None:
     first = ReportAddress(leader_id="L2", report_date=date(2026, 3, 5))
     second = ReportAddress(leader_id="L1", report_date=None)
     assert format_report_addresses([first, second]) == "L1, L2+"
+
+
+# ---------------------------------------------------------------------------
+# Алфавитный порядок многие-ко-многим
+# ---------------------------------------------------------------------------
+
+
+def test_many_to_many_list_sorted_alphabetically(qapp, db_manager) -> None:
+    """Список выбранных значений N→N отображается в алфавитном порядке."""
+    from internal_correspondence.gui.edit_elements import ManyToManyEditElement
+
+    with db_manager.get_session() as session:
+        element = ManyToManyEditElement(ScientificMaterial.countries, session)
+        element.set_value(
+            [
+                Country(id="C2", name="Япония"),
+                Country(id="C1", name="Австралия"),
+                Country(id="C3", name="Болгария"),
+            ]
+        )
+        texts = [
+            element.list_widget.item(row).text()
+            for row in range(element.list_widget.count())
+        ]
+        assert texts == ["Австралия", "Болгария", "Япония"]
+
+
+def test_items_picker_sorted_alphabetically(qapp, db_manager) -> None:
+    """Диалог выбора значений («+») показывает записи в алфавитном порядке."""
+    from internal_correspondence.gui.edit_elements import ItemsPickerDialog
+
+    with db_manager.get_session() as session:
+        session.add_all(
+            [
+                Country(id="C2", name="Япония"),
+                Country(id="C1", name="Австралия"),
+                Country(id="C3", name="Болгария"),
+            ]
+        )
+        session.commit()
+        dialog = ItemsPickerDialog(session, Country)
+        texts = [
+            dialog.list_widget.item(row).text()
+            for row in range(dialog.list_widget.count())
+        ]
+        dialog.deleteLater()
+        assert texts == ["Австралия", "Болгария", "Япония"]
 
 
 # ---------------------------------------------------------------------------

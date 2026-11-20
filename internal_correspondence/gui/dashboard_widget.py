@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import calendar
 from datetime import date
+from pathlib import Path
 from typing import List, Optional
 
 from PyQt5.QtChart import (
@@ -34,6 +35,7 @@ from PyQt5.QtWidgets import (
 )
 
 from internal_correspondence.core.constants import Role
+from internal_correspondence.gui.imported_files_widget import ImportedFilesWidget
 from internal_correspondence.reports.dashboard_service import (
     DashboardData,
     DashboardFilter,
@@ -143,6 +145,7 @@ class DashboardWidget(QWidget):
         session,
         role: str,
         branch_id: Optional[str] = None,
+        storage_root: Optional[Path] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -153,6 +156,7 @@ class DashboardWidget(QWidget):
         self.data: Optional[DashboardData] = None
         self._updating = False
         self._types_kind = "material"
+        self._storage_root = Path(storage_root) if storage_root is not None else None
 
         self._build_ui()
         self._reload_filters()
@@ -296,6 +300,13 @@ class DashboardWidget(QWidget):
 
         bottom.addWidget(recent_box, 2)
         bottom.addWidget(attention_box, 1)
+        if self._storage_root is not None:
+            self.imported_files = ImportedFilesWidget(
+                self.session, self._storage_root
+            )
+            bottom.addWidget(self.imported_files, 1)
+        else:
+            self.imported_files = None
         self.content_layout.addLayout(bottom)
         self.content_layout.addStretch(1)
 
@@ -400,6 +411,8 @@ class DashboardWidget(QWidget):
         self._render_charts()
         self._render_recent()
         self._render_attention()
+        if self.imported_files is not None:
+            self.imported_files.refresh()
 
     def _render_kpi(self) -> None:
         if self.data is None:

@@ -1,12 +1,13 @@
 """Модель фильтрации записей таблиц."""
 
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, List, Optional, Set, Tuple
 
-from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric, Uuid
 from sqlalchemy import inspect as sa_inspect
 
 from internal_correspondence.core.enum_registry import (
@@ -46,6 +47,22 @@ NULL_OPERATORS: List[Tuple[str, str]] = [
 # Мультивыбор значений пакетного перечисления
 ENUM_OPERATORS: List[Tuple[str, str]] = [("in", STRINGS.filter_op_in)]
 
+# Мультивыбор связанных записей (поля «многие ко многим»)
+M2M_OPERATORS: List[Tuple[str, str]] = [("in", STRINGS.filter_op_m2m_in)]
+
+# Колонки таблиц документов, отображающие связи N→N (прямые или вычисляемые);
+# фильтруются мультивыбором связанных записей, а не текстовыми условиями
+M2M_COLUMN_NAMES = {
+    "countries",
+    "tasks",
+    "tasks_display",
+    "employees",
+    "report_addresses",
+    "participating_employees",
+    "participating_departments",
+    "participating_workgroups",
+}
+
 OPERATOR_LABELS = dict(
     TEXT_OPERATORS + COMPARISON_OPERATORS + BOOL_OPERATORS + NULL_OPERATORS + ENUM_OPERATORS
 )
@@ -62,6 +79,8 @@ def operators_for(value_type: str, nullable: bool = False) -> List[Tuple[str, st
         operators = list(BOOL_OPERATORS)
     elif value_type == "enum":
         operators = list(ENUM_OPERATORS)
+    elif value_type == "m2m":
+        operators = list(M2M_OPERATORS)
     else:
         operators = list(COMPARISON_OPERATORS)
     if nullable:
@@ -86,7 +105,13 @@ def _resolve_column(model_class: type, column_name: str):
 
 
 def resolve_value_type(model_class: type, column_name: str) -> str:
-    """Определяет тип значения колонки ORM-модели, включая вложенные связи."""
+    """Определяет тип значения колонки ORM-модели, включая вложенные связи.
+
+    Колонки-связи N→N (прямые и вычисляемые участники) распознаются
+    по имени и фильтруются мультивыбором связанных записей.
+    """
+    if column_name in M2M_COLUMN_NAMES:
+        return "m2m"
     column = _resolve_column(model_class, column_name)
     if column is None:
         return "text"
@@ -118,6 +143,50 @@ def resolve_pack_enum(model_class: type, column_name: str) -> Optional[str]:
     if column is None or not isinstance(column.type, IntEnumType):
         return None
     return pack_key_for_enum_class(column.type._enum_class.__name__)
+
+
+def parse_id_list(value: str) -> List[str]:
+    """Разбирает список идентификаторов связанных записей из строки условия."""
+    return [part.strip() for part in (value or "").split(",") if part.strip()]
+
+
+def coerce_filter_ids(model_class: type, raw_ids: List[str]) -> List[Any]:
+    """Приводит строковые идентификаторы к типу первичного ключа сущности.
+
+    Для UUID-ключей недопустимые значения отбрасываются; строковые ключи
+    (справочники) передаются как есть.
+    """
+    pk = sa_inspect(model_class).primary_key[0]
+    if isinstance(pk.type, Uuid):
+        result = []
+        for raw in raw_ids:
+            try:
+                result.append(uuid.UUID(raw))
+            except (ValueError, AttributeError, TypeError):
+                continue
+        return result
+    return list(raw_ids)
+
+
+def m2m_actual_keys(actual: Any) -> Set[str]:
+    """Возвращает строковые ключи связанных записей значения N→N.
+
+    Ключ извлекается из атрибута ``id`` (обычные связи) или ``leader_id``
+    (адресация доклада); неподходящие элементы пропускаются.
+    """
+    if actual is None:
+        return set()
+    if isinstance(actual, str):
+        # Строковое представление (коды через запятую, как в tasks_display)
+        return set(parse_id_list(actual))
+    keys = set()
+    for item in actual:
+        key = getattr(item, "id", None)
+        if key is None:
+            key = getattr(item, "leader_id", None)
+        if key is not None:
+            keys.add(str(key))
+    return keys
 
 
 def format_filter_value(
@@ -215,14 +284,29 @@ class FilterCondition:
     value: str
 
     def describe(
-        self, header: str, value_type: str, pack_enum: Optional[str] = None
+        self,
+        header: str,
+        value_type: str,
+        pack_enum: Optional[str] = None,
+        value_label: Optional[str] = None,
     ) -> str:
-        """Возвращает читаемое описание условия."""
-        label = OPERATOR_LABELS.get(self.operator, self.operator)
+        """Возвращает читаемое описание условия.
+
+        ``value_label`` — готовое отображение значения (имена связанных
+        записей для полей N→N); без него значение форматируется из строки.
+        """
+        if value_type == "m2m":
+            label = M2M_OPERATORS[0][1]
+        else:
+            label = OPERATOR_LABELS.get(self.operator, self.operator)
         if self.operator in ("empty", "not_empty"):
             return f"{header} {label}"
-        formatted = format_filter_value(self.value, value_type, pack_enum)
-        if value_type in ("text", "enum"):
+        formatted = (
+            value_label
+            if value_label is not None
+            else format_filter_value(self.value, value_type, pack_enum)
+        )
+        if value_type in ("text", "enum", "m2m"):
             return f"{header} {label} «{formatted}»"
         return f"{header} {label} {formatted}"
 
@@ -231,6 +315,14 @@ class FilterCondition:
         if self.operator in ("empty", "not_empty"):
             is_empty = actual is None or actual == ""
             return is_empty if self.operator == "empty" else not is_empty
+
+        if value_type == "m2m":
+            if self.operator != "in":
+                return True
+            expected = set(parse_id_list(self.value))
+            if not expected:
+                return False
+            return bool(m2m_actual_keys(actual) & expected)
 
         if value_type == "enum":
             if self.operator != "in":

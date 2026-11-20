@@ -4,6 +4,9 @@
   (головной офис): список с флажками и общий флажок «Все»;
 - ``ExportWorker`` — формирование архивов в отдельном потоке с сигналами
   прогресса; сессия БД создаётся внутри потока;
+- ``ImportWorker`` — применение импортируемого архива в отдельном потоке
+  с сигналами прогресса; анализ архива и выбор записей выполняются
+  в GUI-потоке до запуска воркера (``ImportPreviewDialog``);
 - ``ImportPreviewDialog`` — анализ импортируемых изменений с цветовой
   маркировкой применимости: зелёный — применится сразу, жёлтый — не
   применится, но стоит обратить внимание, красный — отклонено.
@@ -30,6 +33,7 @@ from PyQt5.QtWidgets import (
 from internal_correspondence.core.constants import Role
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.importexport.export_service import ExportService
+from internal_correspondence.importexport.import_service import ImportService
 from internal_correspondence.orm.models import Branch
 from internal_correspondence.utils.string_resources import STRINGS
 
@@ -160,6 +164,66 @@ class ExportWorker(QObject):
                 outputs = [service.export_branch()]
             session.commit()
             self.succeeded.emit([str(path) for path in outputs])
+        except Exception as exc:  # pylint: disable=broad-except
+            session.rollback()
+            self.failed.emit(str(exc))
+        finally:
+            session.close()
+
+
+class ImportWorker(QObject):
+    """Применяет импортируемый архив в отдельном потоке.
+
+    Сессия БД создаётся внутри потока: объект сессии SQLAlchemy нельзя
+    использовать из потока, отличного от породившего. Анализ архива и
+    подтверждение записей выполняются в GUI-потоке до запуска воркера.
+    """
+
+    progressed = pyqtSignal(int, int, str)  # готово, всего, пояснение
+    succeeded = pyqtSignal(object)          # {"result": ..., "recorded": int}
+    failed = pyqtSignal(str)                # текст ошибки
+
+    def __init__(
+        self,
+        db_manager: DatabaseManager,
+        storage_root: Path,
+        role: str,
+        branch_id: Optional[str],
+        archive_path: Path,
+        exclude: Set[Tuple[str, str]],
+        rejected_entries: Sequence[Dict[str, Any]],
+    ) -> None:
+        super().__init__()
+        self._db_manager = db_manager
+        self._storage_root = storage_root
+        self._role = role
+        self._branch_id = branch_id
+        self._archive_path = archive_path
+        self._exclude = set(exclude)
+        self._rejected_entries = list(rejected_entries)
+
+    @pyqtSlot()
+    def run(self) -> None:
+        """Выполняет импорт и публикует результат сигналами."""
+        session = self._db_manager.get_session()
+        try:
+            service = ImportService(
+                session,
+                self._storage_root,
+                self._role,
+                self._branch_id,
+                progress_cb=lambda current, total, entity: self.progressed.emit(
+                    current,
+                    total,
+                    STRINGS.progress_import_entry.format(
+                        current=current, total=total, entity=entity
+                    ),
+                ),
+            )
+            result = service.import_archive(self._archive_path, exclude=self._exclude)
+            recorded = service.record_missing_requests(self._rejected_entries)
+            session.commit()
+            self.succeeded.emit({"result": result, "recorded": recorded})
         except Exception as exc:  # pylint: disable=broad-except
             session.rollback()
             self.failed.emit(str(exc))

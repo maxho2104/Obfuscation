@@ -46,6 +46,11 @@ class AppSettings:
     material_column_widths: str = ""
     telegram_column_widths: str = ""
 
+    # Сортировка таблиц документов: «колонка» (по возрастанию) или
+    # «колонка:desc» (по убыванию); пусто — сортировка не задана
+    material_sort: str = ""
+    telegram_sort: str = ""
+
     # Применённые фильтры таблиц документов (JSON, см. gui/filter_model)
     material_filters: str = ""
     telegram_filters: str = ""

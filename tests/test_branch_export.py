@@ -570,3 +570,129 @@ def test_import_preview_dialog_renders_entries() -> None:
         ("Telegram", "pk-3"),
     }
     dialog.close()
+
+
+def test_import_archive_reports_progress(db_manager: DatabaseManager, tmp_path: Path) -> None:
+    """Импорт сообщает о прогрессе: по одному сигналу на каждую запись пакета."""
+    storage = _storage(tmp_path)
+    with db_manager.get_session() as session:
+        session.add(TerritorialUnit(id="MSK", name="Москва"))
+        session.add(
+            Branch(id="FIL001", name="Филиал", short_name="Ф-1", territorial_unit_id="MSK")
+        )
+        session.commit()
+
+        payload = {
+            "TerritorialUnit": {
+                "MSK": {"name": "Москва (уточнено)"},
+            },
+            "ScientificMaterial": {
+                str(uuid.uuid4()): {
+                    "type": 0,
+                    "outgoing_number": "1",
+                    "outgoing_date": "2026-01-01",
+                    "name": "Новый",
+                    "branch_id": "FIL001",
+                },
+                str(uuid.uuid4()): {"deleted": True},
+            },
+        }
+        archive = _write_archive(tmp_path / "incoming.zip", payload)
+
+        calls = []
+        service = ImportService(
+            session,
+            storage,
+            Role.HEAD_OFFICE.value,
+            progress_cb=lambda current, total, entity: calls.append(
+                (current, total, entity)
+            ),
+        )
+        result = service.import_archive(archive)
+        session.commit()
+
+        total_records = sum(len(entries) for entries in payload.values())
+        assert len(calls) == total_records
+        assert calls[0][0] == 1 and calls[-1][0] == total_records
+        assert all(call[1] == total_records for call in calls)
+        # Пояснение — имя сущности обрабатываемой записи
+        assert calls[0][2] == "TerritorialUnit"
+        assert {call[2] for call in calls[1:]} == {"ScientificMaterial"}
+        assert result["imported"] == 2  # update ТУ + create материала
+
+        # Без обработчика импорт работает как раньше
+        second = _write_archive(
+            tmp_path / "incoming2.zip",
+            {
+                "ScientificMaterial": {
+                    str(uuid.uuid4()): {
+                        "type": 0,
+                        "outgoing_number": "2",
+                        "outgoing_date": "2026-01-02",
+                        "name": "Ещё один",
+                        "branch_id": "FIL001",
+                    },
+                },
+            },
+        )
+        service = ImportService(session, storage, Role.HEAD_OFFICE.value)
+        result = service.import_archive(second)
+        session.commit()
+        assert result["imported"] == 1
+
+
+def test_import_writes_manifest_of_restored_files(
+    db_manager: DatabaseManager, tmp_path: Path
+) -> None:
+    """Импорт сохраняет манифест файлов, восстановленных в хранилище."""
+    from internal_correspondence.importexport.import_service import (
+        LAST_IMPORT_MANIFEST,
+        read_import_manifest,
+    )
+
+    storage = _storage(tmp_path)
+    file_id = uuid.uuid4()
+    archive = tmp_path / "with_files.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("export.json", json.dumps({"Branch": {}}))
+        zf.writestr(f"files/{file_id}/report.txt", "содержимое")
+
+    with db_manager.get_session() as session:
+        service = ImportService(session, storage, Role.HEAD_OFFICE.value)
+        result = service.import_archive(archive)
+        session.commit()
+
+    assert len(result["files"]) == 1
+    relative = result["files"][0]
+    assert (storage / relative).read_text(encoding="utf-8") == "содержимое"
+    # Манифест перечитывается и содержит тот же относительный путь
+    assert read_import_manifest(storage) == [relative]
+    assert (storage / LAST_IMPORT_MANIFEST).exists()
+
+
+def test_import_removes_tmp_import_directory(
+    db_manager: DatabaseManager, tmp_path: Path
+) -> None:
+    """После анализа и импорта временная папка tmp_import не остаётся в хранилище."""
+    storage = _storage(tmp_path)
+    # Остатки прерванного прошлого запуска
+    stale = storage / "tmp_import" / "stale-session"
+    stale.mkdir(parents=True)
+    (stale / "leftover.txt").write_text("мусор", encoding="utf-8")
+
+    with db_manager.get_session() as session:
+        session.add(TerritorialUnit(id="MSK", name="Москва"))
+        session.commit()
+        archive = _write_archive(
+            tmp_path / "incoming.zip",
+            {"TerritorialUnit": {"MSK": {"name": "Москва (уточнено)"}}},
+        )
+        service = ImportService(session, storage, Role.HEAD_OFFICE.value)
+
+        service.analyze_archive(archive)
+        assert (storage / "tmp_import").exists() is False
+        assert stale.exists() is False  # остатки прошлых запусков тоже удалены
+
+        service.import_archive(archive)
+        session.commit()
+        assert (storage / "tmp_import").exists() is False
