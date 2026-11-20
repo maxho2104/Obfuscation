@@ -458,7 +458,10 @@ class FkComboEditElement(EditElement):
 
 
 class ItemsPickerDialog(QDialog):
-    """Диалог выбора записей связанной сущности (мультивыбор и фильтрация)."""
+    """Диалог выбора записей связанной сущности (мультивыбор и фильтрация).
+
+    Список отображается в алфавитном порядке отображаемых значений.
+    """
 
     def __init__(
         self,
@@ -502,7 +505,7 @@ class ItemsPickerDialog(QDialog):
             pk = sa_inspect(model_class).primary_key[0].name
             query = query.filter(getattr(model_class, pk).notin_(list(excluded_ids)))
         self.list_widget.clear()
-        for instance in query.all():
+        for instance in self._ordered_instances(query.all()):
             text = self._item_text(instance)
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, getattr(instance, "id"))
@@ -521,6 +524,11 @@ class ItemsPickerDialog(QDialog):
                 text = f"{text} (неактивен)"
             return text
         return display_name(instance)
+
+    @classmethod
+    def _ordered_instances(cls, instances: Sequence) -> List[Any]:
+        """Возвращает записи в алфавитном порядке отображаемых значений."""
+        return sorted(instances, key=lambda instance: cls._item_text(instance).casefold())
 
     def _apply_filter(self, text: str) -> None:
         needle = text.strip().lower()
@@ -543,7 +551,8 @@ class ManyToManyEditElement(EditElement):
 
     По нажатию «+» открывается диалог с записями, которые ещё можно
     добавить (без уже добавленных, с мультивыбором и фильтрацией);
-    по нажатию «−» выбранные в списке записи удаляются.
+    по нажатию «−» выбранные в списке записи удаляются. Список выбранных
+    записей отображается в алфавитном порядке отображаемых значений.
     """
 
     def __init__(
@@ -609,7 +618,7 @@ class ManyToManyEditElement(EditElement):
 
     def _refresh_list(self) -> None:
         self.list_widget.clear()
-        for instance in self._items:
+        for instance in ItemsPickerDialog._ordered_instances(self._items):
             item = QListWidgetItem(ItemsPickerDialog._item_text(instance))
             item.setData(Qt.UserRole, getattr(instance, "id"))
             self.list_widget.addItem(item)

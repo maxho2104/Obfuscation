@@ -6,7 +6,7 @@ import uuid
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric, Uuid
 from sqlalchemy.orm import Session
@@ -44,6 +44,34 @@ logger = get_logger("import_service")
 # Служебные поля, которые не импортируются из JSON
 _SERVICE_FIELDS = {"change_id"}
 
+# Обработчик прогресса: (готово, всего, имя сущности текущей записи)
+ProgressCallback = Optional[Callable[[int, int, str], None]]
+
+# Имя манифеста файлов, восстановленных последней операцией импорта
+# (хранится в корне файлового хранилища, пути — относительные, POSIX)
+LAST_IMPORT_MANIFEST = "last_import_files.json"
+
+
+def read_import_manifest(storage_root: Path) -> List[str]:
+    """Возвращает относительные пути файлов последнего импорта; [] — нет манифеста."""
+    manifest_path = storage_root / LAST_IMPORT_MANIFEST
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item) for item in data]
+
+
+def write_import_manifest(storage_root: Path, relative_paths: List[str]) -> None:
+    """Записывает манифест файлов последнего импорта в корень хранилища."""
+    manifest_path = storage_root / LAST_IMPORT_MANIFEST
+    manifest_path.write_text(
+        json.dumps(list(relative_paths), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
 
 class ImportService:
     """Разбирает экспортный ZIP-архив и применяет изменения к локальной БД."""
@@ -54,11 +82,13 @@ class ImportService:
         storage_root: Path,
         role: str,
         branch_id: Optional[str] = None,
+        progress_cb: ProgressCallback = None,
     ) -> None:
         self.session = session
         self.storage_root = storage_root
         self.role = role
         self.branch_id = branch_id
+        self.progress_cb = progress_cb
         self.conflicts: List[Dict[str, Any]] = []
         self._exclude: Set[Tuple[str, str]] = set()
         self._payload: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -84,7 +114,7 @@ class ImportService:
         """
         self.conflicts.clear()
         self._exclude = set(exclude or ())
-        extract_dir = self.storage_root / "tmp_import" / uuid.uuid4().hex
+        extract_dir = self._prepare_extract_dir()
         try:
             with zipfile.ZipFile(archive_path, "r") as zf:
                 zf.extractall(extract_dir)
@@ -102,8 +132,9 @@ class ImportService:
             warnings = self._check_pack_compatibility(extract_dir)
 
             stats = self._apply_payload(export_data)
-            self._extract_files(extract_dir)
+            imported_files = self._extract_files(extract_dir)
             self.session.commit()
+            write_import_manifest(self.storage_root, imported_files)
 
             return {
                 "imported": stats["imported"],
@@ -111,10 +142,34 @@ class ImportService:
                 "skipped": stats["skipped"],
                 "conflicts": self.conflicts,
                 "warnings": warnings,
+                "files": imported_files,
             }
         finally:
             self._exclude = set()
-            shutil.rmtree(extract_dir, ignore_errors=True)
+            self._cleanup_extract_dir(extract_dir)
+
+    # --- временная директория распаковки ---
+
+    def _prepare_extract_dir(self) -> Path:
+        """Создаёт чистую временную директорию распаковки архива.
+
+        Перед созданием удаляет остатки прошлых запусков (в т.ч.
+        прерванных): в хранилище не должно копиться мусорное дерево.
+        """
+        tmp_root = self.storage_root / "tmp_import"
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        extract_dir = tmp_root / uuid.uuid4().hex
+        extract_dir.mkdir(parents=True)
+        return extract_dir
+
+    @staticmethod
+    def _cleanup_extract_dir(extract_dir: Path) -> None:
+        """Удаляет временную директорию распаковки и пустой корень tmp_import."""
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        try:
+            extract_dir.parent.rmdir()  # только если пуст (чужие распаковки не трогаем)
+        except OSError:
+            pass
 
     # --- анализ архива перед применением ---
 
@@ -130,7 +185,7 @@ class ImportService:
             записи, при создании пропущено обязательное поле, неизвестная
             сущность, не найдены зависимости).
         """
-        extract_dir = self.storage_root / "tmp_import" / uuid.uuid4().hex
+        extract_dir = self._prepare_extract_dir()
         try:
             with zipfile.ZipFile(archive_path, "r") as zf:
                 zf.extractall(extract_dir)
@@ -171,7 +226,7 @@ class ImportService:
                     )
             return {"entries": entries, "warnings": warnings}
         finally:
-            shutil.rmtree(extract_dir, ignore_errors=True)
+            self._cleanup_extract_dir(extract_dir)
 
     def _analyze_entry(
         self,
@@ -381,22 +436,33 @@ class ImportService:
         stats = {"imported": 0, "deleted": 0, "skipped": 0}
         deletions: List[Tuple[str, str]] = []
 
+        planned: List[Tuple[str, str, Dict[str, Any]]] = []
         for entity_name, entries in self._payload.items():
             for pk_key, fields in entries.items():
-                if (entity_name, pk_key) in self._exclude:
-                    stats["skipped"] += 1
-                    continue
-                if fields.get("deleted"):
-                    deletions.append((entity_name, pk_key))
-                    continue
-                status = self._apply_entry(entity_name, pk_key, fields, frozenset())
-                stats[status] += 1
+                planned.append((entity_name, pk_key, fields))
+
+        total = len(planned)
+        for index, (entity_name, pk_key, fields) in enumerate(planned, start=1):
+            self._progress(index, total, entity_name)
+            if (entity_name, pk_key) in self._exclude:
+                stats["skipped"] += 1
+                continue
+            if fields.get("deleted"):
+                deletions.append((entity_name, pk_key))
+                continue
+            status = self._apply_entry(entity_name, pk_key, fields, frozenset())
+            stats[status] += 1
 
         for entity_name, pk_key in deletions:
             status = self._delete_entry(entity_name, pk_key)
             stats[status] += 1
 
         return stats
+
+    def _progress(self, current: int, total: int, entity_name: str) -> None:
+        """Сообщает о ходе применения записей (если задан обработчик прогресса)."""
+        if self.progress_cb is not None:
+            self.progress_cb(current, total, entity_name)
 
     def _apply_entry(
         self,
@@ -837,15 +903,18 @@ class ImportService:
             return "_".join(str(item) for item in value)
         return str(value)
 
-    def _extract_files(self, extract_dir: Path) -> None:
+    def _extract_files(self, extract_dir: Path) -> List[str]:
         """Восстанавливает прикреплённые файлы в файловом хранилище.
 
         Файл размещается по пути из импортированной записи ``FileRecord``,
         чтобы ссылки на вложения в БД оставались действительными.
+        Возвращает относительные (к корню хранилища) пути восстановленных
+        файлов для манифеста последнего импорта.
         """
+        restored: List[str] = []
         files_dir = extract_dir / "files"
         if not files_dir.exists():
-            return
+            return restored
         storage_root = self.storage_root.resolve()
         for file_dir in files_dir.iterdir():
             if not file_dir.is_dir():
@@ -872,7 +941,13 @@ class ImportService:
 
                 target_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_file, target_dir / target_name)
+                target = (target_dir / target_name).resolve()
+                try:
+                    restored.append(target.relative_to(storage_root).as_posix())
+                except ValueError:
+                    restored.append(str(target))
                 logger.debug("Восстановлен файл %s", target_dir / target_name)
+        return restored
 
 
 class ImportError(Exception):

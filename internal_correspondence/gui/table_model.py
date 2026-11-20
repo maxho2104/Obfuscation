@@ -23,6 +23,14 @@ class ColumnDef:
 
     Если заголовок не указан, он подставляется из русскоязычных меток
     поля ORM-модели (краткая метка, при отсутствии — полная).
+
+    Args:
+        filter_target: Класс связанной сущности для фильтра «многие ко
+            многим» (мультивыбор записей); None — обычная колонка.
+        filter_attr: Имя атрибута модели, из которого фильтр N→N берёт
+            связанные записи (по умолчанию — сама колонка); нужно для
+            вычисляемых колонок вроде «Задачи» (``tasks_display`` →
+            ``tasks``).
     """
 
     def __init__(
@@ -31,11 +39,15 @@ class ColumnDef:
         header: Optional[str] = None,
         width: int = 120,
         formatter: Optional[Callable[[Any], str]] = None,
+        filter_target: Optional[type] = None,
+        filter_attr: Optional[str] = None,
     ) -> None:
         self.name = name
         self.header = header
         self.width = width
         self.formatter = formatter
+        self.filter_target = filter_target
+        self.filter_attr = filter_attr
 
 
 class SqlAlchemyTableModel(QAbstractTableModel):
@@ -75,6 +87,7 @@ class SqlAlchemyTableModel(QAbstractTableModel):
         self._filter_text: Optional[str] = None
         self._filters: List[FilterCondition] = []
         self._filter_types: Dict[str, str] = {}
+        self._columns_by_name = {column.name: column for column in columns}
         self.refresh()
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -119,6 +132,14 @@ class SqlAlchemyTableModel(QAbstractTableModel):
         self._order_desc = order == Qt.DescendingOrder
         self.refresh()
 
+    def sort_column(self) -> Optional[str]:
+        """Возвращает имя колонки текущей сортировки (None — сортировка не задана)."""
+        return self._order_by
+
+    def sort_descending(self) -> bool:
+        """Возвращает True, если текущая сортировка по убыванию."""
+        return self._order_desc
+
     def set_filter(self, text: Optional[str]) -> None:
         """Устанавливает текстовый фильтр по строковому представлению строк."""
         self._filter_text = text.strip() if text else None
@@ -133,13 +154,18 @@ class SqlAlchemyTableModel(QAbstractTableModel):
         """Устанавливает структурированные условия фильтрации."""
         self._filters = list(filters)
         self._filter_types = {
-            condition.column_name: resolve_value_type(
-                self.model_class, condition.column_name
-            )
+            condition.column_name: self._value_type_for(condition.column_name)
             for condition in self._filters
         }
         self._page = 1
         self.refresh()
+
+    def _value_type_for(self, column_name: str) -> str:
+        """Определяет тип значения колонки с учётом её описания (N→N)."""
+        column = self._columns_by_name.get(column_name)
+        if column is not None and column.filter_target is not None:
+            return "m2m"
+        return resolve_value_type(self.model_class, column_name)
 
     def set_page(self, page: int) -> None:
         """Переходит на указанную страницу."""
@@ -334,8 +360,13 @@ class SqlAlchemyTableModel(QAbstractTableModel):
     def _matches_filters(self, item: Base) -> bool:
         """Проверяет, удовлетворяет ли запись всем условиям фильтрации."""
         for condition in self._filters:
-            value = self._get_value(item, condition.column_name)
             value_type = self._filter_types.get(condition.column_name, "text")
+            column_name = condition.column_name
+            if value_type == "m2m":
+                column = self._columns_by_name.get(condition.column_name)
+                if column is not None and column.filter_attr:
+                    column_name = column.filter_attr
+            value = self._get_value(item, column_name)
             if not condition.matches(value, value_type):
                 return False
         return True

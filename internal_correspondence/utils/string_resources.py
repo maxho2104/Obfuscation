@@ -91,6 +91,8 @@ class AppStrings:
     msg_export_files_done: str = "Экспорт завершён. Сформированы файлы:\n{files}"
     progress_export_caption: str = "Формирование экспортных файлов"
     progress_export_entity: str = "Обработка: {entity}"
+    progress_import_caption: str = "Импорт изменений…"
+    progress_import_entry: str = "Запись {current} из {total}: {entity}"
     button_apply: str = "Применить"
     dialog_import_preview_title: str = "Анализ импортируемых изменений"
     label_import_summary: str = (
@@ -345,6 +347,7 @@ class AppStrings:
     filters_none: str = "Фильтры не заданы."
     tooltip_remove_filter: str = "Удалить фильтр"
     filter_op_in: str = "одно из"
+    filter_op_m2m_in: str = "содержит любое из"
     filter_op_empty: str = "пусто"
     filter_op_not_empty: str = "не пусто"
 
@@ -366,6 +369,8 @@ class AppStrings:
     files_skip: str = "Пропустить"
     files_rename_title: str = "Переименовать файл"
     files_rename_prompt: str = "Новое имя файла:"
+    files_rename_invalid: str = "Имя файла не должно содержать путь к папке."
+    files_rename_exists: str = "Файл с именем «{name}» уже существует в этой папке."
     files_rename_many: str = "Переименовать {count} файлов?"
     files_detach_confirm: str = (
         "Открепить выбранные файлы ({count})?\n"
@@ -375,6 +380,12 @@ class AppStrings:
     files_attached_info: str = "Прикреплено файлов: {count}"
     action_rename: str = "Переименовать"
     action_reveal: str = "Расположение файла"
+    action_delete_file: str = "Удалить файл"
+    imported_files_delete_confirm: str = (
+        "Удалить выбранные файлы ({count} шт.) с диска?\n"
+        "Записи о файлах в документах сохранятся и будут отмечены как отсутствующие."
+    )
+    imported_files_error: str = "Ошибка работы с файлом: {error}"
     action_assign_evaluation: str = "Выставить оценку"
     dialog_assign_evaluation_title: str = "Выставить оценку"
     evaluation_mode_new_list: str = "Создать новый список оценок"
@@ -594,6 +605,10 @@ class AppStrings:
     dashboard_chart_ranking_departments: str = "Отделы: топ-5 по документам"
     dashboard_recent: str = "Последние документы"
     dashboard_attention: str = "Требуют внимания"
+    dashboard_imported_files: str = "Файлы последнего импорта"
+    dashboard_imported_filter_placeholder: str = "Фильтр по имени файла (regex)"
+    dashboard_imported_empty: str = "Файлы последнего импорта отсутствуют."
+    dashboard_imported_invalid_regex: str = "Некорректное регулярное выражение"
     dashboard_no_data: str = "Нет данных за период"
     dashboard_no_evaluations: str = "Нет оценок за период"
     dashboard_empty: str = "Данных пока нет"

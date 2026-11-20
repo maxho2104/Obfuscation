@@ -190,7 +190,8 @@ class DocumentListWidget(QWidget):
             self.table_model.model_class,
             self.table_model.columns,
             self.table_model.filters(),
-            self,
+            session=self.session,
+            parent=self,
         )
         dialog.filtersChanged.connect(self._apply_filters)
         dialog.exec_()
@@ -275,6 +276,22 @@ class DocumentListWidget(QWidget):
     def column_widths(self) -> List[int]:
         """Возвращает текущие ширины колонок таблицы."""
         return [self.table.columnWidth(i) for i in range(len(self.columns))]
+
+    def sort_state(self) -> Optional[tuple]:
+        """Возвращает (колонка, по убыванию) текущей сортировки; None — не задана."""
+        column = self.table_model.sort_column()
+        if column is None:
+            return None
+        return (column, self.table_model.sort_descending())
+
+    def set_sort_state(self, column_name: str, descending: bool) -> bool:
+        """Применяет сортировку по имени колонки; False — колонки нет в таблице."""
+        for index, column in enumerate(self.columns):
+            if column.name == column_name:
+                order = Qt.DescendingOrder if descending else Qt.AscendingOrder
+                self.table.sortByColumn(index, order)
+                return True
+        return False
 
     def set_column_widths(self, widths: List[int]) -> None:
         """Применяет сохранённые ширины колонок таблицы."""
