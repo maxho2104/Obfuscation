@@ -40,6 +40,25 @@ def _format_date(value: Optional[date]) -> str:
     return value.strftime("%d.%m.%Y") if value else ""
 
 
+def task_type_label(task: ScientificTask) -> str:
+    """Возвращает человекочитаемую метку типа задачи.
+
+    ``ScientificTask.type`` может быть как IntEnum (актуальная схема),
+    так и строковым кодом пакета. Для неизвестного значения возвращается
+    его строковое представление, чтобы колонка «Тип» не оставалась пустой.
+    """
+    value = task.type
+    if value is None:
+        return ""
+    try:
+        code = pack_enum_display("scientific_task_type", int(value))
+    except (TypeError, ValueError):
+        code = str(value)
+    if not code:
+        return ""
+    return enum_label("scientific_task_type", code) or code
+
+
 class TaskTableModel(QAbstractTableModel):
     """Таблица задач с поиском, сортировкой и подсветкой нераспределённых."""
 
@@ -91,13 +110,8 @@ class TaskTableModel(QAbstractTableModel):
         self.endResetModel()
 
     def _type_label(self, task: ScientificTask) -> str:
-        """Метка типа задачи: IntEnum -> код пакета -> человекочитаемая метка."""
-        value = task.type
-        try:
-            code = pack_enum_display("scientific_task_type", int(value))
-        except (TypeError, ValueError):
-            return str(value or "")
-        return enum_label("scientific_task_type", code)
+        """Метка типа задачи (совместимый метод для поиска и сортировки)."""
+        return task_type_label(task)
 
     def _apply_filter_and_sort(self) -> None:
         tasks = self._tasks

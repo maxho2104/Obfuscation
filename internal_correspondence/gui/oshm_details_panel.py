@@ -43,6 +43,7 @@ from internal_correspondence.gui.oshm_element_charts import (
     ElementDonutWidget,
     PeriodSelectorWidget,
 )
+from internal_correspondence.gui.task_table_model import task_type_label
 from internal_correspondence.orm.labels import field_label, field_short_label
 from internal_correspondence.orm.models import (
     AddedTask,
@@ -245,16 +246,21 @@ class ElementDetailsPanel(QWidget):
         # Задачи сотрудника
         self.tasks_group = QGroupBox(STRINGS.oshm_tasks_section)
         tasks_layout = QVBoxLayout(self.tasks_group)
-        self.tasks_table = QTableWidget(0, 4)
+        self.tasks_table = QTableWidget(0, 5)
         self.tasks_table.setHorizontalHeaderLabels(
             [
                 field_short_label(ScientificTask, "id"),
                 field_short_label(ScientificTask, "name"),
+                field_short_label(ScientificTask, "type"),
                 field_short_label(ScientificTask, "start_date"),
                 field_short_label(ScientificTask, "end_date"),
             ]
         )
         self.tasks_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tasks_table.setColumnWidth(0, 90)
+        self.tasks_table.setColumnWidth(2, 150)
+        self.tasks_table.setColumnWidth(3, 100)
+        self.tasks_table.setColumnWidth(4, 100)
         self.tasks_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tasks_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tasks_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -659,6 +665,7 @@ class ElementDetailsPanel(QWidget):
             cells = [
                 task.id,
                 task.name,
+                task_type_label(task),
                 _date_text(task.start_date),
                 _date_text(task.end_date),
             ]

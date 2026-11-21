@@ -153,3 +153,68 @@ def test_task_model_search_by_type_label(
         model.set_search("основная")
         assert model.rowCount() == 1
         assert model.task_at(0).id == "T1"
+
+
+def test_task_model_shows_type_column(qt_app, db_manager: DatabaseManager) -> None:
+    """Колонка «Тип» заполняется меткой, а не остаётся пустой."""
+    from PyQt5.QtCore import Qt
+
+    from internal_correspondence.gui.task_table_model import TaskTableModel
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        task = session.query(ScientificTask).one()
+        model = TaskTableModel()
+        model.set_tasks([task])
+        assert model.data(model.index(0, 2), Qt.DisplayRole) == "Основная задача"
+
+
+def test_distributed_toggle_filters_distributed_tasks(
+    qt_app, db_manager: DatabaseManager
+) -> None:
+    """Кнопка скрывает задачи, уже распределённые нижестоящим элементам."""
+    from internal_correspondence.gui.task_distribution_widget import (
+        TaskDistributionWidget,
+    )
+    from internal_correspondence.services.task_distribution_service import (
+        NODE_BRANCH,
+        NODE_REGION,
+    )
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        task2 = ScientificTask(
+            id="T2",
+            name="Задача 2",
+            type=ScientificTaskType.ADDITIONAL,
+            start_date=date(2026, 2, 1),
+        )
+        session.add(task2)
+        session.commit()
+
+        widget = TaskDistributionWidget(session, Role.HEAD_OFFICE.value)
+        try:
+            region = widget.service.node((NODE_REGION, "MSK"))
+            branch = widget.service.node((NODE_BRANCH, "BR1"))
+            assert region is not None and branch is not None
+            widget.service.assign([task2], region)
+            widget.service.assign([task2], branch)
+            session.commit()
+            widget.refresh_all()
+
+            region_item = widget.tree.topLevelItem(0).child(0)
+            widget.tree.setCurrentItem(region_item)
+            assert widget.middle_model.rowCount() == 2
+            assert widget.right_model.rowCount() == 1
+
+            widget.distributed_button.setChecked(True)
+            assert widget.middle_model.rowCount() == 1
+            assert widget.middle_model.task_at(0).id == "T1"
+            assert widget.right_model.rowCount() == 0
+            assert widget.distributed_button.text() == "Показать распределённые"
+
+            widget.distributed_button.setChecked(False)
+            assert widget.middle_model.rowCount() == 2
+            assert widget.right_model.rowCount() == 1
+        finally:
+            widget.deleteLater()

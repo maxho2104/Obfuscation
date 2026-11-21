@@ -272,7 +272,13 @@ class AppStrings:
     task_no_end: str = "Бессрочная"
     task_middle_title: str = "Задачи вышестоящего элемента"
     task_right_title: str = "Задачи элемента"
+    task_hide_distributed: str = "Скрыть распределённые"
+    task_show_distributed: str = "Показать распределённые"
+    task_distributed_tooltip: str = (
+        "Показать или скрыть задачи, уже распределённые нижестоящим элементам"
+    )
     task_empty: str = "Задачи не найдены"
+    task_all_distributed: str = "Все задачи распределены ниже"
     task_no_periods: str = "Нет задач за доступные периоды"
     task_select_node: str = "Выберите элемент дерева."
     task_select_tasks: str = "Выберите хотя бы одну задачу."

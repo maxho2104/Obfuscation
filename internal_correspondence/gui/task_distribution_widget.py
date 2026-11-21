@@ -165,6 +165,13 @@ class TaskDistributionWidget(QWidget):
         top.addWidget(self.period_combo)
         top.addStretch(1)
 
+        self.distributed_button = QToolButton()
+        self.distributed_button.setCheckable(True)
+        self.distributed_button.setText(STRINGS.task_hide_distributed)
+        self.distributed_button.setToolTip(STRINGS.task_distributed_tooltip)
+        self.distributed_button.toggled.connect(self._on_distributed_toggled)
+        top.addWidget(self.distributed_button)
+
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.setMinimumWidth(240)
@@ -194,6 +201,10 @@ class TaskDistributionWidget(QWidget):
         middle_layout.setContentsMargins(0, 0, 0, 0)
         middle_layout.addWidget(self.middle_label)
         middle_layout.addWidget(self.middle_search)
+        self.middle_status = QLabel("")
+        self.middle_status.setWordWrap(True)
+        self.middle_status.setVisible(False)
+        middle_layout.addWidget(self.middle_status)
         middle_layout.addWidget(self.middle_view, 1)
 
         self.right_label = QLabel(STRINGS.task_right_title)
@@ -219,6 +230,10 @@ class TaskDistributionWidget(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.addWidget(self.right_label)
         right_layout.addWidget(self.right_search)
+        self.right_status = QLabel("")
+        self.right_status.setWordWrap(True)
+        self.right_status.setVisible(False)
+        right_layout.addWidget(self.right_status)
         right_layout.addWidget(self.right_view, 1)
 
         self.assign_button = QToolButton()
@@ -298,7 +313,7 @@ class TaskDistributionWidget(QWidget):
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setStretchLastSection(False)
         for column, width in enumerate(
-            (90, 260, 110, 100, 100, 120, 120, 200)
+            (90, 240, 150, 100, 100, 120, 120, 200)
         ):
             view.setColumnWidth(column, width)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
@@ -463,11 +478,51 @@ class TaskDistributionWidget(QWidget):
             for task in right_tasks
             if self.service.is_undistributed(task, node)
         }
+        if self.distributed_button.isChecked():
+            # Оставляем только задачи, которые ещё не распределены ниже:
+            # в средней таблице — не переданы потомкам вышестоящего узла,
+            # в правой — не переданы потомкам выбранного узла.
+            middle_tasks = [
+                task for task in middle_tasks if task.id in middle_undistributed
+            ]
+            right_tasks = [
+                task for task in right_tasks if task.id in right_undistributed
+            ]
         self.middle_model.set_tasks(middle_tasks, middle_undistributed)
         self.right_model.set_tasks(right_tasks, right_undistributed)
+        self._update_empty_status(
+            self.middle_status, len(middle_tasks), self.distributed_button.isChecked()
+        )
+        self._update_empty_status(
+            self.right_status, len(right_tasks), self.distributed_button.isChecked()
+        )
+        if parent_key is None:
+            self.right_status.setVisible(False)
         self.middle_view.clearSelection()
         self.right_view.clearSelection()
         self._update_buttons()
+
+    @staticmethod
+    def _update_empty_status(label: QLabel, count: int, hide_distributed: bool) -> None:
+        """Показывает пояснение, если после фильтра не осталось строк."""
+        if count:
+            label.setVisible(False)
+            return
+        label.setText(
+            STRINGS.task_all_distributed
+            if hide_distributed
+            else STRINGS.task_empty
+        )
+        label.setVisible(True)
+
+    def _on_distributed_toggled(self, checked: bool) -> None:
+        """Переключает режим «показать/скрыть распределённые задачи»."""
+        self.distributed_button.setText(
+            STRINGS.task_show_distributed
+            if checked
+            else STRINGS.task_hide_distributed
+        )
+        self._refresh_tables()
 
     @staticmethod
     def _node_title(node: DistributionNode) -> str:

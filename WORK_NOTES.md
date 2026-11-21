@@ -2161,3 +2161,16 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 ### Проверка
 - Новый тест `test_import_removes_tmp_import_directory` в `tests/test_branch_export.py`: после `analyze_archive` и `import_archive` папки `tmp_import` нет, включая остатки «прерванного» запуска.
 - `pytest tests`: **434/434 passed**; импорт GUI — OK.
+
+## Распределение задач: фильтр распределённых и тип задачи (2026-11-21)
+
+### Изменения
+- `gui/task_distribution_widget.py`: кнопка `distributed_button` («Скрыть распределённые» / «Показать распределённые»). В скрытом режиме в средней и правой таблицах остаются только задачи, не назначенные ни одному потомку соответствующего узла.
+- `gui/task_table_model.py`: вынесена `task_type_label(task)` — безопасно обрабатывает `ScientificTaskType`, строковый код и неизвестное значение, чтобы колонка «Тип» не оставалась пустой.
+- `gui/oshm_details_panel.py`: в таблицу задач добавлена колонка «Тип» (5 колонок), используется общий `task_type_label`.
+- `utils/string_resources.py` и `core/domain_pack.default.json`: добавлены строки фильтра и пустого результата, секция strings регенерирована (530 ключей).
+- `README.md`: описание колонки «Тип» и кнопки «Скрыть/Показать распределённые».
+
+### Проверка
+- Новые тесты: `test_task_model_shows_type_column`, `test_distributed_toggle_filters_distributed_tasks`; в `test_details_panel_employee` проверяется колонка «Тип».
+- `pytest tests/test_task_widget.py tests/test_oshm_dialog.py -q` — 32 passed.

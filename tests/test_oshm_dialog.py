@@ -541,6 +541,7 @@ def test_details_panel_employee(qt_app, db_manager, oshm_data) -> None:
     assert not panel.tasks_group.isHidden()
     assert panel.tasks_table.rowCount() == 1
     assert panel.tasks_table.item(0, 0).text() == "T1"
+    assert panel.tasks_table.item(0, 2).text() == "Основная задача"
     assert panel.edit_btn.isEnabled()
     dialog.deleteLater()
 
