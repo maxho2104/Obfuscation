@@ -15,11 +15,12 @@ from PyQt5.QtChart import (
     QStackedBarSeries,
     QValueAxis,
 )
-from PyQt5.QtCore import QPointF, Qt, QTimer
-from PyQt5.QtGui import QBrush, QColor, QFont, QPainter
+from PyQt5.QtCore import QMargins, QPointF, Qt, QTimer
+from PyQt5.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PyQt5.QtWidgets import (
     QComboBox,
     QFrame,
+    QGraphicsRectItem,
     QGraphicsSimpleTextItem,
     QGridLayout,
     QHBoxLayout,
@@ -79,6 +80,14 @@ _EVALUATION_COLORS = {
     "В": "#2E8B57",
 }
 
+_RANKING_CHILD_COLORS = (
+    "#0B3D5C",
+    "#1F6F8B",
+    "#3C9D9B",
+    "#7FB77E",
+    "#C9A227",
+)
+
 _WEEKDAYS = (
     "понедельник",
     "вторник",
@@ -119,7 +128,7 @@ class KpiCard(QFrame):
     def _apply_fonts(self, scale: float) -> None:
         """Подбирает размеры шрифтов под масштаб окна."""
         title_font = QFont(self.title_label.font())
-        title_font.setPointSize(max(7, round(9 * scale)))
+        title_font.setPointSize(max(9, round(12 * scale)))
         self.title_label.setFont(title_font)
 
         value_font = QFont(self.value_label.font())
@@ -128,7 +137,7 @@ class KpiCard(QFrame):
         self.value_label.setFont(value_font)
 
         detail_font = QFont(self.detail_label.font())
-        detail_font.setPointSize(max(7, round(8 * scale)))
+        detail_font.setPointSize(max(8, round(11 * scale)))
         self.detail_label.setFont(detail_font)
 
     def set_scale(self, scale: float) -> None:
@@ -200,8 +209,8 @@ class DashboardWidget(QWidget):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(6)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(4)
 
         controls = QHBoxLayout()
         controls.setSpacing(8)
@@ -236,6 +245,11 @@ class DashboardWidget(QWidget):
             self.branch_label.hide()
             self.branch_combo.hide()
 
+        self.types_combo = QComboBox()
+        self.types_combo.addItem(STRINGS.dashboard_type_materials, "material")
+        self.types_combo.addItem(STRINGS.dashboard_type_telegrams, "telegram")
+        controls.addWidget(self.types_combo)
+
         controls.addStretch(1)
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: #C0392B;")
@@ -253,6 +267,7 @@ class DashboardWidget(QWidget):
         self.index_combo.currentIndexChanged.connect(self._filters_changed)
         self.financial_check.toggled.connect(self._financial_toggled)
         self.branch_combo.currentIndexChanged.connect(self._filters_changed)
+        self.types_combo.currentIndexChanged.connect(self._types_changed)
         self._style_financial_button()
         from internal_correspondence.gui.theme import current_theme
 
@@ -269,18 +284,6 @@ class DashboardWidget(QWidget):
         self.kpi_layout = QHBoxLayout()
         self.kpi_layout.setSpacing(8)
         root.addLayout(self.kpi_layout)
-
-        # Переключатель структуры типов стоит над диаграммами, чтобы обе
-        # верхние диаграммы начинались на одной линии.
-        types_row = QHBoxLayout()
-        types_row.setContentsMargins(0, 0, 0, 0)
-        types_row.addStretch(1)
-        self.types_combo = QComboBox()
-        self.types_combo.addItem(STRINGS.dashboard_type_materials, "material")
-        self.types_combo.addItem(STRINGS.dashboard_type_telegrams, "telegram")
-        self.types_combo.currentIndexChanged.connect(self._types_changed)
-        types_row.addWidget(self.types_combo)
-        root.addLayout(types_row)
 
         charts = QGridLayout()
         charts.setSpacing(8)
@@ -302,7 +305,7 @@ class DashboardWidget(QWidget):
     def _chart_view() -> QChartView:
         view = QChartView()
         view.setRenderHint(QPainter.Antialiasing)
-        view.setMinimumHeight(120)
+        view.setMinimumHeight(150)
         view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         return view
 
@@ -458,6 +461,9 @@ class DashboardWidget(QWidget):
         chart.legend().setAlignment(Qt.AlignBottom)
         chart.setAnimationOptions(QChart.NoAnimation)
         chart.setBackgroundRoundness(0)
+        chart.setMargins(QMargins(8, 8, 8, 8))
+        if chart.layout() is not None:
+            chart.layout().setContentsMargins(0, 0, 0, 0)
         colors = current_theme().qss_colors
         chart.setBackgroundBrush(QBrush(QColor(colors["SURFACE"])))
         chart.setTitleBrush(QBrush(QColor(colors["TEXT"])))
@@ -621,7 +627,9 @@ class DashboardWidget(QWidget):
             self._set_chart(self.ranking_view, chart)
             return
         series = QBarSeries()
+        series.setBarWidth(0.86)
         bar_set = QBarSet("")
+        bar_set.setColor(QColor(colors["ACCENT"]))
         labels: List[str] = []
         for label, count in data.ranking:
             labels.append("—" if label == STRINGS.dashboard_no_branch else label)
@@ -635,13 +643,92 @@ class DashboardWidget(QWidget):
         chart.addAxis(axis_x, Qt.AlignBottom)
         series.attachAxis(axis_x)
         axis_y = QValueAxis()
-        axis_y.setRange(0, max([count for _, count in data.ranking] + [1]) * 1.15)
+        axis_y.setRange(0, max([count for _, count in data.ranking] + [1]) * 1.35)
         axis_y.setLabelFormat("%d")
         axis_y.setTickCount(5)
         chart.addAxis(axis_y, Qt.AlignLeft)
         series.attachAxis(axis_y)
         self._style_axis(axis_x, QColor(colors["TEXT_MUTED"]), 7)
         self._style_axis(axis_y, QColor(colors["TEXT_MUTED"]))
+
+        text_color = QColor(colors["TEXT"])
+        coefficient_font = QFont()
+        coefficient_font.setPointSize(max(7, round(9 * self._scale)))
+        coefficient_font.setBold(True)
+        child_font = QFont()
+        child_font.setPointSize(max(5, round(6 * self._scale)))
+
+        child_items: List[tuple] = []
+        coefficient_items: List[tuple] = []
+        ranking_children = data.ranking_children or [[] for _ in data.ranking]
+        for index, ((_label, count), children) in enumerate(
+            zip(data.ranking, ranking_children)
+        ):
+            coefficient = QGraphicsSimpleTextItem(str(count), chart)
+            coefficient.setBrush(QBrush(text_color))
+            coefficient.setFont(coefficient_font)
+            coefficient.setZValue(30)
+            coefficient_items.append((index, count, coefficient))
+
+            for child_index, (child_label, child_count) in enumerate(children[:5]):
+                rect_item = QGraphicsRectItem(chart)
+                rect_item.setPen(QPen(Qt.NoPen))
+                rect_item.setBrush(
+                    QBrush(QColor(_RANKING_CHILD_COLORS[child_index % len(_RANKING_CHILD_COLORS)]))
+                )
+                rect_item.setZValue(10)
+                label_item = QGraphicsSimpleTextItem(child_label, chart)
+                label_item.setBrush(QBrush(QColor("#FFFFFF")))
+                label_item.setFont(child_font)
+                label_item.setRotation(-90)
+                label_item.setZValue(20)
+                child_items.append(
+                    (index, count, child_index, child_count, len(children), rect_item, label_item)
+                )
+
+        def place_ranking() -> None:
+            plot = chart.plotArea()
+            if not data.ranking:
+                return
+            slot = plot.width() / len(data.ranking)
+            bar_width = slot * 0.86
+            for index, count, item in coefficient_items:
+                point = chart.mapToPosition(QPointF(index, count), series)
+                rect = item.boundingRect()
+                item.setPos(
+                    point.x() - rect.width() / 2.0,
+                    max(plot.top() + 2.0, point.y() - rect.height() - 4.0),
+                )
+
+            for (
+                index,
+                parent_count,
+                child_index,
+                child_count,
+                children_count,
+                rect_item,
+                label_item,
+            ) in child_items:
+                base = chart.mapToPosition(QPointF(index, 0), series)
+                top = chart.mapToPosition(QPointF(index, parent_count), series)
+                height = max(0.0, base.y() - top.y())
+                inner_width = bar_width / max(1, children_count) * 0.78
+                left = base.x() - bar_width / 2.0 + inner_width * 0.12
+                x = left + child_index * (bar_width / max(1, children_count))
+                child_height = height * min(1.0, child_count / max(1, parent_count))
+                rect_item.setRect(x, base.y() - child_height, inner_width, child_height)
+                if child_height < 16.0 or inner_width < 4.0:
+                    label_item.setVisible(False)
+                    continue
+                label_item.setVisible(True)
+                label_rect = label_item.boundingRect()
+                label_item.setPos(
+                    x + inner_width / 2.0 + label_rect.height() / 2.0,
+                    base.y() - child_height / 2.0 + label_rect.width() / 2.0,
+                )
+
+        chart.plotAreaChanged.connect(lambda *_: place_ranking())
+        place_ranking()
         self._set_chart(self.ranking_view, chart)
 
     def _types_changed(self) -> None:

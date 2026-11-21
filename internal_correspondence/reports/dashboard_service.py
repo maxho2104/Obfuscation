@@ -122,6 +122,7 @@ class DashboardData:
     evaluation_counts: List[Tuple[str, int]]
     ranking_title: str
     ranking: List[Tuple[str, int]]
+    ranking_children: List[List[Tuple[str, int]]]
     recent: List[RecentDocument]
     attention: List[Tuple[str, int]]
     kpi: List[KpiValue]
@@ -192,7 +193,7 @@ class DashboardService:
         material_types = self._type_counts(materials, "material_type")
         telegram_types = self._type_counts(telegrams, "telegram_type")
         evaluation_counts = self._evaluation_counts(evaluated)
-        ranking_title, ranking = self._ranking(documents, scope)
+        ranking_title, ranking, ranking_children = self._ranking(documents, scope)
 
         recent = self._recent_documents(documents)
         attention = self._attention(
@@ -239,6 +240,7 @@ class DashboardService:
             evaluation_counts=evaluation_counts,
             ranking_title=ranking_title,
             ranking=ranking,
+            ranking_children=ranking_children,
             recent=recent,
             attention=attention,
             kpi=kpi,
@@ -307,6 +309,7 @@ class DashboardService:
                 .options(
                     selectinload(model.evaluations).selectinload(Evaluation.evaluation_list),
                     selectinload(model.departments),
+                    selectinload(model.employees),
                     selectinload(model.branch),
                 )
             )
@@ -422,14 +425,21 @@ class DashboardService:
 
     def _ranking(
         self, documents: Sequence[object], scope: Optional[str]
-    ) -> Tuple[str, List[Tuple[str, int]]]:
+    ) -> Tuple[str, List[Tuple[str, int]], List[List[Tuple[str, int]]]]:
         counts: Dict[str, int] = {}
+        children: Dict[str, Dict[str, int]] = {}
         if self._is_branch or scope:
             title = STRINGS.dashboard_chart_ranking_departments
             for document in documents:
                 for department in document.departments:
                     label = department.short_name or department.name
                     counts[label] = counts.get(label, 0) + 1
+                    bucket = children.setdefault(label, {})
+                    for employee in document.employees:
+                        if employee.department_id != department.id:
+                            continue
+                        child = employee.display_name()
+                        bucket[child] = bucket.get(child, 0) + 1
         else:
             title = STRINGS.dashboard_chart_ranking
             for document in documents:
@@ -439,7 +449,16 @@ class DashboardService:
                     else STRINGS.dashboard_no_branch
                 )
                 counts[label] = counts.get(label, 0) + 1
-        return title, sorted(counts.items(), key=lambda item: item[1], reverse=True)[:5]
+                bucket = children.setdefault(label, {})
+                for department in document.departments:
+                    child = department.short_name or department.name
+                    bucket[child] = bucket.get(child, 0) + 1
+        ranking = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:5]
+        ranking_children = [
+            sorted(children.get(label, {}).items(), key=lambda item: item[1], reverse=True)[:5]
+            for label, _ in ranking
+        ]
+        return title, ranking, ranking_children
 
     # ------------------------------------------------------------------
     # Задачи

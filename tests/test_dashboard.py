@@ -30,6 +30,7 @@ from internal_correspondence.orm.models import (
     AddedTask,
     Branch,
     Department,
+    Employee,
     Evaluation,
     EvaluationList,
     ScientificMaterial,
@@ -69,6 +70,13 @@ def dashboard_data(db_manager: DatabaseManager) -> dict:
     department = Department(name="Отдел 1", branch_id="F1")
     session.add(department)
     session.flush()
+    employee = Employee(
+        last_name="Иванов",
+        first_name="Иван",
+        department_id=department.id,
+    )
+    session.add(employee)
+    session.flush()
 
     evaluation_list = EvaluationList(number="1", date=date(2026, 1, 10))
     session.add(evaluation_list)
@@ -97,6 +105,10 @@ def dashboard_data(db_manager: DatabaseManager) -> dict:
         branch_id="F1",
     )
     session.add_all([material1, material2, telegram])
+    session.flush()
+    for document in (material1, material2, telegram):
+        document.departments.append(department)
+    material1.employees.append(employee)
     session.flush()
 
     session.add(
@@ -133,6 +145,8 @@ def test_service_counts_and_average(dashboard_data, db_manager):
     assert data.evaluation_average == 2.0
     assert data.tasks_total == 1
     assert data.tasks_assigned == 1
+    assert data.ranking == [("Ф-1", 3)]
+    assert data.ranking_children == [[("Отдел 1", 3)]]
     assert [item[0] for item in data.attention] == [STRINGS.dashboard_without_evaluation]
 
 
@@ -181,8 +195,15 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     assert widget.evaluations_view.chart().title() == STRINGS.dashboard_chart_evaluations
     assert widget.ranking_view.chart().series()
     assert widget.ranking_view.chart().title() == STRINGS.dashboard_chart_ranking
+    assert widget.ranking_view.minimumHeight() == 150
+    assert widget.monthly_view.minimumHeight() >= 150
 
+    widget.resize(1280, 800)
+    widget._apply_scale()
     card = widget.kpi_layout.itemAt(0).widget()
+    assert card.title_label.font().pointSize() == 12
+    assert card.detail_label.font().pointSize() == 11
+    assert card.value_label.font().pointSize() == 24
     assert card.layout().contentsMargins().top() == 5
     assert card.layout().contentsMargins().bottom() == 5
 
@@ -214,4 +235,7 @@ def test_widget_branch_role_hides_branch_filter(dashboard_data, qt_app):
     assert widget.kpi_layout.count() == 4
     widget.financial_check.setChecked(False)
     assert widget.data.documents_total == 3
+    assert widget.ranking_view.chart().title() == STRINGS.dashboard_chart_ranking_departments
+    assert widget.data.ranking == [("Отдел 1", 3)]
+    assert widget.data.ranking_children == [[("Иванов И.", 1)]]
     widget.close()
