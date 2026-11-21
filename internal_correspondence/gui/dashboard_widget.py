@@ -81,11 +81,11 @@ _EVALUATION_COLORS = {
 }
 
 _RANKING_CHILD_COLORS = (
-    "#0B3D5C",
+    "#123B5C",
     "#1F6F8B",
-    "#3C9D9B",
-    "#7FB77E",
-    "#C9A227",
+    "#2E7D5B",
+    "#6A4C93",
+    "#9C6B1E",
 )
 
 _WEEKDAYS = (
@@ -209,11 +209,11 @@ class DashboardWidget(QWidget):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(4, 4, 4, 4)
+        root.setContentsMargins(2, 2, 2, 2)
         root.setSpacing(4)
 
         controls = QHBoxLayout()
-        controls.setSpacing(8)
+        controls.setSpacing(2)
         self.refresh_button = QPushButton(STRINGS.dashboard_refresh)
         self.refresh_button.clicked.connect(self.refresh)
         controls.addWidget(self.refresh_button)
@@ -259,6 +259,11 @@ class DashboardWidget(QWidget):
         self.date_label = QLabel(
             f"{today.strftime('%d.%m.%Y')}, {_WEEKDAYS[today.weekday()]}"
         )
+        date_font = QFont(self.date_label.font())
+        base_size = date_font.pointSize() if date_font.pointSize() > 0 else 9
+        date_font.setPointSize(base_size + 10)
+        date_font.setBold(True)
+        self.date_label.setFont(date_font)
         controls.addWidget(self.date_label)
         root.addLayout(controls)
 
@@ -629,7 +634,8 @@ class DashboardWidget(QWidget):
         series = QBarSeries()
         series.setBarWidth(0.86)
         bar_set = QBarSet("")
-        bar_set.setColor(QColor(colors["ACCENT"]))
+        bar_set.setColor(QColor(colors["ACCENT_SOFT"]))
+        bar_set.setBorderColor(QColor(colors["BORDER_STRONG"]))
         labels: List[str] = []
         for label, count in data.ranking:
             labels.append("—" if label == STRINGS.dashboard_no_branch else label)
@@ -656,7 +662,7 @@ class DashboardWidget(QWidget):
         coefficient_font.setPointSize(max(7, round(9 * self._scale)))
         coefficient_font.setBold(True)
         child_font = QFont()
-        child_font.setPointSize(max(5, round(6 * self._scale)))
+        child_font.setPointSize(max(7, round(8 * self._scale)))
 
         child_items: List[tuple] = []
         coefficient_items: List[tuple] = []
@@ -722,9 +728,11 @@ class DashboardWidget(QWidget):
                     continue
                 label_item.setVisible(True)
                 label_rect = label_item.boundingRect()
+                # Повёрнутая на -90° подпись занимает прямоугольник
+                # [posx, posx + height] × [posy - width, posy].
                 label_item.setPos(
-                    x + inner_width / 2.0 + label_rect.height() / 2.0,
-                    base.y() - child_height / 2.0 + label_rect.width() / 2.0,
+                    x + inner_width / 2.0 - label_rect.height() / 2.0,
+                    base.y() - 2.0,
                 )
 
         chart.plotAreaChanged.connect(lambda *_: place_ranking())

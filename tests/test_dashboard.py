@@ -173,6 +173,8 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     assert widget.kpi_layout.count() == 3
     assert widget.financial_check.isChecked()
     assert widget.date_label.text()
+    assert widget.date_label.font().pointSize() >= 18
+    assert widget.date_label.font().bold()
     assert all(
         isinstance(widget.kpi_layout.itemAt(i).widget(), KpiCard)
         for i in range(widget.kpi_layout.count())
