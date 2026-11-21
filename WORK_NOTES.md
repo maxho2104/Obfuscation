@@ -2181,3 +2181,9 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 - `tests/test_task_widget.py`: тест `test_tree_multi_selection_assigns_to_all_and_right_shows_first` (Ctrl-подобное выделение двух отделов, назначение одной задачи обоим, правая таблица ведущего узла).
 - Проверка: `pytest tests/test_task_widget.py` — 7 passed; полный `pytest tests -q` — 437 passed, 1 warning zipfile.
 - `README.md`: описан множественный выбор и ведущий узел.
+
+### Дополнение (2026-11-21) — ширина столбцов и краткий тип задачи
+- `gui/task_table_model.py`: `task_type_label()` теперь возвращает краткий код (`ОЗ`/`ДЗ`); полная метка сохранена в `task_type_full_label()` и используется для поиска и сортировки, поэтому поиск по «основная»/«дополнительная» продолжает работать.
+- `gui/task_distribution_widget.py`, `gui/oshm_details_panel.py`: вместо `QHeaderView.Stretch` для колонки «Наименование» все секции переведены в `Interactive`, последняя колонка растягивается; граница «Наименование»/«Тип» снова перетаскивается.
+- `tests/test_task_widget.py`, `tests/test_oshm_dialog.py`: ожидания краткого типа и проверка режима изменения ширины.
+- Проверка: целевые тесты 33 passed; полный `pytest tests -q` — 437 passed, 1 warning zipfile.

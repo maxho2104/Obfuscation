@@ -77,6 +77,11 @@ def test_widget_builds_tree_and_tables(qt_app, db_manager: DatabaseManager) -> N
             assert widget.tree.topLevelItemCount() == 1
             assert widget.period_combo.count() >= 1
             assert widget.middle_model.rowCount() >= 0
+            from PyQt5.QtWidgets import QHeaderView
+
+            header = widget.middle_view.horizontalHeader()
+            assert header.sectionResizeMode(1) == QHeaderView.Interactive
+            assert header.sectionResizeMode(2) == QHeaderView.Interactive
             widget.refresh_all()
         finally:
             widget.deleteLater()
@@ -154,6 +159,14 @@ def test_task_model_search_by_type_label(
         assert model.rowCount() == 1
         assert model.task_at(0).id == "T1"
 
+        model.set_search("дз")
+        assert model.rowCount() == 1
+        assert model.task_at(0).id == "T2"
+
+        model.set_search("оз")
+        assert model.rowCount() == 1
+        assert model.task_at(0).id == "T1"
+
 
 def test_task_model_shows_type_column(qt_app, db_manager: DatabaseManager) -> None:
     """Колонка «Тип» заполняется меткой, а не остаётся пустой."""
@@ -166,7 +179,7 @@ def test_task_model_shows_type_column(qt_app, db_manager: DatabaseManager) -> No
         task = session.query(ScientificTask).one()
         model = TaskTableModel()
         model.set_tasks([task])
-        assert model.data(model.index(0, 2), Qt.DisplayRole) == "Основная задача"
+        assert model.data(model.index(0, 2), Qt.DisplayRole) == "ОЗ"
 
 
 def test_distributed_toggle_filters_distributed_tasks(

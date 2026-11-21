@@ -256,7 +256,10 @@ class ElementDetailsPanel(QWidget):
                 field_short_label(ScientificTask, "end_date"),
             ]
         )
-        self.tasks_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tasks_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Interactive
+        )
+        self.tasks_table.horizontalHeader().setStretchLastSection(True)
         self.tasks_table.setColumnWidth(0, 90)
         self.tasks_table.setColumnWidth(2, 150)
         self.tasks_table.setColumnWidth(3, 100)

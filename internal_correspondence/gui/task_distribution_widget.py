@@ -319,7 +319,8 @@ class TaskDistributionWidget(QWidget):
             (90, 240, 150, 100, 100, 120, 120, 200)
         ):
             view.setColumnWidth(column, width)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(True)
         view.sortByColumn(0, Qt.AscendingOrder)
 
     # ------------------------------------------------------------------
