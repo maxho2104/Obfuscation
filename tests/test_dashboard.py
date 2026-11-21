@@ -10,6 +10,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt5.QtChart import QStackedBarSeries
 from PyQt5.QtWidgets import QApplication, QScrollArea
 
 from internal_correspondence.core.constants import (
@@ -20,7 +21,11 @@ from internal_correspondence.core.constants import (
     TelegramType,
 )
 from internal_correspondence.core.database import DatabaseManager
-from internal_correspondence.gui.dashboard_widget import DashboardWidget, KpiCard
+from internal_correspondence.gui.dashboard_widget import (
+    _EVALUATION_COLORS,
+    DashboardWidget,
+    KpiCard,
+)
 from internal_correspondence.orm.models import (
     AddedTask,
     Branch,
@@ -152,15 +157,34 @@ def test_service_without_import_tables_is_safe(dashboard_data):
 def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     widget = DashboardWidget(dashboard_data["session"], "head_office")
     assert widget.kpi_layout.count() == 3
+    assert widget.financial_check.isChecked()
+    assert widget.date_label.text()
     assert all(
         isinstance(widget.kpi_layout.itemAt(i).widget(), KpiCard)
         for i in range(widget.kpi_layout.count())
     )
     assert not widget.findChildren(QScrollArea)
+    # По умолчанию включён финансовый год; для данных теста переключаемся
+    # на календарный 2026 год.
+    widget.financial_check.setChecked(False)
+    assert not widget.financial_check.isChecked()
     assert widget.monthly_view.chart().series()
     assert widget.types_view.chart().series()
-    assert widget.evaluations_view.chart().series()
+    evaluation_series = widget.evaluations_view.chart().series()
+    assert evaluation_series
+    assert isinstance(evaluation_series[0], QStackedBarSeries)
+    assert len(evaluation_series[0].barSets()) == len(widget.data.evaluation_counts)
+    first_code = widget.data.evaluation_counts[0][0]
+    assert evaluation_series[0].barSets()[0].color().name() == _EVALUATION_COLORS[
+        first_code
+    ].lower()
+    assert widget.evaluations_view.chart().title() == STRINGS.dashboard_chart_evaluations
     assert widget.ranking_view.chart().series()
+    assert widget.ranking_view.chart().title() == STRINGS.dashboard_chart_ranking
+
+    card = widget.kpi_layout.itemAt(0).widget()
+    assert card.layout().contentsMargins().top() == 5
+    assert card.layout().contentsMargins().bottom() == 5
 
     widget.types_combo.setCurrentIndex(1)
     assert widget.types_view.chart().series()
@@ -188,5 +212,6 @@ def test_widget_branch_role_hides_branch_filter(dashboard_data, qt_app):
     widget = DashboardWidget(dashboard_data["session"], "branch", "F1")
     assert widget.branch_combo.isHidden()
     assert widget.kpi_layout.count() == 4
+    widget.financial_check.setChecked(False)
     assert widget.data.documents_total == 3
     widget.close()

@@ -369,7 +369,7 @@ class DashboardService:
             code = pack_enum_display("evaluation_value", int(evaluation.value))
             counts[code] = counts.get(code, 0) + 1
         return [
-            (f"{enum_label('evaluation_value', code)} ({code})", counts[code])
+            (code, counts[code])
             for code in enum_codes("evaluation_value")
             if counts.get(code)
         ]

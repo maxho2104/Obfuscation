@@ -12,13 +12,15 @@ from PyQt5.QtChart import (
     QChart,
     QChartView,
     QPieSeries,
+    QStackedBarSeries,
     QValueAxis,
 )
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import QPointF, Qt, QTimer
 from PyQt5.QtGui import QBrush, QColor, QFont, QPainter
 from PyQt5.QtWidgets import (
     QComboBox,
     QFrame,
+    QGraphicsSimpleTextItem,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -70,6 +72,23 @@ _CHART_COLORS = (
     "#5D6D7E",
 )
 
+_EVALUATION_COLORS = {
+    "Б": "#C0392B",
+    "И": "#E67E22",
+    "П": "#A9C43A",
+    "В": "#2E8B57",
+}
+
+_WEEKDAYS = (
+    "понедельник",
+    "вторник",
+    "среда",
+    "четверг",
+    "пятница",
+    "суббота",
+    "воскресенье",
+)
+
 
 class KpiCard(QFrame):
     """Карточка одного сводного показателя."""
@@ -80,7 +99,7 @@ class KpiCard(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._scale = 1.0
         self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(14, 10, 14, 10)
+        self._layout.setContentsMargins(14, 5, 14, 5)
         self._layout.setSpacing(3)
 
         self.title_label = QLabel(kpi.label)
@@ -116,8 +135,8 @@ class KpiCard(QFrame):
         """Масштабирует отступы, шрифты и высоту плитки."""
         self._scale = scale
         self._layout.setContentsMargins(
-            round(14 * scale), round(10 * scale),
-            round(14 * scale), round(10 * scale),
+            round(14 * scale), round(5 * scale),
+            round(14 * scale), round(5 * scale),
         )
         self._layout.setSpacing(max(1, round(3 * scale)))
         self._apply_fonts(scale)
@@ -186,6 +205,10 @@ class DashboardWidget(QWidget):
 
         controls = QHBoxLayout()
         controls.setSpacing(8)
+        self.refresh_button = QPushButton(STRINGS.dashboard_refresh)
+        self.refresh_button.clicked.connect(self.refresh)
+        controls.addWidget(self.refresh_button)
+
         controls.addWidget(QLabel(f"{STRINGS.dashboard_period}:"))
         self.period_combo = QComboBox()
         for key in (PERIOD_YEAR, PERIOD_HALF, PERIOD_QUARTER, PERIOD_MONTH):
@@ -201,7 +224,8 @@ class DashboardWidget(QWidget):
 
         self.financial_check = QPushButton(STRINGS.dashboard_financial)
         self.financial_check.setCheckable(True)
-        self.financial_check.setFlat(True)
+        self.financial_check.setChecked(True)
+        self.financial_check.setFlat(False)
         controls.addWidget(self.financial_check)
 
         self.branch_label = QLabel(f"{STRINGS.dashboard_branch}:")
@@ -216,10 +240,25 @@ class DashboardWidget(QWidget):
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: #C0392B;")
         controls.addWidget(self.status_label)
-        self.refresh_button = QPushButton(STRINGS.dashboard_refresh)
-        self.refresh_button.clicked.connect(self.refresh)
-        controls.addWidget(self.refresh_button)
+
+        today = date.today()
+        self.date_label = QLabel(
+            f"{today.strftime('%d.%m.%Y')}, {_WEEKDAYS[today.weekday()]}"
+        )
+        controls.addWidget(self.date_label)
         root.addLayout(controls)
+
+        self.period_combo.currentIndexChanged.connect(self._period_type_changed)
+        self.year_combo.currentIndexChanged.connect(self._filters_changed)
+        self.index_combo.currentIndexChanged.connect(self._filters_changed)
+        self.financial_check.toggled.connect(self._financial_toggled)
+        self.branch_combo.currentIndexChanged.connect(self._filters_changed)
+        self._style_financial_button()
+        from internal_correspondence.gui.theme import current_theme
+
+        self.date_label.setStyleSheet(
+            f"color: {current_theme().qss_colors['TEXT_MUTED']};"
+        )
 
         self.period_label = QLabel("")
         period_font = QFont(self.period_label.font())
@@ -259,12 +298,6 @@ class DashboardWidget(QWidget):
         charts.setRowStretch(1, 1)
         root.addLayout(charts, 1)
 
-        self.period_combo.currentIndexChanged.connect(self._period_type_changed)
-        self.year_combo.currentIndexChanged.connect(self._filters_changed)
-        self.index_combo.currentIndexChanged.connect(self._filters_changed)
-        self.financial_check.toggled.connect(self._filters_changed)
-        self.branch_combo.currentIndexChanged.connect(self._filters_changed)
-
     @staticmethod
     def _chart_view() -> QChartView:
         view = QChartView()
@@ -300,6 +333,30 @@ class DashboardWidget(QWidget):
         finally:
             self._updating = False
         self._period_type_changed()
+
+    def _financial_toggled(self, _checked: bool) -> None:
+        """Обновляет подсветку кнопки финансового года и данные."""
+        self._style_financial_button()
+        self._filters_changed()
+
+    def _style_financial_button(self) -> None:
+        """Подсвечивает кнопку, когда выбран финансовый год."""
+        from internal_correspondence.gui.theme import current_theme
+
+        colors = current_theme().qss_colors
+        accent = colors["ACCENT"]
+        self.financial_check.setStyleSheet(
+            "QPushButton {"
+            " border: 1px solid transparent;"
+            " border-radius: 4px;"
+            " padding: 3px 10px;"
+            "}"
+            "QPushButton:checked {"
+            f" background: {accent};"
+            " color: #FFFFFF;"
+            f" border-color: {accent};"
+            "}"
+        )
 
     def _period_type_changed(self) -> None:
         if self._updating:
@@ -494,28 +551,64 @@ class DashboardWidget(QWidget):
             )
             self._set_chart(self.evaluations_view, chart)
             return
-        series = QBarSeries()
-        bar_set = QBarSet(STRINGS.dashboard_chart_evaluations)
-        labels: List[str] = []
+
+        total = sum(count for _, count in data.evaluation_counts)
+        labels = [label for label, _count in data.evaluation_counts]
+        series = QStackedBarSeries()
         for index, (label, count) in enumerate(data.evaluation_counts):
-            labels.append(label)
-            bar_set.append(count)
-        series.append(bar_set)
+            bar_set = QBarSet(label)
+            values = [0] * len(data.evaluation_counts)
+            values[index] = count
+            bar_set.append(values)
+            bar_set.setColor(
+                QColor(_EVALUATION_COLORS.get(label, _CHART_COLORS[index]))
+            )
+            series.append(bar_set)
+        series.setBarWidth(0.72)
         chart.addSeries(series)
         chart.legend().setVisible(False)
+
         axis_x = QBarCategoryAxis()
         axis_x.append(labels)
-        axis_x.setLabelsAngle(-20)
+        axis_x.setLabelsAngle(0)
         chart.addAxis(axis_x, Qt.AlignBottom)
         series.attachAxis(axis_x)
+
         axis_y = QValueAxis()
-        axis_y.setRange(0, max([count for _, count in data.evaluation_counts] + [1]) * 1.15)
+        maximum = max([count for _, count in data.evaluation_counts] + [1])
+        axis_y.setRange(0, maximum * 1.35)
         axis_y.setLabelFormat("%d")
         axis_y.setTickCount(5)
         chart.addAxis(axis_y, Qt.AlignLeft)
         series.attachAxis(axis_y)
         self._style_axis(axis_x, QColor(colors["TEXT_MUTED"]))
         self._style_axis(axis_y, QColor(colors["TEXT_MUTED"]))
+
+        text_color = QColor(colors["TEXT"])
+        label_font = QFont()
+        label_font.setPointSize(max(6, round(8 * self._scale)))
+        label_font.setBold(True)
+        items = []
+        for index, (_label, count) in enumerate(data.evaluation_counts):
+            percent = count * 100.0 / total if total else 0.0
+            item = QGraphicsSimpleTextItem(f"{count} ({percent:.0f}%)", chart)
+            item.setBrush(QBrush(text_color))
+            item.setFont(label_font)
+            item.setZValue(20)
+            items.append((index, count, item))
+
+        def place_labels() -> None:
+            plot = chart.plotArea()
+            for index, count, item in items:
+                point = chart.mapToPosition(QPointF(index, count), series)
+                rect = item.boundingRect()
+                x = point.x() - rect.width() / 2.0
+                x = max(plot.left() + 2.0, min(x, plot.right() - rect.width() - 2.0))
+                y = max(plot.top() + 2.0, point.y() - rect.height() - 2.0)
+                item.setPos(x, y)
+
+        chart.plotAreaChanged.connect(lambda *_: place_labels())
+        place_labels()
         self._set_chart(self.evaluations_view, chart)
 
     def _render_ranking(self, data: DashboardData) -> None:
@@ -592,6 +685,13 @@ class DashboardWidget(QWidget):
     # ------------------------------------------------------------------
     def apply_theme(self) -> None:
         """Перерисовывает карточки и диаграммы после смены темы."""
+        from internal_correspondence.gui.theme import current_theme
+
+        colors = current_theme().qss_colors
+        if hasattr(self, "date_label"):
+            self.date_label.setStyleSheet(f"color: {colors['TEXT_MUTED']};")
+        if hasattr(self, "financial_check"):
+            self._style_financial_button()
         for index in range(self.kpi_layout.count()):
             widget = self.kpi_layout.itemAt(index).widget()
             if isinstance(widget, KpiCard):
