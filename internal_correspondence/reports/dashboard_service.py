@@ -57,7 +57,9 @@ MONTH_SHORT = (
     "дек",
 )
 
+NODE_REGION = "region"
 NODE_BRANCH = "branch"
+NODE_EMPLOYEE = "employee"
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,8 @@ class DashboardData:
     tasks_completed: int
     tasks_uncompleted: int
     tasks_due_soon: int
+    task_type_counts: List[Tuple[str, int]]
+    completed_task_type_counts: List[Tuple[str, int]]
     changes_total: int
     import_status: Optional[str]
     import_matched: int
@@ -212,6 +216,14 @@ class DashboardService:
             tasks, task_assignments, scope
         )
         completed, uncompleted, due_soon = self._task_completion(tasks)
+        today = date.today()
+        completed_tasks = [
+            task
+            for task in tasks
+            if task.end_date is not None and task.end_date < today
+        ]
+        task_type_counts = self._task_type_counts(tasks)
+        completed_task_type_counts = self._task_type_counts(completed_tasks)
         monthly_labels, monthly_materials, monthly_telegrams = self._monthly_series(
             period, materials, telegrams
         )
@@ -247,6 +259,8 @@ class DashboardService:
             tasks_completed=completed,
             tasks_uncompleted=uncompleted,
             tasks_due_soon=due_soon,
+            task_type_counts=task_type_counts,
+            completed_task_type_counts=completed_task_type_counts,
             changes_total=changes_total,
             import_info=import_info,
         )
@@ -271,6 +285,8 @@ class DashboardService:
             tasks_completed=completed,
             tasks_uncompleted=uncompleted,
             tasks_due_soon=due_soon,
+            task_type_counts=task_type_counts,
+            completed_task_type_counts=completed_task_type_counts,
             changes_total=changes_total,
             import_status=import_info[0] if import_info else None,
             import_matched=import_info[1] if import_info else 0,
@@ -554,6 +570,20 @@ class DashboardService:
             )
         return result
 
+    def _task_type_counts(
+        self, tasks: Sequence[ScientificTask]
+    ) -> List[Tuple[str, int]]:
+        """Количество задач по типам (коды ОЗ/ДЗ)."""
+        counts: Dict[str, int] = {}
+        for task in tasks:
+            code = pack_enum_display("scientific_task_type", int(task.type))
+            counts[code] = counts.get(code, 0) + 1
+        return [
+            (code, counts[code])
+            for code in enum_codes("scientific_task_type")
+            if counts.get(code)
+        ]
+
     def _task_stats(
         self,
         tasks: Sequence[ScientificTask],
@@ -567,15 +597,20 @@ class DashboardService:
         for task in tasks:
             nodes = assignments.get(task.id, set())
             if scope:
-                assigned += 1
-                has_child = any(
-                    node_type != NODE_BRANCH or node_id != scope
-                    for node_type, node_id in nodes
+                # В филиале задача распределена, только если дошла до сотрудника.
+                has_employee = any(
+                    node_type == NODE_EMPLOYEE for node_type, _node_id in nodes
                 )
-                if not has_child:
+                if has_employee:
+                    assigned += 1
+                else:
                     unassigned += 1
             else:
-                if nodes:
+                # В головном офисе достаточно назначения на регион.
+                has_region = any(
+                    node_type == NODE_REGION for node_type, _node_id in nodes
+                )
+                if has_region:
                     assigned += 1
                 else:
                     unassigned += 1
@@ -667,6 +702,8 @@ class DashboardService:
         tasks_completed: int,
         tasks_uncompleted: int,
         tasks_due_soon: int,
+        task_type_counts: List[Tuple[str, int]],
+        completed_task_type_counts: List[Tuple[str, int]],
         changes_total: int,
         import_info: Optional[Tuple[str, int, int]],
     ) -> List[KpiValue]:
@@ -683,6 +720,12 @@ class DashboardService:
         )
         report_breakdown = " · ".join(
             f"{label}: {count}" for label, count in report_type_counts
+        ) or "—"
+        task_breakdown = " · ".join(
+            f"{label}: {count}" for label, count in task_type_counts
+        ) or "—"
+        completed_task_breakdown = " · ".join(
+            f"{label}: {count}" for label, count in completed_task_type_counts
         ) or "—"
         total_tasks = tasks_completed + tasks_uncompleted
         completed_percent = (
@@ -724,17 +767,26 @@ class DashboardService:
             KpiValue(
                 "tasks",
                 STRINGS.dashboard_tasks,
-                f"{tasks_assigned} / {tasks_unassigned}",
-                STRINGS.dashboard_tasks_detail,
+                str(tasks_total),
+                task_breakdown,
+                attention=(
+                    STRINGS.dashboard_unassigned_tasks.format(
+                        count=tasks_unassigned
+                    )
+                    if tasks_unassigned
+                    else ""
+                ),
             ),
             KpiValue(
                 "completed",
                 STRINGS.dashboard_completed_tasks,
                 f"{tasks_completed} ({completed_percent:.0f} %)",
-                STRINGS.dashboard_completed_detail.format(count=tasks_uncompleted),
+                completed_task_breakdown,
                 attention=(
-                    STRINGS.dashboard_due_soon.format(count=tasks_due_soon)
-                    if tasks_due_soon
+                    STRINGS.dashboard_uncompleted_tasks.format(
+                        count=tasks_uncompleted
+                    )
+                    if tasks_uncompleted
                     else ""
                 ),
             ),

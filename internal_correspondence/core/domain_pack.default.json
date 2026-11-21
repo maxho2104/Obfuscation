@@ -1270,6 +1270,8 @@
     "dashboard_undelivered": "Не доложено: {count}",
     "dashboard_completed_tasks": "Выполнено задач",
     "dashboard_completed_detail": "невыполненных: {count}",
+    "dashboard_unassigned_tasks": "Не распределено: {count}",
+    "dashboard_uncompleted_tasks": "Не выполнено: {count}",
     "dashboard_due_soon": "Срок истекает: {count}",
     "dashboard_tasks": "Задачи",
     "dashboard_tasks_detail": "назначено / не распределено",

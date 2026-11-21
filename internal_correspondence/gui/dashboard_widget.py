@@ -695,7 +695,7 @@ class DashboardWidget(QWidget):
         coefficient_font.setPointSize(max(7, round(9 * self._scale)))
         coefficient_font.setBold(True)
         child_font = QFont()
-        child_font.setPointSize(max(7, round(8 * self._scale)))
+        child_font.setPointSize(max(9, round(10 * self._scale)))
 
         child_items: List[tuple] = []
         coefficient_items: List[tuple] = []

@@ -154,10 +154,16 @@ def test_service_counts_and_average(dashboard_data, db_manager):
     assert data.tasks_completed == 0
     assert data.tasks_uncompleted == 1
     assert data.tasks_due_soon == 0
-    assert data.tasks_assigned == 1
+    assert data.tasks_assigned == 0
+    assert data.tasks_unassigned == 1
+    assert data.task_type_counts == [("ОЗ", 1)]
+    assert data.completed_task_type_counts == []
     assert data.ranking == [("Ф-1", 3)]
     assert data.ranking_children == [[("Отдел 1", 3)]]
-    assert [item[0] for item in data.attention] == [STRINGS.dashboard_without_evaluation]
+    assert [item[0] for item in data.attention] == [
+        STRINGS.dashboard_without_evaluation,
+        STRINGS.dashboard_tasks_unassigned,
+    ]
 
 
 def test_service_month_and_branch_filter(dashboard_data):
@@ -206,10 +212,17 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     assert reported_card.value_label.text() == "1"
     assert reported_card.detail_label.text() == "ДР: 1"
     assert reported_card.attention_label.text() == ""
+    tasks_card = cards[STRINGS.dashboard_tasks]
+    assert tasks_card.value_label.text() == "1"
+    assert tasks_card.detail_label.text() == "ОЗ: 1"
+    assert tasks_card.attention_label.text() == (
+        "⚠ " + STRINGS.dashboard_unassigned_tasks.format(count=1)
+    )
     completed_card = cards[STRINGS.dashboard_completed_tasks]
     assert completed_card.value_label.text() == "0 (0 %)"
-    assert completed_card.detail_label.text() == (
-        STRINGS.dashboard_completed_detail.format(count=1)
+    assert completed_card.detail_label.text() == "—"
+    assert completed_card.attention_label.text() == (
+        "⚠ " + STRINGS.dashboard_uncompleted_tasks.format(count=1)
     )
     assert not widget.findChildren(QScrollArea)
     # По умолчанию включён финансовый год; для данных теста переключаемся
@@ -309,12 +322,30 @@ def test_completed_task_percent_is_share_of_all_tasks(dashboard_data):
         tasks_completed=3,
         tasks_uncompleted=2,
         tasks_due_soon=0,
+        task_type_counts=[("ОЗ", 5)],
+        completed_task_type_counts=[("ОЗ", 3)],
         changes_total=0,
         import_info=None,
     )
     completed = next(item for item in kpis if item.key == "completed")
     assert completed.value == "3 (60 %)"
-    assert completed.detail == STRINGS.dashboard_completed_detail.format(count=2)
+    assert completed.detail == "ОЗ: 3"
+    assert completed.attention == STRINGS.dashboard_uncompleted_tasks.format(count=2)
+
+
+def test_task_stats_require_region_for_head_office_and_employee_for_branch(
+    dashboard_data,
+):
+    service = DashboardService(dashboard_data["session"], "head_office")
+    task = SimpleNamespace(id="T-1", end_date=None)
+    branch_only = {"T-1": {("branch", "F1")}}
+    region = {"T-1": {("region", "R1")}}
+    employee = {"T-1": {("branch", "F1"), ("employee", "E1")}}
+
+    assert service._task_stats([task], branch_only, None) == (0, 1, 0)
+    assert service._task_stats([task], region, None) == (1, 0, 0)
+    assert service._task_stats([task], branch_only, "F1") == (0, 1, 0)
+    assert service._task_stats([task], employee, "F1") == (1, 0, 0)
 
 
 def test_ranking_child_labels_have_outline(dashboard_data, qt_app):

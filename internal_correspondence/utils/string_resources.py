@@ -602,6 +602,8 @@ class AppStrings:
     dashboard_undelivered: str = "Не доложено: {count}"
     dashboard_completed_tasks: str = "Выполнено задач"
     dashboard_completed_detail: str = "невыполненных: {count}"
+    dashboard_unassigned_tasks: str = "Не распределено: {count}"
+    dashboard_uncompleted_tasks: str = "Не выполнено: {count}"
     dashboard_due_soon: str = "Срок истекает: {count}"
     dashboard_tasks: str = "Задачи"
     dashboard_tasks_detail: str = "назначено / не распределено"
