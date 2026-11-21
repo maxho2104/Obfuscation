@@ -282,6 +282,10 @@ class AppStrings:
     task_no_periods: str = "Нет задач за доступные периоды"
     task_select_node: str = "Выберите элемент дерева."
     task_select_tasks: str = "Выберите хотя бы одну задачу."
+    task_assign_invalid_nodes: str = (
+        "Среди выбранных элементов есть недоступные для назначения. "
+        "Выберите отделы или сотрудников."
+    )
     task_assign_error: str = "Не удалось назначить задачи:\n{error}"
     task_unassign_error: str = "Не удалось снять задачи:\n{error}"
     task_unassign_confirm: str = "Снять выбранные задачи ({count}) с элемента «{node}»?"

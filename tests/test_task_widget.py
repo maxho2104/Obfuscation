@@ -218,3 +218,95 @@ def test_distributed_toggle_filters_distributed_tasks(
             assert widget.right_model.rowCount() == 1
         finally:
             widget.deleteLater()
+
+def _setup_two_departments(session):
+    from internal_correspondence.orm.models import AddedTask
+    from internal_correspondence.services.task_distribution_service import (
+        NODE_BRANCH,
+        NODE_REGION,
+        TaskDistributionService,
+    )
+
+    unit = TerritorialUnit(id="MSK2", name="Москва 2")
+    branch = Branch(
+        id="BR2", name="Филиал 2", short_name="Ф-2", territorial_unit_id="MSK2"
+    )
+    session.add_all([unit, branch])
+    session.flush()
+    first = Department(name="Отдел А", branch_id=branch.id)
+    second = Department(name="Отдел Б", branch_id=branch.id)
+    session.add_all([first, second])
+    session.flush()
+    task = ScientificTask(
+        id="T2",
+        name="Задача 2",
+        type=ScientificTaskType.MAIN.value,
+        start_date=date(2026, 2, 1),
+    )
+    session.add(task)
+    session.commit()
+
+    service = TaskDistributionService(session, Role.HEAD_OFFICE.value)
+    service.assign([task], service.node((NODE_REGION, unit.id)))
+    service.assign([task], service.node((NODE_BRANCH, branch.id)))
+    session.commit()
+    return first, second, task
+
+
+def test_tree_multi_selection_assigns_to_all_and_right_shows_first(
+    qt_app, db_manager: DatabaseManager
+) -> None:
+    from PyQt5.QtCore import QItemSelectionModel
+
+    from internal_correspondence.orm.models import AddedTask
+    from internal_correspondence.services.task_distribution_service import (
+        NODE_DEPARTMENT,
+    )
+    from internal_correspondence.gui.task_distribution_widget import (
+        TaskDistributionWidget,
+    )
+
+    with db_manager.get_session() as session:
+        first, second, task = _setup_two_departments(session)
+        widget = TaskDistributionWidget(session, Role.HEAD_OFFICE.value)
+        try:
+            tree = widget.tree
+            first_item = widget._item_for_key((NODE_DEPARTMENT, str(first.id)))
+            second_item = widget._item_for_key((NODE_DEPARTMENT, str(second.id)))
+            assert first_item is not None and second_item is not None
+
+            first_item.setSelected(True)
+            tree.setCurrentItem(first_item)
+            second_item.setSelected(True)
+            tree.selectionModel().setCurrentIndex(
+                tree.indexFromItem(second_item),
+                QItemSelectionModel.NoUpdate,
+            )
+
+            assert widget.selected_keys() == [
+                (NODE_DEPARTMENT, str(first.id)),
+                (NODE_DEPARTMENT, str(second.id)),
+            ]
+            assert widget.current_key() == (NODE_DEPARTMENT, str(first.id))
+            # Правая таблица показывает задачи ведущего (первого) узла.
+            assert widget.right_model.rowCount() == 0
+            assert widget.middle_model.rowCount() == 1
+
+            widget.middle_view.selectRow(0)
+            assert widget.assign_button.isEnabled() is True
+            widget._assign_tasks(widget.middle_model.tasks_at([0]))
+
+            rows = (
+                session.query(AddedTask)
+                .filter(AddedTask.task_id == task.id)
+                .filter(AddedTask.node_type == NODE_DEPARTMENT)
+                .all()
+            )
+            assert {row.node_id for row in rows} == {
+                str(first.id),
+                str(second.id),
+            }
+            assert widget.right_model.rowCount() == 1
+            assert widget.right_model.task_at(0).id == task.id
+        finally:
+            widget.deleteLater()

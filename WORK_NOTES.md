@@ -2174,3 +2174,10 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 ### Проверка
 - Новые тесты: `test_task_model_shows_type_column`, `test_distributed_toggle_filters_distributed_tasks`; в `test_details_panel_employee` проверяется колонка «Тип».
 - `pytest tests/test_task_widget.py tests/test_oshm_dialog.py -q` — 32 passed.
+
+### Дополнение (2026-11-21) — множественный выбор в распределении задач
+- `gui/task_distribution_widget.py`: дерево переведено в `ExtendedSelection`; порядок выделения запоминается (`_selected_keys`, `_on_tree_current_item_changed`), ведущим считается первый выбранный узел. Правая таблица и подпись показывают задачи ведущего узла, средняя — задачи его вышестоящего элемента. Кнопка `>>>` и drag-and-drop назначают выбранные задачи всем выбранным узлам; неактивные/справочные узлы исключаются, при смешанном выборе выводится предупреждение.
+- `utils/string_resources.py`: строка `task_assign_invalid_nodes`; секция strings пакета перегенерирована (531 ключ).
+- `tests/test_task_widget.py`: тест `test_tree_multi_selection_assigns_to_all_and_right_shows_first` (Ctrl-подобное выделение двух отделов, назначение одной задачи обоим, правая таблица ведущего узла).
+- Проверка: `pytest tests/test_task_widget.py` — 7 passed; полный `pytest tests -q` — 437 passed, 1 warning zipfile.
+- `README.md`: описан множественный выбор и ведущий узел.

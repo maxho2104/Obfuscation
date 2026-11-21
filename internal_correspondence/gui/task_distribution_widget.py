@@ -146,6 +146,7 @@ class TaskDistributionWidget(QWidget):
         self.current_period: Optional[FinancialPeriod] = None
         self.current_node: Optional[DistributionNode] = None
         self.selected_assignable = True
+        self._selected_keys: List[NodeKey] = []
 
         self._build_ui()
         self._reload_periods()
@@ -176,7 +177,9 @@ class TaskDistributionWidget(QWidget):
         self.tree.setHeaderHidden(True)
         self.tree.setMinimumWidth(240)
         self.tree.setIndentation(16)
-        self.tree.currentItemChanged.connect(self._on_tree_current_changed)
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tree.currentItemChanged.connect(self._on_tree_current_item_changed)
+        self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
 
         self.middle_label = QLabel(STRINGS.task_middle_title)
         self.middle_search = QLineEdit()
@@ -351,24 +354,51 @@ class TaskDistributionWidget(QWidget):
         return item
 
     def _select_key(self, key: NodeKey) -> None:
+        item = self._item_for_key(key)
+        if item is None:
+            return
+        parent = item.parent()
+        while parent is not None:
+            parent.setExpanded(True)
+            parent = parent.parent()
+        self.tree.clearSelection()
+        self.tree.setCurrentItem(item)
+        if item.isSelected():
+            self._selected_keys = [key]
+            self._on_tree_selection_changed()
+        self.tree.scrollToItem(item)
+
+    def _item_for_key(self, key: NodeKey) -> Optional[QTreeWidgetItem]:
         iterator = QTreeWidgetItemIterator(self.tree)
         while iterator.value():
             item = iterator.value()
             if item.data(0, KEY_ROLE) == key:
-                parent = item.parent()
-                while parent is not None:
-                    parent.setExpanded(True)
-                    parent = parent.parent()
-                self.tree.setCurrentItem(item)
-                self.tree.scrollToItem(item)
-                return
+                return item
             iterator += 1
+        return None
 
     def current_key(self) -> Optional[NodeKey]:
+        if self._selected_keys:
+            return self._selected_keys[0]
         item = self.tree.currentItem()
         if item is None:
             return None
         return item.data(0, KEY_ROLE)
+
+    def selected_keys(self) -> List[NodeKey]:
+        """Ключи выбранных узлов в порядке выделения (первый — ведущий)."""
+        return list(self._selected_keys)
+
+    def _selected_nodes(self) -> List[DistributionNode]:
+        nodes: List[DistributionNode] = []
+        for key in self._selected_keys:
+            node = self.service.node(key)
+            if node is not None:
+                nodes.append(node)
+        return nodes
+
+    def _assignable_selected_nodes(self) -> List[DistributionNode]:
+        return [node for node in self._selected_nodes() if node.assignable and node.active]
 
     def _reload_periods(self) -> None:
         previous = self.current_period.year if self.current_period else None
@@ -393,14 +423,49 @@ class TaskDistributionWidget(QWidget):
         self._populate_tree()
         self._reload_all()
 
-    def _on_tree_current_changed(
+    def _on_tree_current_item_changed(
         self, current: Optional[QTreeWidgetItem], _previous: Optional[QTreeWidgetItem]
     ) -> None:
-        if current is None:
-            self.current_node = None
+        """Запоминает порядок выделения: ведущий — выбранный первым."""
+        if current is None or not current.isSelected():
             return
         key = current.data(0, KEY_ROLE)
-        self.selected_assignable = bool(current.data(0, ASSIGNABLE_ROLE))
+        if key is not None and key not in self._selected_keys:
+            self._selected_keys.append(key)
+
+    def _on_tree_selection_changed(self) -> None:
+        """Обновляет ведущий узел и таблицы при множественном выборе.
+
+        Ведущим считается узел, выбранный первым: именно его задачи
+        показываются в правой таблице. Остальные выбранные узлы получают
+        задачи средней таблицы при нажатии «>>>».
+        """
+        selected = {
+            item.data(0, KEY_ROLE)
+            for item in self.tree.selectedItems()
+            if item.data(0, KEY_ROLE) is not None
+        }
+        ordered = [key for key in self._selected_keys if key in selected]
+        for item in self.tree.selectedItems():
+            key = item.data(0, KEY_ROLE)
+            if key is not None and key not in ordered:
+                ordered.append(key)
+        self._selected_keys = ordered
+
+        key = ordered[0] if ordered else None
+        if key is None:
+            self.current_node = None
+            self.selected_assignable = False
+            self.middle_model.set_tasks([], set())
+            self.right_model.set_tasks([], set())
+            self._update_empty_status(self.middle_status, 0, False)
+            self._update_empty_status(self.right_status, 0, False)
+            self._update_buttons()
+            return
+        item = self._item_for_key(key)
+        self.selected_assignable = bool(
+            item is not None and item.data(0, ASSIGNABLE_ROLE)
+        )
         self.current_node = self.service.node(key)
         self._refresh_tables()
 
@@ -539,11 +604,21 @@ class TaskDistributionWidget(QWidget):
 
     def _update_buttons(self, *_args) -> None:
         node = self.current_node
+        nodes = self._selected_nodes()
+        assignable = self._assignable_selected_nodes()
         can_assign = False
         can_unassign = False
         if node is not None and self.selected_assignable:
-            can_assign = bool(self._selected_tasks(self.middle_view)) and self.service.can_assign(node)[0]
-            can_unassign = bool(self._selected_tasks(self.right_view)) and self.service.can_unassign(node)[0]
+            can_assign = (
+                bool(self._selected_tasks(self.middle_view))
+                and bool(assignable)
+                and len(assignable) == len(nodes)
+                and all(self.service.can_assign(target)[0] for target in assignable)
+            )
+            can_unassign = (
+                bool(self._selected_tasks(self.right_view))
+                and self.service.can_unassign(node)[0]
+            )
         self.assign_button.setEnabled(can_assign)
         self.unassign_button.setEnabled(can_unassign)
 
@@ -558,11 +633,25 @@ class TaskDistributionWidget(QWidget):
         self._assign_tasks(tasks)
 
     def _assign_tasks(self, tasks: Sequence[ScientificTask]) -> None:
-        node = self.current_node
-        if node is None or not tasks:
+        nodes = self._selected_nodes()
+        assignable = self._assignable_selected_nodes()
+        if not tasks or not nodes:
+            return
+        if len(assignable) != len(nodes):
+            QMessageBox.warning(
+                self,
+                STRINGS.title_error,
+                STRINGS.task_assign_invalid_nodes,
+            )
             return
         try:
-            self.service.assign(tasks, node)
+            for node in assignable:
+                try:
+                    self.service.assign(tasks, node)
+                except TaskDistributionError as error:
+                    raise TaskDistributionError(
+                        f"{self._node_title(node)}: {error}"
+                    ) from error
             self.session.commit()
         except (TaskDistributionError, Exception) as error:  # noqa: B014
             self.session.rollback()
