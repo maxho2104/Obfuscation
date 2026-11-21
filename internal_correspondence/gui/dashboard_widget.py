@@ -16,10 +16,11 @@ from PyQt5.QtChart import (
     QValueAxis,
 )
 from PyQt5.QtCore import QMargins, QPointF, Qt, QTimer
-from PyQt5.QtGui import QBrush, QColor, QFont, QPainter, QPen
+from PyQt5.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import (
     QComboBox,
     QFrame,
+    QGraphicsPathItem,
     QGraphicsRectItem,
     QGraphicsSimpleTextItem,
     QGridLayout,
@@ -88,6 +89,14 @@ _RANKING_CHILD_COLORS = (
     "#9C6B1E",
 )
 
+_RANKING_CHILD_COLORS_DARK = (
+    "#7FB2FF",
+    "#4FD1C5",
+    "#8BD17C",
+    "#C4A7F5",
+    "#F2B880",
+)
+
 _WEEKDAYS = (
     "понедельник",
     "вторник",
@@ -119,9 +128,14 @@ class KpiCard(QFrame):
         self.detail_label = QLabel(kpi.detail)
         self.detail_label.setWordWrap(True)
 
+        self.attention_label = QLabel("")
+        self.attention_label.setWordWrap(True)
+        self.attention_label.setVisible(False)
+
         self._layout.addWidget(self.title_label)
         self._layout.addWidget(self.value_label)
         self._layout.addWidget(self.detail_label)
+        self._layout.addWidget(self.attention_label)
         self._apply_fonts(1.0)
         self.set_theme()
 
@@ -140,6 +154,11 @@ class KpiCard(QFrame):
         detail_font.setPointSize(max(8, round(11 * scale)))
         self.detail_label.setFont(detail_font)
 
+        attention_font = QFont(self.attention_label.font())
+        attention_font.setPointSize(max(8, round(11 * scale)))
+        attention_font.setBold(True)
+        self.attention_label.setFont(attention_font)
+
     def set_scale(self, scale: float) -> None:
         """Масштабирует отступы, шрифты и высоту плитки."""
         self._scale = scale
@@ -149,14 +168,18 @@ class KpiCard(QFrame):
         )
         self._layout.setSpacing(max(1, round(3 * scale)))
         self._apply_fonts(scale)
-        self.setMinimumHeight(round(84 * scale))
-        self.setMaximumHeight(round(132 * scale))
+        self.setMinimumHeight(round(96 * scale))
+        self.setMaximumHeight(round(150 * scale))
 
     def update_kpi(self, kpi: KpiValue) -> None:
         """Обновляет значения карточки без пересоздания виджета."""
         self.title_label.setText(kpi.label)
         self.value_label.setText(kpi.value)
         self.detail_label.setText(kpi.detail)
+        self.attention_label.setText(
+            f"⚠ {kpi.attention}" if kpi.attention else ""
+        )
+        self.attention_label.setVisible(bool(kpi.attention))
 
     def set_theme(self) -> None:
         """Подстраивает цвета карточки под текущую тему."""
@@ -175,6 +198,10 @@ class KpiCard(QFrame):
         self.title_label.setStyleSheet(f"color: {colors['TEXT_MUTED']};")
         self.value_label.setStyleSheet(f"color: {colors['TEXT']};")
         self.detail_label.setStyleSheet(f"color: {colors['TEXT_MUTED']};")
+        attention_color = "#F6C177" if theme.key == "dark" else "#C2410C"
+        self.attention_label.setStyleSheet(
+            f"color: {attention_color}; font-weight: 600;"
+        )
 
 
 class DashboardWidget(QWidget):
@@ -224,7 +251,6 @@ class DashboardWidget(QWidget):
             self.period_combo.addItem(PERIOD_LABELS[key], key)
         controls.addWidget(self.period_combo)
 
-        controls.addWidget(QLabel(f"{STRINGS.dashboard_year}:"))
         self.year_combo = QComboBox()
         controls.addWidget(self.year_combo)
 
@@ -257,8 +283,12 @@ class DashboardWidget(QWidget):
 
         today = date.today()
         self.date_label = QLabel(
-            f"{today.strftime('%d.%m.%Y')}, {_WEEKDAYS[today.weekday()]}"
+            f"{today.strftime('%d.%m.%Y')}\n{_WEEKDAYS[today.weekday()]}"
         )
+        self.date_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.date_label.setWordWrap(True)
+        self.date_label.setMinimumWidth(200)
+        self.date_label.setContentsMargins(0, 0, 8, 0)
         date_font = QFont(self.date_label.font())
         base_size = date_font.pointSize() if date_font.pointSize() > 0 else 9
         date_font.setPointSize(base_size + 10)
@@ -481,7 +511,7 @@ class DashboardWidget(QWidget):
         if old is not None:
             old.deleteLater()
 
-    def _style_axis(self, axis, color: QColor, font_size: float = 8) -> None:
+    def _style_axis(self, axis, color: QColor, font_size: float = 10) -> None:
         axis.setLabelsColor(color)
         axis.setLinePenColor(color)
         axis.setGridLineColor(QColor(color.red(), color.green(), color.blue(), 50))
@@ -522,7 +552,7 @@ class DashboardWidget(QWidget):
         axis_y.setTickCount(min(6, maximum + 2))
         chart.addAxis(axis_y, Qt.AlignLeft)
         series.attachAxis(axis_y)
-        self._style_axis(axis_x, QColor(colors["TEXT_MUTED"]), 7)
+        self._style_axis(axis_x, QColor(colors["TEXT_MUTED"]), 9)
         self._style_axis(axis_y, QColor(colors["TEXT_MUTED"]))
         self._set_chart(self.monthly_view, chart)
 
@@ -626,6 +656,7 @@ class DashboardWidget(QWidget):
         from internal_correspondence.gui.theme import current_theme
 
         colors = current_theme().qss_colors
+        is_dark = current_theme().key == "dark"
         chart = self._new_chart(data.ranking_title)
         if not data.ranking:
             chart.setTitle(f"{data.ranking_title} — {STRINGS.dashboard_no_data}")
@@ -634,8 +665,10 @@ class DashboardWidget(QWidget):
         series = QBarSeries()
         series.setBarWidth(0.86)
         bar_set = QBarSet("")
-        bar_set.setColor(QColor(colors["ACCENT_SOFT"]))
-        bar_set.setBorderColor(QColor(colors["BORDER_STRONG"]))
+        bar_set.setColor(QColor("#4F6B92" if is_dark else colors["ACCENT_SOFT"]))
+        bar_set.setBorderColor(
+            QColor("#8FB6E8" if is_dark else colors["BORDER_STRONG"])
+        )
         labels: List[str] = []
         for label, count in data.ranking:
             labels.append("—" if label == STRINGS.dashboard_no_branch else label)
@@ -654,7 +687,7 @@ class DashboardWidget(QWidget):
         axis_y.setTickCount(5)
         chart.addAxis(axis_y, Qt.AlignLeft)
         series.attachAxis(axis_y)
-        self._style_axis(axis_x, QColor(colors["TEXT_MUTED"]), 7)
+        self._style_axis(axis_x, QColor(colors["TEXT_MUTED"]), 9)
         self._style_axis(axis_y, QColor(colors["TEXT_MUTED"]))
 
         text_color = QColor(colors["TEXT"])
@@ -680,12 +713,20 @@ class DashboardWidget(QWidget):
                 rect_item = QGraphicsRectItem(chart)
                 rect_item.setPen(QPen(Qt.NoPen))
                 rect_item.setBrush(
-                    QBrush(QColor(_RANKING_CHILD_COLORS[child_index % len(_RANKING_CHILD_COLORS)]))
+                    QBrush(
+                        QColor(
+                            (_RANKING_CHILD_COLORS_DARK if is_dark else _RANKING_CHILD_COLORS)[
+                                child_index % len(_RANKING_CHILD_COLORS)
+                            ]
+                        )
+                    )
                 )
                 rect_item.setZValue(10)
-                label_item = QGraphicsSimpleTextItem(child_label, chart)
+                path = QPainterPath()
+                path.addText(0, 0, child_font, child_label)
+                label_item = QGraphicsPathItem(path, chart)
+                label_item.setPen(QPen(QColor("#000000"), 1.2))
                 label_item.setBrush(QBrush(QColor("#FFFFFF")))
-                label_item.setFont(child_font)
                 label_item.setRotation(-90)
                 label_item.setZValue(20)
                 child_items.append(
@@ -727,11 +768,13 @@ class DashboardWidget(QWidget):
                     label_item.setVisible(False)
                     continue
                 label_item.setVisible(True)
-                label_rect = label_item.boundingRect()
-                # Повёрнутая на -90° подпись занимает прямоугольник
-                # [posx, posx + height] × [posy - width, posy].
+                # После поворота на -90° подпись занимает высоту строки;
+                # сдвигаем её так, чтобы центр глифов совпал с центром столбца.
+                metrics = QFontMetricsF(child_font)
                 label_item.setPos(
-                    x + inner_width / 2.0 - label_rect.height() / 2.0,
+                    x
+                    + inner_width / 2.0
+                    + (metrics.ascent() - metrics.descent()) / 2.0,
                     base.y() - 2.0,
                 )
 

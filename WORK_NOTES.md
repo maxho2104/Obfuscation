@@ -2224,3 +2224,12 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 - `tests/test_dashboard.py`: добавлена проверка размера и жирности шрифта даты.
 - `README.md`, `docs/dashboard.md` обновлены.
 - Проверка: `pytest tests/test_dashboard.py` — 6 passed; полный `pytest tests -q` — 437 passed, 1 warning zipfile.
+
+### Дополнение (2026-11-22) — дашборд: оценённые документы, доклады и выполненные задачи
+- `reports/dashboard_service.py`: новые поля `DashboardData` — `evaluated_materials`, `evaluated_telegrams`, `materials_without_evaluation`, `reported_count`, `report_type_counts`, `undelivered_count`, `tasks_completed`, `tasks_uncompleted`, `tasks_due_soon`; `KpiValue.attention`.
+- Формулы: «Оценено документов» = оценённые материалы + оценённые телеграммы, процент — от суммы всех материалов и оценённых телеграмм; «Доложено телеграмм» — телеграммы с `report_type`, разбивка по кодам; «Выполнено задач» — задачи с `end_date` раньше текущей даты, процент от общего числа задач периода; предупреждения — неоценённые материалы, недоложенные телеграммы, задачи со сроком в ближайшие 30 дней.
+- `gui/dashboard_widget.py`: `KpiCard.attention_label` с треугольным значком; высота карточек 96–150 px; шрифт подписей осей увеличен на 2 pt; дата и день недели в две строки, жирные, с отступом; подписи вложенных столбцов рейтинга — белая заливка с чёрным контуром; на тёмной теме основной столбец `#4F6B92`, вложенные — яркая палитра.
+- `utils/string_resources.py`: ключи `dashboard_unevaluated_materials`, `dashboard_reported`, `dashboard_undelivered`, `dashboard_completed_tasks`, `dashboard_completed_detail`, `dashboard_due_soon`; секция strings пакета — 537 ключей.
+- `tests/test_dashboard.py`: 5 карточек HO / 6 филиал, значения и предупреждения, разбивка докладов, выполненные/невыполненные/срок, контур подписей; 8 passed.
+- `README.md`, `docs/dashboard.md` обновлены.
+- Проверка: полный `pytest tests -q` — 440 passed, 1 warning zipfile.

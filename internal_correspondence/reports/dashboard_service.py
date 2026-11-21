@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -82,6 +82,7 @@ class KpiValue:
     value: str
     detail: str = ""
     delta: Optional[float] = None
+    attention: str = ""
 
 
 @dataclass(frozen=True)
@@ -106,10 +107,19 @@ class DashboardData:
     telegrams_total: int
     evaluated_count: int
     evaluation_average: Optional[float]
+    evaluated_materials: int
+    evaluated_telegrams: int
+    materials_without_evaluation: int
+    reported_count: int
+    report_type_counts: List[Tuple[str, int]]
+    undelivered_count: int
     tasks_total: int
     tasks_assigned: int
     tasks_unassigned: int
     tasks_overdue: int
+    tasks_completed: int
+    tasks_uncompleted: int
+    tasks_due_soon: int
     changes_total: int
     import_status: Optional[str]
     import_matched: int
@@ -180,13 +190,28 @@ class DashboardService:
         previous_count = len(previous_documents)
         documents_delta = self._delta(len(documents), previous_count)
 
-        evaluated = [doc for doc in documents if doc.latest_evaluation is not None]
-        evaluated_count = len(evaluated)
+        evaluated_materials_list = [
+            doc for doc in materials if doc.latest_evaluation is not None
+        ]
+        evaluated_telegrams_list = [
+            doc for doc in telegrams if doc.latest_evaluation is not None
+        ]
+        evaluated = evaluated_materials_list + evaluated_telegrams_list
+        evaluated_materials = len(evaluated_materials_list)
+        evaluated_telegrams = len(evaluated_telegrams_list)
+        evaluated_count = evaluated_materials + evaluated_telegrams
         evaluation_average = self._evaluation_average(evaluated)
+        materials_without_evaluation = len(materials) - evaluated_materials
+
+        reported = [doc for doc in telegrams if doc.report_type is not None]
+        reported_count = len(reported)
+        report_type_counts = self._report_type_counts(reported)
+        undelivered_count = len(telegrams) - reported_count
 
         assigned, unassigned, overdue = self._task_stats(
             tasks, task_assignments, scope
         )
+        completed, uncompleted, due_soon = self._task_completion(tasks)
         monthly_labels, monthly_materials, monthly_telegrams = self._monthly_series(
             period, materials, telegrams
         )
@@ -210,9 +235,18 @@ class DashboardService:
             telegrams_total=len(telegrams),
             documents_delta=documents_delta,
             evaluated_count=evaluated_count,
+            evaluated_telegrams=evaluated_telegrams,
             evaluation_average=evaluation_average,
+            materials_without_evaluation=materials_without_evaluation,
+            reported_count=reported_count,
+            report_type_counts=report_type_counts,
+            undelivered_count=undelivered_count,
             tasks_assigned=assigned,
             tasks_unassigned=unassigned,
+            tasks_total=len(tasks),
+            tasks_completed=completed,
+            tasks_uncompleted=uncompleted,
+            tasks_due_soon=due_soon,
             changes_total=changes_total,
             import_info=import_info,
         )
@@ -224,10 +258,19 @@ class DashboardService:
             telegrams_total=len(telegrams),
             evaluated_count=evaluated_count,
             evaluation_average=evaluation_average,
+            evaluated_materials=evaluated_materials,
+            evaluated_telegrams=evaluated_telegrams,
+            materials_without_evaluation=materials_without_evaluation,
+            reported_count=reported_count,
+            report_type_counts=report_type_counts,
+            undelivered_count=undelivered_count,
             tasks_total=len(tasks),
             tasks_assigned=assigned,
             tasks_unassigned=unassigned,
             tasks_overdue=overdue,
+            tasks_completed=completed,
+            tasks_uncompleted=uncompleted,
+            tasks_due_soon=due_soon,
             changes_total=changes_total,
             import_status=import_info[0] if import_info else None,
             import_matched=import_info[1] if import_info else 0,
@@ -362,6 +405,20 @@ class DashboardService:
             key=lambda item: item[1],
             reverse=True,
         )
+
+    def _report_type_counts(self, telegrams: Sequence[Telegram]) -> List[Tuple[str, int]]:
+        """Количество доложенных телеграмм по типам докладов."""
+        counts: Dict[str, int] = {}
+        for telegram in telegrams:
+            if telegram.report_type is None:
+                continue
+            code = pack_enum_display("telegram_report_type", int(telegram.report_type))
+            counts[code] = counts.get(code, 0) + 1
+        return [
+            (code, counts[code])
+            for code in enum_codes("telegram_report_type")
+            if counts.get(code)
+        ]
 
     def _evaluation_counts(self, documents: Sequence[object]) -> List[Tuple[str, int]]:
         counts: Dict[str, int] = {}
@@ -526,6 +583,24 @@ class DashboardService:
                 overdue += 1
         return assigned, unassigned, overdue
 
+    def _task_completion(
+        self, tasks: Sequence[ScientificTask]
+    ) -> Tuple[int, int, int]:
+        """Выполненные, невыполненные и истекающие в течение месяца задачи."""
+        today = date.today()
+        horizon = today + timedelta(days=30)
+        completed = 0
+        due_soon = 0
+        for task in tasks:
+            if task.end_date is None:
+                continue
+            if task.end_date < today:
+                completed += 1
+            elif task.end_date <= horizon:
+                due_soon += 1
+        uncompleted = len(tasks) - completed
+        return completed, uncompleted, due_soon
+
     # ------------------------------------------------------------------
     # Изменения и импорт
     # ------------------------------------------------------------------
@@ -580,18 +655,39 @@ class DashboardService:
         telegrams_total: int,
         documents_delta: Optional[float],
         evaluated_count: int,
+        evaluated_telegrams: int,
         evaluation_average: Optional[float],
+        materials_without_evaluation: int,
+        reported_count: int,
+        report_type_counts: List[Tuple[str, int]],
+        undelivered_count: int,
         tasks_assigned: int,
         tasks_unassigned: int,
+        tasks_total: int,
+        tasks_completed: int,
+        tasks_uncompleted: int,
+        tasks_due_soon: int,
         changes_total: int,
         import_info: Optional[Tuple[str, int, int]],
     ) -> List[KpiValue]:
+        denominator = materials_total + evaluated_telegrams
         share = (
-            f"{evaluated_count * 100 / documents_total:.0f} %"
-            if documents_total
+            f"{evaluated_count * 100 / denominator:.0f} %"
+            if denominator
             else "—"
         )
-        average = f"{evaluation_average:.1f}".replace(".", ",") if evaluation_average else "—"
+        average = (
+            f"{evaluation_average:.1f}".replace(".", ",")
+            if evaluation_average is not None
+            else "—"
+        )
+        report_breakdown = " · ".join(
+            f"{label}: {count}" for label, count in report_type_counts
+        ) or "—"
+        total_tasks = tasks_completed + tasks_uncompleted
+        completed_percent = (
+            tasks_completed * 100 / total_tasks if total_tasks else 0.0
+        )
         result = [
             KpiValue(
                 "documents",
@@ -604,14 +700,43 @@ class DashboardService:
             KpiValue(
                 "evaluated",
                 STRINGS.dashboard_evaluated,
-                share,
-                STRINGS.dashboard_average.format(value=average),
+                str(evaluated_count),
+                f"{share} · {STRINGS.dashboard_average.format(value=average)}",
+                attention=(
+                    STRINGS.dashboard_unevaluated_materials.format(
+                        count=materials_without_evaluation
+                    )
+                    if materials_without_evaluation
+                    else ""
+                ),
+            ),
+            KpiValue(
+                "reported",
+                STRINGS.dashboard_reported,
+                str(reported_count),
+                report_breakdown,
+                attention=(
+                    STRINGS.dashboard_undelivered.format(count=undelivered_count)
+                    if undelivered_count
+                    else ""
+                ),
             ),
             KpiValue(
                 "tasks",
                 STRINGS.dashboard_tasks,
                 f"{tasks_assigned} / {tasks_unassigned}",
                 STRINGS.dashboard_tasks_detail,
+            ),
+            KpiValue(
+                "completed",
+                STRINGS.dashboard_completed_tasks,
+                f"{tasks_completed} ({completed_percent:.0f} %)",
+                STRINGS.dashboard_completed_detail.format(count=tasks_uncompleted),
+                attention=(
+                    STRINGS.dashboard_due_soon.format(count=tasks_due_soon)
+                    if tasks_due_soon
+                    else ""
+                ),
             ),
         ]
         if self._is_branch:
