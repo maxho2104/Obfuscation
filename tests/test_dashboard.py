@@ -10,7 +10,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtWidgets import QApplication, QTableWidget
+from PyQt5.QtWidgets import QApplication, QScrollArea
 
 from internal_correspondence.core.constants import (
     EvaluationValue,
@@ -151,12 +151,12 @@ def test_service_without_import_tables_is_safe(dashboard_data):
 
 def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     widget = DashboardWidget(dashboard_data["session"], "head_office")
-    assert widget.kpi_layout.count() == 4
+    assert widget.kpi_layout.count() == 3
     assert all(
         isinstance(widget.kpi_layout.itemAt(i).widget(), KpiCard)
         for i in range(widget.kpi_layout.count())
     )
-    assert widget.recent_table.rowCount() == 3
+    assert not widget.findChildren(QScrollArea)
     assert widget.monthly_view.chart().series()
     assert widget.types_view.chart().series()
     assert widget.evaluations_view.chart().series()
@@ -168,6 +168,19 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     widget.period_combo.setCurrentIndex(widget.period_combo.findData(PERIOD_MONTH))
     widget.index_combo.setCurrentIndex(2)
     assert widget.data.documents_total == 2
+    widget.close()
+
+
+def test_widget_scales_to_window_size(dashboard_data, qt_app):
+    widget = DashboardWidget(dashboard_data["session"], "head_office")
+    widget.resize(900, 620)
+    widget._apply_scale()
+    small_card = widget.kpi_layout.itemAt(0).widget()
+    small_size = small_card.value_label.font().pointSize()
+    widget.resize(1500, 950)
+    widget._apply_scale()
+    large_size = small_card.value_label.font().pointSize()
+    assert large_size > small_size
     widget.close()
 
 

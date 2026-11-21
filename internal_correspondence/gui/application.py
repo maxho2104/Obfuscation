@@ -523,7 +523,6 @@ class MainWindow(QMainWindow):
             self.db_manager.get_session(),
             self.settings.role,
             self.settings.branch_id,
-            storage_root=self.settings.storage_path_obj(),
         )
 
         self.tabs.addTab(self.dashboard_tab, STRINGS.tab_dashboard)

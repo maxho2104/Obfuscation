@@ -1,10 +1,8 @@
-"""Вкладка «Дашборд»: сводные показатели, диаграммы и последние документы."""
+"""Вкладка «Дашборд»: сводные показатели и адаптивные диаграммы."""
 
 from __future__ import annotations
 
-import calendar
 from datetime import date
-from pathlib import Path
 from typing import List, Optional
 
 from PyQt5.QtChart import (
@@ -17,25 +15,20 @@ from PyQt5.QtChart import (
     QValueAxis,
 )
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QBrush, QColor, QFont, QPainter, QPen
+from PyQt5.QtGui import QBrush, QColor, QFont, QPainter
 from PyQt5.QtWidgets import (
     QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QListWidget,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from internal_correspondence.core.constants import Role
-from internal_correspondence.gui.imported_files_widget import ImportedFilesWidget
 from internal_correspondence.reports.dashboard_service import (
     DashboardData,
     DashboardFilter,
@@ -85,32 +78,51 @@ class KpiCard(QFrame):
         super().__init__(parent)
         self.setObjectName("dashboardCard")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(3)
+        self._scale = 1.0
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(14, 10, 14, 10)
+        self._layout.setSpacing(3)
 
         self.title_label = QLabel(kpi.label)
         self.title_label.setWordWrap(True)
-        title_font = self.title_label.font()
-        title_font.setPointSize(max(8, title_font.pointSize() - 1))
-        self.title_label.setFont(title_font)
 
         self.value_label = QLabel(kpi.value)
-        value_font = QFont(self.value_label.font())
-        value_font.setPointSize(max(16, value_font.pointSize() + 8))
-        value_font.setBold(True)
-        self.value_label.setFont(value_font)
 
         self.detail_label = QLabel(kpi.detail)
         self.detail_label.setWordWrap(True)
-        detail_font = self.detail_label.font()
-        detail_font.setPointSize(max(8, detail_font.pointSize() - 1))
+
+        self._layout.addWidget(self.title_label)
+        self._layout.addWidget(self.value_label)
+        self._layout.addWidget(self.detail_label)
+        self._apply_fonts(1.0)
+        self.set_theme()
+
+    def _apply_fonts(self, scale: float) -> None:
+        """Подбирает размеры шрифтов под масштаб окна."""
+        title_font = QFont(self.title_label.font())
+        title_font.setPointSize(max(7, round(9 * scale)))
+        self.title_label.setFont(title_font)
+
+        value_font = QFont(self.value_label.font())
+        value_font.setPointSize(max(14, round(24 * scale)))
+        value_font.setBold(True)
+        self.value_label.setFont(value_font)
+
+        detail_font = QFont(self.detail_label.font())
+        detail_font.setPointSize(max(7, round(8 * scale)))
         self.detail_label.setFont(detail_font)
 
-        layout.addWidget(self.title_label)
-        layout.addWidget(self.value_label)
-        layout.addWidget(self.detail_label)
-        self.set_theme()
+    def set_scale(self, scale: float) -> None:
+        """Масштабирует отступы, шрифты и высоту плитки."""
+        self._scale = scale
+        self._layout.setContentsMargins(
+            round(14 * scale), round(10 * scale),
+            round(14 * scale), round(10 * scale),
+        )
+        self._layout.setSpacing(max(1, round(3 * scale)))
+        self._apply_fonts(scale)
+        self.setMinimumHeight(round(84 * scale))
+        self.setMaximumHeight(round(132 * scale))
 
     def update_kpi(self, kpi: KpiValue) -> None:
         """Обновляет значения карточки без пересоздания виджета."""
@@ -145,7 +157,6 @@ class DashboardWidget(QWidget):
         session,
         role: str,
         branch_id: Optional[str] = None,
-        storage_root: Optional[Path] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -156,7 +167,10 @@ class DashboardWidget(QWidget):
         self.data: Optional[DashboardData] = None
         self._updating = False
         self._types_kind = "material"
-        self._storage_root = Path(storage_root) if storage_root is not None else None
+        self._scale = 1.0
+        self._scale_timer = QTimer(self)
+        self._scale_timer.setSingleShot(True)
+        self._scale_timer.timeout.connect(self._apply_scale)
 
         self._build_ui()
         self._reload_filters()
@@ -167,8 +181,8 @@ class DashboardWidget(QWidget):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(8)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
 
         controls = QHBoxLayout()
         controls.setSpacing(8)
@@ -213,17 +227,21 @@ class DashboardWidget(QWidget):
         self.period_label.setFont(period_font)
         root.addWidget(self.period_label)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        content = QWidget()
-        self.content_layout = QVBoxLayout(content)
-        self.content_layout.setContentsMargins(0, 0, 0, 0)
-        self.content_layout.setSpacing(8)
-
         self.kpi_layout = QHBoxLayout()
         self.kpi_layout.setSpacing(8)
-        self.content_layout.addLayout(self.kpi_layout)
+        root.addLayout(self.kpi_layout)
+
+        # Переключатель структуры типов стоит над диаграммами, чтобы обе
+        # верхние диаграммы начинались на одной линии.
+        types_row = QHBoxLayout()
+        types_row.setContentsMargins(0, 0, 0, 0)
+        types_row.addStretch(1)
+        self.types_combo = QComboBox()
+        self.types_combo.addItem(STRINGS.dashboard_type_materials, "material")
+        self.types_combo.addItem(STRINGS.dashboard_type_telegrams, "telegram")
+        self.types_combo.currentIndexChanged.connect(self._types_changed)
+        types_row.addWidget(self.types_combo)
+        root.addLayout(types_row)
 
         charts = QGridLayout()
         charts.setSpacing(8)
@@ -231,87 +249,15 @@ class DashboardWidget(QWidget):
         self.types_view = self._chart_view()
         self.evaluations_view = self._chart_view()
         self.ranking_view = self._chart_view()
-
-        self.types_header = QWidget()
-        types_header_layout = QHBoxLayout(self.types_header)
-        types_header_layout.setContentsMargins(0, 0, 0, 0)
-        self.types_combo = QComboBox()
-        self.types_combo.addItem(STRINGS.dashboard_type_materials, "material")
-        self.types_combo.addItem(STRINGS.dashboard_type_telegrams, "telegram")
-        self.types_combo.currentIndexChanged.connect(self._types_changed)
-        types_header_layout.addStretch(1)
-        types_header_layout.addWidget(self.types_combo)
-
-        types_box = QWidget()
-        types_box_layout = QVBoxLayout(types_box)
-        types_box_layout.setContentsMargins(0, 0, 0, 0)
-        types_box_layout.setSpacing(2)
-        types_box_layout.addWidget(self.types_header)
-        types_box_layout.addWidget(self.types_view)
-
         charts.addWidget(self.monthly_view, 0, 0)
-        charts.addWidget(types_box, 0, 1)
+        charts.addWidget(self.types_view, 0, 1)
         charts.addWidget(self.evaluations_view, 1, 0)
         charts.addWidget(self.ranking_view, 1, 1)
         charts.setColumnStretch(0, 1)
         charts.setColumnStretch(1, 1)
-        self.content_layout.addLayout(charts)
-
-        bottom = QHBoxLayout()
-        bottom.setSpacing(8)
-        recent_box = QWidget()
-        recent_layout = QVBoxLayout(recent_box)
-        recent_layout.setContentsMargins(0, 0, 0, 0)
-        recent_layout.setSpacing(4)
-        recent_title = QLabel(STRINGS.dashboard_recent)
-        recent_font = QFont(recent_title.font())
-        recent_font.setBold(True)
-        recent_title.setFont(recent_font)
-        self.recent_table = QTableWidget(0, 6)
-        self.recent_table.setHorizontalHeaderLabels(
-            [
-                STRINGS.dashboard_col_kind,
-                STRINGS.dashboard_col_number,
-                STRINGS.dashboard_col_date,
-                STRINGS.dashboard_col_name,
-                STRINGS.dashboard_col_branch,
-                STRINGS.dashboard_col_evaluation,
-            ]
-        )
-        self.recent_table.verticalHeader().setVisible(False)
-        self.recent_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.recent_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.recent_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.recent_table.horizontalHeader().setStretchLastSection(True)
-        self.recent_table.setMinimumHeight(170)
-        recent_layout.addWidget(recent_title)
-        recent_layout.addWidget(self.recent_table)
-
-        attention_box = QWidget()
-        attention_layout = QVBoxLayout(attention_box)
-        attention_layout.setContentsMargins(0, 0, 0, 0)
-        attention_layout.setSpacing(4)
-        attention_title = QLabel(STRINGS.dashboard_attention)
-        attention_title.setFont(recent_font)
-        self.attention_list = QListWidget()
-        self.attention_list.setMinimumHeight(170)
-        attention_layout.addWidget(attention_title)
-        attention_layout.addWidget(self.attention_list)
-
-        bottom.addWidget(recent_box, 2)
-        bottom.addWidget(attention_box, 1)
-        if self._storage_root is not None:
-            self.imported_files = ImportedFilesWidget(
-                self.session, self._storage_root
-            )
-            bottom.addWidget(self.imported_files, 1)
-        else:
-            self.imported_files = None
-        self.content_layout.addLayout(bottom)
-        self.content_layout.addStretch(1)
-
-        scroll.setWidget(content)
-        root.addWidget(scroll, 1)
+        charts.setRowStretch(0, 1)
+        charts.setRowStretch(1, 1)
+        root.addLayout(charts, 1)
 
         self.period_combo.currentIndexChanged.connect(self._period_type_changed)
         self.year_combo.currentIndexChanged.connect(self._filters_changed)
@@ -323,9 +269,8 @@ class DashboardWidget(QWidget):
     def _chart_view() -> QChartView:
         view = QChartView()
         view.setRenderHint(QPainter.Antialiasing)
-        view.setMinimumHeight(250)
-        view.setMaximumHeight(320)
-        view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        view.setMinimumHeight(120)
+        view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         return view
 
     # ------------------------------------------------------------------
@@ -409,20 +354,17 @@ class DashboardWidget(QWidget):
         self.period_label.setText(self.data.period_label)
         self._render_kpi()
         self._render_charts()
-        self._render_recent()
-        self._render_attention()
-        if self.imported_files is not None:
-            self.imported_files.refresh()
 
     def _render_kpi(self) -> None:
         if self.data is None:
             return
+        visible = [kpi for kpi in self.data.kpi if kpi.key != "import"]
         cards: List[KpiCard] = []
         for index in range(self.kpi_layout.count()):
             widget = self.kpi_layout.itemAt(index).widget()
             if isinstance(widget, KpiCard):
                 cards.append(widget)
-        if len(cards) != len(self.data.kpi):
+        if len(cards) != len(visible):
             while self.kpi_layout.count():
                 item = self.kpi_layout.takeAt(0)
                 widget = item.widget()
@@ -431,11 +373,12 @@ class DashboardWidget(QWidget):
                     widget.setParent(None)
                     widget.deleteLater()
             cards = []
-            for _kpi in self.data.kpi:
+            for _kpi in visible:
                 card = KpiCard(_kpi)
+                card.set_scale(self._scale)
                 self.kpi_layout.addWidget(card)
                 cards.append(card)
-        for card, kpi in zip(cards, self.data.kpi):
+        for card, kpi in zip(cards, visible):
             card.update_kpi(kpi)
 
     def _render_charts(self) -> None:
@@ -451,6 +394,10 @@ class DashboardWidget(QWidget):
 
         chart = QChart()
         chart.setTitle(title)
+        title_font = QFont()
+        title_font.setPointSize(max(8, round(12 * self._scale)))
+        title_font.setBold(True)
+        chart.setTitleFont(title_font)
         chart.legend().setAlignment(Qt.AlignBottom)
         chart.setAnimationOptions(QChart.NoAnimation)
         chart.setBackgroundRoundness(0)
@@ -466,12 +413,12 @@ class DashboardWidget(QWidget):
         if old is not None:
             old.deleteLater()
 
-    def _style_axis(self, axis, color: QColor, font_size: int = 8) -> None:
+    def _style_axis(self, axis, color: QColor, font_size: float = 8) -> None:
         axis.setLabelsColor(color)
         axis.setLinePenColor(color)
         axis.setGridLineColor(QColor(color.red(), color.green(), color.blue(), 50))
         font = QFont()
-        font.setPointSize(font_size)
+        font.setPointSize(max(6, round(font_size * self._scale)))
         axis.setLabelsFont(font)
 
     def _render_monthly(self, data: DashboardData) -> None:
@@ -496,7 +443,7 @@ class DashboardWidget(QWidget):
 
         axis_x = QBarCategoryAxis()
         axis_x.append(data.monthly_labels)
-        axis_x.setLabelsAngle(0)
+        axis_x.setLabelsAngle(-30)
         chart.addAxis(axis_x, Qt.AlignBottom)
         series.attachAxis(axis_x)
 
@@ -531,7 +478,7 @@ class DashboardWidget(QWidget):
         chart.addSeries(series)
         chart.legend().setAlignment(Qt.AlignRight)
         legend_font = QFont()
-        legend_font.setPointSize(7)
+        legend_font.setPointSize(max(6, round(7 * self._scale)))
         chart.legend().setFont(legend_font)
         chart.legend().setLabelColor(QColor(colors["TEXT_MUTED"]))
         self._set_chart(self.types_view, chart)
@@ -604,41 +551,41 @@ class DashboardWidget(QWidget):
         self._style_axis(axis_y, QColor(colors["TEXT_MUTED"]))
         self._set_chart(self.ranking_view, chart)
 
-    def _render_recent(self) -> None:
-        if self.data is None:
-            return
-        rows = self.data.recent
-        self.recent_table.setRowCount(len(rows))
-        for row, document in enumerate(rows):
-            values = [
-                document.kind,
-                document.number,
-                document.document_date.strftime("%d.%m.%Y")
-                if document.document_date
-                else "",
-                document.name,
-                document.branch,
-                document.evaluation,
-            ]
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-                self.recent_table.setItem(row, column, item)
-        self.recent_table.resizeColumnsToContents()
-        self.recent_table.setColumnWidth(3, max(180, self.recent_table.columnWidth(3)))
-
-    def _render_attention(self) -> None:
-        self.attention_list.clear()
-        if self.data is None or not self.data.attention:
-            self.attention_list.addItem(STRINGS.dashboard_no_data)
-            return
-        for label, count in self.data.attention:
-            self.attention_list.addItem(f"{label} — {count}")
-
     def _types_changed(self) -> None:
         self._types_kind = self.types_combo.currentData() or "material"
         if self.data is not None:
             self._render_types(self.data)
+
+    # ------------------------------------------------------------------
+    # Адаптивность
+    # ------------------------------------------------------------------
+    def resizeEvent(self, event) -> None:
+        """Планирует пересчёт масштаба после изменения размера окна."""
+        super().resizeEvent(event)
+        if hasattr(self, "_scale_timer"):
+            self._scale_timer.start(120)
+
+    def _apply_scale(self) -> None:
+        """Подгоняет шрифты и плитки под текущий размер вкладки."""
+        if not hasattr(self, "kpi_layout"):
+            return
+        width = max(self.width(), 640)
+        height = max(self.height(), 480)
+        scale = min(width / 1280.0, height / 800.0)
+        scale = max(0.72, min(1.35, scale))
+        if abs(scale - self._scale) < 0.03:
+            return
+        self._scale = scale
+        for index in range(self.kpi_layout.count()):
+            widget = self.kpi_layout.itemAt(index).widget()
+            if isinstance(widget, KpiCard):
+                widget.set_scale(scale)
+        period_font = QFont(self.period_label.font())
+        period_font.setPointSize(max(8, round(11 * scale)))
+        period_font.setBold(True)
+        self.period_label.setFont(period_font)
+        if self.data is not None:
+            self._render_charts()
 
     # ------------------------------------------------------------------
     # Тема
@@ -649,4 +596,5 @@ class DashboardWidget(QWidget):
             widget = self.kpi_layout.itemAt(index).widget()
             if isinstance(widget, KpiCard):
                 widget.set_theme()
+                widget.set_scale(self._scale)
         self._render_charts()
