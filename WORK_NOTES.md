@@ -2243,3 +2243,13 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 - `tests/test_dashboard.py`: обновлены ожидания карточек, добавлен тест `_task_stats` для ГО/филиала; 10 passed.
 - `README.md`, `docs/dashboard.md` обновлены.
 - Проверка: полный `pytest tests -q` — 441 passed, 1 warning zipfile.
+
+### Дополнение (2026-11-22) — дашборд: карточка даты и «Выполнение задач»
+- `gui/dashboard_widget.py`: дата и день недели вынесены в отдельную карточку в стиле KPI (`QFrame#dashboardCard`), одна строка, шрифт base+5, жирный.
+- Удалён переключатель «Материалы/Телеграммы» и круговая «Структура по типам»; вместо неё — диаграмма «Выполнение задач»: по филиалам (ГО) или отделам (филиал), два столбца (назначено/выполнено), сегменты ОЗ/ДЗ с контрастными цифрами, процент выполнения над группой, оси как у эффективности.
+- `reports/dashboard_service.py`: `TaskExecution`, `DashboardData.task_execution`, `_task_execution()` (назначенные/выполненные по ОЗ/ДЗ, цели — филиалы или отделы филиала).
+- Подписи над столбцами оценок увеличены на 3 pt.
+- `utils/string_resources.py`: `dashboard_chart_execution`, `dashboard_assigned`, `dashboard_completed`; секция strings пакета — 542 ключа.
+- `tests/test_dashboard.py`: тесты `task_execution`, сегментов диаграммы, даты одной строкой; 12 passed.
+- `README.md`, `docs/dashboard.md` обновлены.
+- Проверка: полный `pytest tests -q` — 443 passed, 1 warning zipfile.

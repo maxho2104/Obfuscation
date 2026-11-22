@@ -100,6 +100,31 @@ class RecentDocument:
 
 
 @dataclass(frozen=True)
+class TaskExecution:
+    """Выполнение задач филиалом или отделом."""
+
+    label: str
+    assigned_oz: int
+    assigned_dz: int
+    completed_oz: int
+    completed_dz: int
+
+    @property
+    def assigned_total(self) -> int:
+        return self.assigned_oz + self.assigned_dz
+
+    @property
+    def completed_total(self) -> int:
+        return self.completed_oz + self.completed_dz
+
+    @property
+    def completion_percent(self) -> float:
+        if not self.assigned_total:
+            return 0.0
+        return self.completed_total * 100.0 / self.assigned_total
+
+
+@dataclass(frozen=True)
 class DashboardData:
     """Полный набор данных для отрисовки вкладки."""
 
@@ -124,6 +149,7 @@ class DashboardData:
     tasks_due_soon: int
     task_type_counts: List[Tuple[str, int]]
     completed_task_type_counts: List[Tuple[str, int]]
+    task_execution: List[TaskExecution]
     changes_total: int
     import_status: Optional[str]
     import_matched: int
@@ -224,6 +250,7 @@ class DashboardService:
         ]
         task_type_counts = self._task_type_counts(tasks)
         completed_task_type_counts = self._task_type_counts(completed_tasks)
+        task_execution = self._task_execution(tasks, task_assignments, scope)
         monthly_labels, monthly_materials, monthly_telegrams = self._monthly_series(
             period, materials, telegrams
         )
@@ -287,6 +314,7 @@ class DashboardService:
             tasks_due_soon=due_soon,
             task_type_counts=task_type_counts,
             completed_task_type_counts=completed_task_type_counts,
+            task_execution=task_execution,
             changes_total=changes_total,
             import_status=import_info[0] if import_info else None,
             import_matched=import_info[1] if import_info else 0,
@@ -570,19 +598,86 @@ class DashboardService:
             )
         return result
 
+    def _task_type_code(self, task: ScientificTask) -> str:
+        """Код типа задачи (ОЗ/ДЗ) с поддержкой IntEnum и строковых кодов."""
+        try:
+            return pack_enum_display("scientific_task_type", int(task.type))
+        except (TypeError, ValueError):
+            return enum_label("scientific_task_type", str(task.type))
+
     def _task_type_counts(
         self, tasks: Sequence[ScientificTask]
     ) -> List[Tuple[str, int]]:
         """Количество задач по типам (коды ОЗ/ДЗ)."""
         counts: Dict[str, int] = {}
         for task in tasks:
-            code = pack_enum_display("scientific_task_type", int(task.type))
+            code = self._task_type_code(task)
             counts[code] = counts.get(code, 0) + 1
         return [
             (code, counts[code])
             for code in enum_codes("scientific_task_type")
             if counts.get(code)
         ]
+
+    def _task_execution(
+        self,
+        tasks: Sequence[ScientificTask],
+        assignments: Dict[str, Set[Tuple[str, str]]],
+        scope: Optional[str],
+    ) -> List[TaskExecution]:
+        """Назначенные и выполненные задачи по филиалам или отделам."""
+        today = date.today()
+        if scope:
+            entities = list(
+                self.session.scalars(
+                    select(Department)
+                    .where(Department.branch_id == scope)
+                    .order_by(Department.short_name, Department.name)
+                )
+            )
+            target_type = "department"
+        else:
+            entities = list(
+                self.session.scalars(
+                    select(Branch).order_by(Branch.short_name, Branch.name)
+                )
+            )
+            target_type = NODE_BRANCH
+
+        labels = {
+            str(entity.id): (entity.short_name or entity.name)
+            for entity in entities
+        }
+        counts: Dict[str, List[int]] = {
+            node_id: [0, 0, 0, 0] for node_id in labels
+        }
+        for task in tasks:
+            code = self._task_type_code(task)
+            completed = task.end_date is not None and task.end_date < today
+            for node_type, node_id in assignments.get(task.id, set()):
+                if node_type != target_type or node_id not in counts:
+                    continue
+                bucket = counts[node_id]
+                base = 0 if code == "ОЗ" else 2
+                bucket[base] += 1
+                if completed:
+                    bucket[base + 1] += 1
+
+        result: List[TaskExecution] = []
+        for node_id, bucket in counts.items():
+            assigned_oz, completed_oz, assigned_dz, completed_dz = bucket
+            if assigned_oz + assigned_dz == 0:
+                continue
+            result.append(
+                TaskExecution(
+                    label=labels[node_id],
+                    assigned_oz=assigned_oz,
+                    assigned_dz=assigned_dz,
+                    completed_oz=completed_oz,
+                    completed_dz=completed_dz,
+                )
+            )
+        return result
 
     def _task_stats(
         self,

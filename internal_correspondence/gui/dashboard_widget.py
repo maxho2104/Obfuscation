@@ -11,7 +11,6 @@ from PyQt5.QtChart import (
     QBarSet,
     QChart,
     QChartView,
-    QPieSeries,
     QStackedBarSeries,
     QValueAxis,
 )
@@ -106,6 +105,16 @@ _WEEKDAYS = (
     "суббота",
     "воскресенье",
 )
+
+_EXECUTION_COLORS = {
+    "ОЗ": "#2F5597",
+    "ДЗ": "#C55A11",
+}
+
+_EXECUTION_COLORS_DARK = {
+    "ОЗ": "#7FB2FF",
+    "ДЗ": "#F2B880",
+}
 
 
 class KpiCard(QFrame):
@@ -221,7 +230,6 @@ class DashboardWidget(QWidget):
         self.service = DashboardService(session, role, branch_id)
         self.data: Optional[DashboardData] = None
         self._updating = False
-        self._types_kind = "material"
         self._scale = 1.0
         self._scale_timer = QTimer(self)
         self._scale_timer.setSingleShot(True)
@@ -271,30 +279,29 @@ class DashboardWidget(QWidget):
             self.branch_label.hide()
             self.branch_combo.hide()
 
-        self.types_combo = QComboBox()
-        self.types_combo.addItem(STRINGS.dashboard_type_materials, "material")
-        self.types_combo.addItem(STRINGS.dashboard_type_telegrams, "telegram")
-        controls.addWidget(self.types_combo)
-
         controls.addStretch(1)
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: #C0392B;")
         controls.addWidget(self.status_label)
 
         today = date.today()
+        self.date_card = QFrame()
+        self.date_card.setObjectName("dashboardCard")
+        self.date_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        self.date_card.setMinimumWidth(260)
+        date_layout = QHBoxLayout(self.date_card)
+        date_layout.setContentsMargins(12, 4, 12, 4)
         self.date_label = QLabel(
-            f"{today.strftime('%d.%m.%Y')}\n{_WEEKDAYS[today.weekday()]}"
+            f"{today.strftime('%d.%m.%Y')}, {_WEEKDAYS[today.weekday()]}"
         )
-        self.date_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.date_label.setWordWrap(True)
-        self.date_label.setMinimumWidth(200)
-        self.date_label.setContentsMargins(0, 0, 8, 0)
+        self.date_label.setAlignment(Qt.AlignCenter)
+        self.date_label.setWordWrap(False)
         date_font = QFont(self.date_label.font())
         base_size = date_font.pointSize() if date_font.pointSize() > 0 else 9
-        date_font.setPointSize(base_size + 10)
+        date_font.setPointSize(base_size + 5)
         date_font.setBold(True)
         self.date_label.setFont(date_font)
-        controls.addWidget(self.date_label)
+        date_layout.addWidget(self.date_label)
         root.addLayout(controls)
 
         self.period_combo.currentIndexChanged.connect(self._period_type_changed)
@@ -302,19 +309,19 @@ class DashboardWidget(QWidget):
         self.index_combo.currentIndexChanged.connect(self._filters_changed)
         self.financial_check.toggled.connect(self._financial_toggled)
         self.branch_combo.currentIndexChanged.connect(self._filters_changed)
-        self.types_combo.currentIndexChanged.connect(self._types_changed)
         self._style_financial_button()
-        from internal_correspondence.gui.theme import current_theme
-
-        self.date_label.setStyleSheet(
-            f"color: {current_theme().qss_colors['TEXT_MUTED']};"
-        )
+        self._style_date_card()
 
         self.period_label = QLabel("")
         period_font = QFont(self.period_label.font())
         period_font.setBold(True)
         self.period_label.setFont(period_font)
-        root.addWidget(self.period_label)
+
+        summary = QHBoxLayout()
+        summary.setSpacing(8)
+        summary.addWidget(self.period_label, 1)
+        summary.addWidget(self.date_card)
+        root.addLayout(summary)
 
         self.kpi_layout = QHBoxLayout()
         self.kpi_layout.setSpacing(8)
@@ -323,11 +330,11 @@ class DashboardWidget(QWidget):
         charts = QGridLayout()
         charts.setSpacing(8)
         self.monthly_view = self._chart_view()
-        self.types_view = self._chart_view()
+        self.execution_view = self._chart_view()
         self.evaluations_view = self._chart_view()
         self.ranking_view = self._chart_view()
         charts.addWidget(self.monthly_view, 0, 0)
-        charts.addWidget(self.types_view, 0, 1)
+        charts.addWidget(self.execution_view, 0, 1)
         charts.addWidget(self.evaluations_view, 1, 0)
         charts.addWidget(self.ranking_view, 1, 1)
         charts.setColumnStretch(0, 1)
@@ -343,6 +350,21 @@ class DashboardWidget(QWidget):
         view.setMinimumHeight(150)
         view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         return view
+
+    def _style_date_card(self) -> None:
+        """Оформляет дату в стиле KPI-карточек."""
+        from internal_correspondence.gui.theme import current_theme
+
+        colors = current_theme().qss_colors
+        self.date_card.setStyleSheet(
+            "QFrame#dashboardCard {"
+            f" background: {colors['SURFACE']};"
+            f" border: 1px solid {colors['BORDER']};"
+            " border-radius: 8px;"
+            "}"
+            "QFrame#dashboardCard QLabel { background: transparent; }"
+        )
+        self.date_label.setStyleSheet(f"color: {colors['TEXT']};")
 
     # ------------------------------------------------------------------
     # Фильтры
@@ -480,7 +502,7 @@ class DashboardWidget(QWidget):
         if self.data is None:
             return
         self._render_monthly(self.data)
-        self._render_types(self.data)
+        self._render_execution(self.data)
         self._render_evaluations(self.data)
         self._render_ranking(self.data)
 
@@ -556,30 +578,181 @@ class DashboardWidget(QWidget):
         self._style_axis(axis_y, QColor(colors["TEXT_MUTED"]))
         self._set_chart(self.monthly_view, chart)
 
-    def _render_types(self, data: DashboardData) -> None:
+    def _render_execution(self, data: DashboardData) -> None:
         from internal_correspondence.gui.theme import current_theme
 
-        colors = current_theme().qss_colors
-        chart = self._new_chart(STRINGS.dashboard_chart_types)
-        values = data.material_types if self._types_kind == "material" else data.telegram_types
-        if not values:
-            chart.setTitle(f"{STRINGS.dashboard_chart_types} — {STRINGS.dashboard_no_data}")
-            self._set_chart(self.types_view, chart)
+        theme = current_theme()
+        colors = theme.qss_colors
+        is_dark = theme.key == "dark"
+        title = STRINGS.dashboard_chart_execution
+        chart = self._new_chart(title)
+        rows = data.task_execution
+        if not rows:
+            chart.setTitle(f"{title} — {STRINGS.dashboard_no_data}")
+            self._set_chart(self.execution_view, chart)
             return
-        series = QPieSeries()
-        for index, (label, count) in enumerate(values):
-            slice_ = series.append(f"{label} — {count}", count)
-            slice_.setColor(QColor(_CHART_COLORS[index % len(_CHART_COLORS)]))
-            slice_.setLabelVisible(False)
-        series.setHoleSize(0.32)
-        series.setPieSize(0.68)
+
+        series = QBarSeries()
+        series.setBarWidth(0.8)
+        assigned_set = QBarSet(STRINGS.dashboard_assigned)
+        completed_set = QBarSet(STRINGS.dashboard_completed)
+        for row in rows:
+            assigned_set.append(row.assigned_total)
+            completed_set.append(row.completed_total)
+        for bar_set in (assigned_set, completed_set):
+            bar_set.setColor(QColor(0, 0, 0, 0))
+            bar_set.setBorderColor(QColor(0, 0, 0, 0))
+        series.append(assigned_set)
+        series.append(completed_set)
         chart.addSeries(series)
-        chart.legend().setAlignment(Qt.AlignRight)
-        legend_font = QFont()
-        legend_font.setPointSize(max(6, round(7 * self._scale)))
-        chart.legend().setFont(legend_font)
-        chart.legend().setLabelColor(QColor(colors["TEXT_MUTED"]))
-        self._set_chart(self.types_view, chart)
+        chart.legend().setVisible(False)
+
+        axis_x = QBarCategoryAxis()
+        axis_x.append([row.label for row in rows])
+        axis_x.setLabelsAngle(0)
+        chart.addAxis(axis_x, Qt.AlignBottom)
+        series.attachAxis(axis_x)
+
+        axis_y = QValueAxis()
+        maximum = max([row.assigned_total for row in rows] + [1])
+        axis_y.setRange(0, maximum * 1.3)
+        axis_y.setLabelFormat("%d")
+        axis_y.setTickCount(5)
+        chart.addAxis(axis_y, Qt.AlignLeft)
+        series.attachAxis(axis_y)
+        self._style_axis(axis_x, QColor(colors["TEXT_MUTED"]), 9)
+        self._style_axis(axis_y, QColor(colors["TEXT_MUTED"]))
+
+        palette = _EXECUTION_COLORS_DARK if is_dark else _EXECUTION_COLORS
+        border = QColor(colors["BORDER_STRONG"])
+        segment_font = QFont()
+        segment_font.setPointSize(max(7, round(9 * self._scale)))
+        segment_font.setBold(True)
+        percent_font = QFont()
+        percent_font.setPointSize(max(7, round(9 * self._scale)))
+        percent_font.setBold(True)
+
+        bars = []
+        texts = []
+        percents = []
+        for index, row in enumerate(rows):
+            for kind, total, oz, dz in (
+                ("assigned", row.assigned_total, row.assigned_oz, row.assigned_dz),
+                ("completed", row.completed_total, row.completed_oz, row.completed_dz),
+            ):
+                for code, count in (("ОЗ", oz), ("ДЗ", dz)):
+                    if count <= 0:
+                        continue
+                    segment = QGraphicsRectItem(chart)
+                    segment.setPen(QPen(border, 1))
+                    color = QColor(palette[code])
+                    if kind == "completed":
+                        color = color.lighter(135)
+                    segment.setBrush(QBrush(color))
+                    segment.setZValue(10)
+                    bars.append((index, kind, code, segment, color))
+
+                    label = QGraphicsSimpleTextItem(str(count), chart)
+                    label.setFont(segment_font)
+                    label.setBrush(QBrush(QColor(self._contrast_color(color))))
+                    label.setZValue(20)
+                    texts.append((segment, label))
+
+            percent = QGraphicsSimpleTextItem(
+                f"{row.completion_percent:.0f}%", chart
+            )
+            percent.setFont(percent_font)
+            percent.setBrush(QBrush(QColor(colors["TEXT"])))
+            percent.setZValue(30)
+            percents.append((index, row, percent))
+
+        def place_execution() -> None:
+            plot = chart.plotArea()
+            if not rows:
+                return
+            slot = plot.width() / len(rows)
+            group_width = slot * 0.8
+            bar_width = group_width / 2.0
+            for index, row in enumerate(rows):
+                base = chart.mapToPosition(QPointF(index, 0), series)
+                assigned_top = chart.mapToPosition(
+                    QPointF(index, row.assigned_total), series
+                )
+                completed_top = chart.mapToPosition(
+                    QPointF(index, row.completed_total), series
+                )
+                centers = {
+                    "assigned": base.x() - group_width / 4.0,
+                    "completed": base.x() + group_width / 4.0,
+                }
+                heights = {
+                    "assigned": max(0.0, base.y() - assigned_top.y()),
+                    "completed": max(0.0, base.y() - completed_top.y()),
+                }
+                for kind, total, oz, dz in (
+                    ("assigned", row.assigned_total, row.assigned_oz, row.assigned_dz),
+                    ("completed", row.completed_total, row.completed_oz, row.completed_dz),
+                ):
+                    if not total:
+                        continue
+                    bottom = base.y()
+                    oz_height = heights[kind] * oz / total
+                    dz_height = heights[kind] * dz / total
+                    left = centers[kind] - bar_width / 2.0
+                    if dz:
+                        y = bottom - dz_height
+                        rect = next(
+                            item[3]
+                            for item in bars
+                            if item[0] == index
+                            and item[1] == kind
+                            and item[2] == "ДЗ"
+                        )
+                        rect.setRect(left, y, bar_width, dz_height)
+                    if oz:
+                        y = bottom - dz_height - oz_height
+                        rect = next(
+                            item[3]
+                            for item in bars
+                            if item[0] == index
+                            and item[1] == kind
+                            and item[2] == "ОЗ"
+                        )
+                        rect.setRect(left, y, bar_width, oz_height)
+
+                for segment, label in texts:
+                    rect = segment.rect()
+                    if rect.height() < 14 or rect.width() < 12:
+                        label.setVisible(False)
+                        continue
+                    label.setVisible(True)
+                    bounds = label.boundingRect()
+                    label.setPos(
+                        rect.center().x() - bounds.width() / 2.0,
+                        rect.center().y() - bounds.height() / 2.0,
+                    )
+
+                top = min(assigned_top.y(), completed_top.y())
+                percent_item = next(
+                    item[2] for item in percents if item[0] == index
+                )
+                bounds = percent_item.boundingRect()
+                percent_item.setPos(
+                    base.x() - bounds.width() / 2.0,
+                    max(plot.top() + 2.0, top - bounds.height() - 2.0),
+                )
+
+        chart.plotAreaChanged.connect(lambda *_: place_execution())
+        place_execution()
+        self._set_chart(self.execution_view, chart)
+
+    @staticmethod
+    def _contrast_color(color: QColor) -> str:
+        """Возвращает контрастный цвет текста для заливки."""
+        luminance = (
+            0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
+        )
+        return "#1F2937" if luminance > 150 else "#FFFFFF"
 
     def _render_evaluations(self, data: DashboardData) -> None:
         from internal_correspondence.gui.theme import current_theme
@@ -627,7 +800,7 @@ class DashboardWidget(QWidget):
 
         text_color = QColor(colors["TEXT"])
         label_font = QFont()
-        label_font.setPointSize(max(6, round(8 * self._scale)))
+        label_font.setPointSize(max(7, round(11 * self._scale)))
         label_font.setBold(True)
         items = []
         for index, (_label, count) in enumerate(data.evaluation_counts):

@@ -12,7 +12,12 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtChart import QStackedBarSeries
-from PyQt5.QtWidgets import QApplication, QGraphicsPathItem, QScrollArea
+from PyQt5.QtWidgets import (
+    QApplication,
+    QGraphicsPathItem,
+    QGraphicsRectItem,
+    QScrollArea,
+)
 
 from internal_correspondence.core.constants import (
     EvaluationValue,
@@ -189,7 +194,8 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     assert widget.kpi_layout.count() == 5
     assert widget.financial_check.isChecked()
     assert widget.date_label.text()
-    assert widget.date_label.font().pointSize() >= 18
+    assert "\n" not in widget.date_label.text()
+    assert widget.date_label.font().pointSize() >= 14
     assert widget.date_label.font().bold()
     widget.financial_check.setChecked(False)
     assert all(
@@ -230,7 +236,10 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     widget.financial_check.setChecked(False)
     assert not widget.financial_check.isChecked()
     assert widget.monthly_view.chart().series()
-    assert widget.types_view.chart().series()
+    assert widget.execution_view.chart().series()
+    assert widget.execution_view.chart().title() == STRINGS.dashboard_chart_execution
+    assert widget.data.task_execution
+    assert widget.data.task_execution[0].assigned_oz == 1
     evaluation_series = widget.evaluations_view.chart().series()
     assert evaluation_series
     assert isinstance(evaluation_series[0], QStackedBarSeries)
@@ -254,12 +263,32 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     assert card.layout().contentsMargins().top() == 5
     assert card.layout().contentsMargins().bottom() == 5
 
-    widget.types_combo.setCurrentIndex(1)
-    assert widget.types_view.chart().series()
-
     widget.period_combo.setCurrentIndex(widget.period_combo.findData(PERIOD_MONTH))
     widget.index_combo.setCurrentIndex(2)
     assert widget.data.documents_total == 2
+    widget.close()
+
+
+def test_task_execution_by_branch(dashboard_data):
+    service = DashboardService(dashboard_data["session"], "head_office")
+    data = service.load(DashboardFilter(year=2026))
+    row = next(item for item in data.task_execution if item.label == "Ф-1")
+    assert (row.assigned_oz, row.assigned_dz) == (1, 0)
+    assert (row.completed_oz, row.completed_dz) == (0, 0)
+    assert row.assigned_total == 1
+    assert row.completion_percent == 0
+
+
+def test_execution_chart_draws_segments(dashboard_data, qt_app):
+    widget = DashboardWidget(dashboard_data["session"], "head_office")
+    widget.financial_check.setChecked(False)
+    widget.refresh()
+    chart = widget.execution_view.chart()
+    assert chart.title() == STRINGS.dashboard_chart_execution
+    segments = [
+        item for item in chart.scene().items() if isinstance(item, QGraphicsRectItem)
+    ]
+    assert len(segments) >= 2
     widget.close()
 
 
