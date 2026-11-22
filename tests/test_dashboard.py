@@ -245,6 +245,15 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     assert widget.execution_view.chart().title() == STRINGS.dashboard_chart_execution
     assert widget.data.task_execution
     assert widget.data.task_execution[0].assigned_oz == 1
+    legend = widget.execution_view.chart().legend()
+    assert legend.isVisible()
+    legend_labels = {marker.label() for marker in legend.markers() if marker.isVisible()}
+    assert legend_labels == {
+        f"ОЗ — {STRINGS.dashboard_assigned}",
+        f"ДЗ — {STRINGS.dashboard_assigned}",
+        f"ОЗ — {STRINGS.dashboard_completed}",
+        f"ДЗ — {STRINGS.dashboard_completed}",
+    }
     evaluation_series = widget.evaluations_view.chart().series()
     assert evaluation_series
     assert isinstance(evaluation_series[0], QStackedBarSeries)

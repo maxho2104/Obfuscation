@@ -614,6 +614,37 @@ class DashboardWidget(QWidget):
         chart.addSeries(series)
         chart.legend().setVisible(False)
 
+        # Легенда: четыре сегмента (ОЗ/ДЗ × назначено/выполнено).
+        legend_series = QBarSeries()
+        legend_series.setBarWidth(0.01)
+        legend_font = QFont()
+        legend_font.setPointSize(max(8, round(10 * self._scale)))
+        for code, kind, label in (
+            ("ОЗ", "assigned", f"ОЗ — {STRINGS.dashboard_assigned}"),
+            ("ДЗ", "assigned", f"ДЗ — {STRINGS.dashboard_assigned}"),
+            ("ОЗ", "completed", f"ОЗ — {STRINGS.dashboard_completed}"),
+            ("ДЗ", "completed", f"ДЗ — {STRINGS.dashboard_completed}"),
+        ):
+            legend_set = QBarSet(label)
+            legend_set.append([0.0] * len(rows))
+            legend_color = QColor(
+                (_EXECUTION_COLORS_DARK if is_dark else _EXECUTION_COLORS)[code]
+            )
+            if kind == "completed":
+                legend_color = legend_color.lighter(135)
+            legend_set.setColor(legend_color)
+            legend_set.setBorderColor(QColor(colors["BORDER_STRONG"]))
+            legend_series.append(legend_set)
+        chart.addSeries(legend_series)
+        legend = chart.legend()
+        legend.setVisible(True)
+        legend.setAlignment(Qt.AlignBottom)
+        legend.setFont(legend_font)
+        legend.setLabelColor(QColor(colors["TEXT_MUTED"]))
+        legend.setBackgroundVisible(False)
+        for marker in legend.markers(series):
+            marker.setVisible(False)
+
         axis_x = QBarCategoryAxis()
         axis_x.append([row.label for row in rows])
         axis_x.setLabelsAngle(0)
