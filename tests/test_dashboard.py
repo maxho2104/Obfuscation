@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from docx import Document
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtWidgets import QApplication, QTableWidget
+from PyQt5.QtChart import QStackedBarSeries
+from PyQt5.QtWidgets import (
+    QApplication,
+    QGraphicsPathItem,
+    QGraphicsRectItem,
+    QScrollArea,
+    QSizePolicy,
+)
 
 from internal_correspondence.core.constants import (
     EvaluationValue,
@@ -20,11 +29,16 @@ from internal_correspondence.core.constants import (
     TelegramType,
 )
 from internal_correspondence.core.database import DatabaseManager
-from internal_correspondence.gui.dashboard_widget import DashboardWidget, KpiCard
+from internal_correspondence.gui.dashboard_widget import (
+    _EVALUATION_COLORS,
+    DashboardWidget,
+    KpiCard,
+)
 from internal_correspondence.orm.models import (
     AddedTask,
     Branch,
     Department,
+    Employee,
     Evaluation,
     EvaluationList,
     ScientificMaterial,
@@ -64,6 +78,13 @@ def dashboard_data(db_manager: DatabaseManager) -> dict:
     department = Department(name="Отдел 1", branch_id="F1")
     session.add(department)
     session.flush()
+    employee = Employee(
+        last_name="Иванов",
+        first_name="Иван",
+        department_id=department.id,
+    )
+    session.add(employee)
+    session.flush()
 
     evaluation_list = EvaluationList(number="1", date=date(2026, 1, 10))
     session.add(evaluation_list)
@@ -92,6 +113,10 @@ def dashboard_data(db_manager: DatabaseManager) -> dict:
         branch_id="F1",
     )
     session.add_all([material1, material2, telegram])
+    session.flush()
+    for document in (material1, material2, telegram):
+        document.departments.append(department)
+    material1.employees.append(employee)
     session.flush()
 
     session.add(
@@ -125,10 +150,27 @@ def test_service_counts_and_average(dashboard_data, db_manager):
     assert data.materials_total == 2
     assert data.telegrams_total == 1
     assert data.evaluated_count == 1
+    assert data.evaluated_materials == 1
+    assert data.evaluated_telegrams == 0
+    assert data.materials_without_evaluation == 1
     assert data.evaluation_average == 2.0
+    assert data.reported_count == 1
+    assert data.report_type_counts == [("ДР", 1)]
+    assert data.undelivered_count == 0
     assert data.tasks_total == 1
-    assert data.tasks_assigned == 1
-    assert [item[0] for item in data.attention] == [STRINGS.dashboard_without_evaluation]
+    assert data.tasks_completed == 0
+    assert data.tasks_uncompleted == 1
+    assert data.tasks_due_soon == 0
+    assert data.tasks_assigned == 0
+    assert data.tasks_unassigned == 1
+    assert data.task_type_counts == [("ОЗ", 1)]
+    assert data.completed_task_type_counts == []
+    assert data.ranking == [("Ф-1", 3)]
+    assert data.ranking_children == [[("Отдел 1", 3)]]
+    assert [item[0] for item in data.attention] == [
+        STRINGS.dashboard_without_evaluation,
+        STRINGS.dashboard_tasks_unassigned,
+    ]
 
 
 def test_service_month_and_branch_filter(dashboard_data):
@@ -151,19 +193,102 @@ def test_service_without_import_tables_is_safe(dashboard_data):
 
 def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     widget = DashboardWidget(dashboard_data["session"], "head_office")
-    assert widget.kpi_layout.count() == 4
+    assert widget.kpi_layout.count() == 5
+    assert widget.financial_check.isChecked()
+    assert widget.financial_check.text() == "Фин. год (окт 2026-сен 2027)"
+    widget.financial_check.setChecked(False)
+    assert widget.financial_check.text() == "Календ. год (янв-дек 2026)"
+    widget.financial_check.setChecked(True)
+    assert widget.financial_check.text() == "Фин. год (окт 2026-сен 2027)"
+    assert widget.date_label.text()
+    assert "\n" not in widget.date_label.text()
+    assert widget.date_label.font().pointSize() >= 14
+    assert widget.date_label.font().bold()
+    widget.financial_check.setChecked(False)
     assert all(
         isinstance(widget.kpi_layout.itemAt(i).widget(), KpiCard)
         for i in range(widget.kpi_layout.count())
     )
-    assert widget.recent_table.rowCount() == 3
+    cards = {
+        widget.kpi_layout.itemAt(i).widget().title_label.text():
+        widget.kpi_layout.itemAt(i).widget()
+        for i in range(widget.kpi_layout.count())
+    }
+    assert STRINGS.dashboard_reported in cards
+    assert STRINGS.dashboard_completed_tasks in cards
+    evaluated_card = cards[STRINGS.dashboard_evaluated]
+    assert evaluated_card.value_label.text() == "1"
+    assert evaluated_card.attention_label.text() == (
+        "⚠ " + STRINGS.dashboard_unevaluated_materials.format(count=1)
+    )
+    reported_card = cards[STRINGS.dashboard_reported]
+    assert reported_card.value_label.text() == "1"
+    assert reported_card.detail_label.text() == "ДР: 1"
+    assert reported_card.attention_label.text() == ""
+    tasks_card = cards[STRINGS.dashboard_tasks]
+    assert tasks_card.value_label.text() == "1"
+    assert tasks_card.detail_label.text() == "ОЗ: 1"
+    assert tasks_card.attention_label.text() == (
+        "⚠ " + STRINGS.dashboard_unassigned_tasks.format(count=1)
+    )
+    completed_card = cards[STRINGS.dashboard_completed_tasks]
+    assert completed_card.value_label.text() == "0 (0 %)"
+    assert completed_card.detail_label.text() == "—"
+    assert completed_card.attention_label.text() == (
+        "⚠ " + STRINGS.dashboard_uncompleted_tasks.format(count=1)
+    )
+    assert not widget.findChildren(QScrollArea)
+    # По умолчанию включён финансовый год; для данных теста переключаемся
+    # на календарный 2026 год.
+    widget.financial_check.setChecked(False)
+    assert not widget.financial_check.isChecked()
     assert widget.monthly_view.chart().series()
-    assert widget.types_view.chart().series()
-    assert widget.evaluations_view.chart().series()
+    assert widget.execution_view.chart().series()
+    assert widget.execution_view.chart().title() == STRINGS.dashboard_chart_execution
+    assert widget.data.task_execution
+    assert widget.data.task_execution[0].assigned_oz == 1
+    legend = widget.execution_view.chart().legend()
+    assert legend.isVisible()
+    legend_labels = {marker.label() for marker in legend.markers() if marker.isVisible()}
+    assert legend_labels == {
+        f"ОЗ — {STRINGS.dashboard_assigned}",
+        f"ДЗ — {STRINGS.dashboard_assigned}",
+        f"ОЗ — {STRINGS.dashboard_completed}",
+        f"ДЗ — {STRINGS.dashboard_completed}",
+    }
+    ticker_text = widget.ticker.text()
+    assert STRINGS.dashboard_notify_unexported.format(
+        count=widget.data.changes_total
+    ) in ticker_text
+    assert STRINGS.dashboard_notify_last_export_none in ticker_text
+    assert STRINGS.dashboard_notify_due_tasks.format(
+        count=widget.data.tasks_due_soon
+    ) in ticker_text
+    assert STRINGS.dashboard_notify_overdue.format(
+        count=widget.data.tasks_overdue
+    ) in ticker_text
+    evaluation_series = widget.evaluations_view.chart().series()
+    assert evaluation_series
+    assert isinstance(evaluation_series[0], QStackedBarSeries)
+    assert len(evaluation_series[0].barSets()) == len(widget.data.evaluation_counts)
+    first_code = widget.data.evaluation_counts[0][0]
+    assert evaluation_series[0].barSets()[0].color().name() == _EVALUATION_COLORS[
+        first_code
+    ].lower()
+    assert widget.evaluations_view.chart().title() == STRINGS.dashboard_chart_evaluations
     assert widget.ranking_view.chart().series()
+    assert widget.ranking_view.chart().title() == STRINGS.dashboard_chart_ranking
+    assert widget.ranking_view.minimumHeight() == 150
+    assert widget.monthly_view.minimumHeight() >= 150
 
-    widget.types_combo.setCurrentIndex(1)
-    assert widget.types_view.chart().series()
+    widget.resize(1280, 800)
+    widget._apply_scale()
+    card = widget.kpi_layout.itemAt(0).widget()
+    assert card.title_label.font().pointSize() == 12
+    assert card.detail_label.font().pointSize() == 11
+    assert card.value_label.font().pointSize() == 24
+    assert card.layout().contentsMargins().top() == 5
+    assert card.layout().contentsMargins().bottom() == 5
 
     widget.period_combo.setCurrentIndex(widget.period_combo.findData(PERIOD_MONTH))
     widget.index_combo.setCurrentIndex(2)
@@ -171,9 +296,162 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     widget.close()
 
 
+def test_task_execution_by_branch(dashboard_data):
+    service = DashboardService(dashboard_data["session"], "head_office")
+    data = service.load(DashboardFilter(year=2026))
+    row = next(item for item in data.task_execution if item.label == "Ф-1")
+    assert (row.assigned_oz, row.assigned_dz) == (1, 0)
+    assert (row.completed_oz, row.completed_dz) == (0, 0)
+    assert row.assigned_total == 1
+    assert row.completion_percent == 0
+
+
+def test_execution_chart_draws_segments(dashboard_data, qt_app):
+    widget = DashboardWidget(dashboard_data["session"], "head_office")
+    widget.financial_check.setChecked(False)
+    widget.refresh()
+    chart = widget.execution_view.chart()
+    assert chart.title() == STRINGS.dashboard_chart_execution
+    segments = [
+        item for item in chart.scene().items() if isinstance(item, QGraphicsRectItem)
+    ]
+    assert len(segments) >= 2
+    widget.close()
+
+
+def test_widget_scales_to_window_size(dashboard_data, qt_app):
+    widget = DashboardWidget(dashboard_data["session"], "head_office")
+    widget.resize(900, 620)
+    widget._apply_scale()
+    small_card = widget.kpi_layout.itemAt(0).widget()
+    small_size = small_card.value_label.font().pointSize()
+    widget.resize(1500, 950)
+    widget._apply_scale()
+    large_size = small_card.value_label.font().pointSize()
+    assert large_size > small_size
+    widget.close()
+
+
 def test_widget_branch_role_hides_branch_filter(dashboard_data, qt_app):
     widget = DashboardWidget(dashboard_data["session"], "branch", "F1")
     assert widget.branch_combo.isHidden()
-    assert widget.kpi_layout.count() == 4
+    assert widget.kpi_layout.count() == 6
+    widget.financial_check.setChecked(False)
     assert widget.data.documents_total == 3
+    assert widget.ranking_view.chart().title() == STRINGS.dashboard_chart_ranking_departments
+    assert widget.data.ranking == [("Отдел 1", 3)]
+    assert widget.data.ranking_children == [[("Иванов И.", 1)]]
+    widget.close()
+
+
+def test_task_completion_counts_due_soon(dashboard_data):
+    service = DashboardService(dashboard_data["session"], "head_office")
+    today = date.today()
+    tasks = [
+        SimpleNamespace(end_date=today - timedelta(days=1)),
+        SimpleNamespace(end_date=today + timedelta(days=10)),
+        SimpleNamespace(end_date=None),
+    ]
+    completed, uncompleted, due_soon = service._task_completion(tasks)
+    assert completed == 1
+    assert uncompleted == 2
+    assert due_soon == 1
+
+
+def test_completed_task_percent_is_share_of_all_tasks(dashboard_data):
+    service = DashboardService(dashboard_data["session"], "head_office")
+    kpis = service._kpi(
+        documents_total=0,
+        materials_total=0,
+        telegrams_total=0,
+        documents_delta=None,
+        evaluated_count=0,
+        evaluated_telegrams=0,
+        evaluation_average=None,
+        materials_without_evaluation=0,
+        reported_count=0,
+        report_type_counts=[],
+        undelivered_count=0,
+        tasks_assigned=5,
+        tasks_unassigned=0,
+        tasks_total=5,
+        tasks_completed=3,
+        tasks_uncompleted=2,
+        tasks_due_soon=0,
+        task_type_counts=[("ОЗ", 5)],
+        completed_task_type_counts=[("ОЗ", 3)],
+        changes_total=0,
+        import_info=None,
+    )
+    completed = next(item for item in kpis if item.key == "completed")
+    assert completed.value == "3 (60 %)"
+    assert completed.detail == "ОЗ: 3"
+    assert completed.attention == STRINGS.dashboard_uncompleted_tasks.format(count=2)
+
+
+def test_task_stats_require_region_for_head_office_and_employee_for_branch(
+    dashboard_data,
+):
+    service = DashboardService(dashboard_data["session"], "head_office")
+    task = SimpleNamespace(id="T-1", end_date=None)
+    branch_only = {"T-1": {("branch", "F1")}}
+    region = {"T-1": {("region", "R1")}}
+    employee = {"T-1": {("branch", "F1"), ("employee", "E1")}}
+
+    assert service._task_stats([task], branch_only, None) == (0, 1, 0)
+    assert service._task_stats([task], region, None) == (1, 0, 0)
+    assert service._task_stats([task], branch_only, "F1") == (0, 1, 0)
+    assert service._task_stats([task], employee, "F1") == (1, 0, 0)
+
+
+def test_ranking_child_labels_have_outline(dashboard_data, qt_app):
+    widget = DashboardWidget(dashboard_data["session"], "head_office")
+    widget.financial_check.setChecked(False)
+    widget.refresh()
+    labels = [
+        item
+        for item in widget.ranking_view.chart().scene().items()
+        if isinstance(item, QGraphicsPathItem)
+    ]
+    assert labels
+    assert labels[0].pen().color().name() == "#000000"
+    assert labels[0].brush().color().name() == "#ffffff"
+    widget.close()
+
+
+def test_notifications_expand_and_date_is_fixed(dashboard_data, qt_app):
+    widget = DashboardWidget(dashboard_data["session"], "head_office")
+    widget.financial_check.setChecked(False)
+    widget.resize(1024, 720)
+    widget.show()
+    qt_app.processEvents()
+    assert widget.ticker.text()
+    assert widget.notifications_card.height() == widget.date_card.height()
+    assert widget.date_card.sizePolicy().horizontalPolicy() == QSizePolicy.Fixed
+    assert (
+        widget.notifications_card.sizePolicy().horizontalPolicy()
+        == QSizePolicy.Expanding
+    )
+    widget.close()
+
+
+def test_save_docx_contains_text_and_chart_images(
+    dashboard_data, qt_app, tmp_path: Path
+):
+    widget = DashboardWidget(dashboard_data["session"], "head_office")
+    widget.financial_check.setChecked(False)
+    widget.resize(1280, 800)
+    widget.show()
+    qt_app.processEvents()
+
+    target = tmp_path / "dashboard.docx"
+    widget.save_docx(target)
+    document = Document(str(target))
+    texts = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert STRINGS.dashboard_doc_metrics in texts
+    assert STRINGS.dashboard_doc_charts in texts
+    assert STRINGS.dashboard_notify_unexported.format(
+        count=widget.data.changes_total
+    ) in texts
+    assert len(document.inline_shapes) == 4
     widget.close()

@@ -32,8 +32,11 @@ from internal_correspondence.core.constants import Role
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.importexport.task_export import (
     TaskExportError,
+    branch_tasks,
+    default_distribution_filename,
     default_region_filename,
     export_regions,
+    write_branch_distribution,
     write_region_file,
 )
 from internal_correspondence.importexport.task_import import import_scientific_tasks
@@ -146,6 +149,7 @@ class TaskDistributionWidget(QWidget):
         self.current_period: Optional[FinancialPeriod] = None
         self.current_node: Optional[DistributionNode] = None
         self.selected_assignable = True
+        self._selected_keys: List[NodeKey] = []
 
         self._build_ui()
         self._reload_periods()
@@ -165,11 +169,20 @@ class TaskDistributionWidget(QWidget):
         top.addWidget(self.period_combo)
         top.addStretch(1)
 
+        self.distributed_button = QToolButton()
+        self.distributed_button.setCheckable(True)
+        self.distributed_button.setText(STRINGS.task_hide_distributed)
+        self.distributed_button.setToolTip(STRINGS.task_distributed_tooltip)
+        self.distributed_button.toggled.connect(self._on_distributed_toggled)
+        top.addWidget(self.distributed_button)
+
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.setMinimumWidth(240)
         self.tree.setIndentation(16)
-        self.tree.currentItemChanged.connect(self._on_tree_current_changed)
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tree.currentItemChanged.connect(self._on_tree_current_item_changed)
+        self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
 
         self.middle_label = QLabel(STRINGS.task_middle_title)
         self.middle_search = QLineEdit()
@@ -194,6 +207,10 @@ class TaskDistributionWidget(QWidget):
         middle_layout.setContentsMargins(0, 0, 0, 0)
         middle_layout.addWidget(self.middle_label)
         middle_layout.addWidget(self.middle_search)
+        self.middle_status = QLabel("")
+        self.middle_status.setWordWrap(True)
+        self.middle_status.setVisible(False)
+        middle_layout.addWidget(self.middle_status)
         middle_layout.addWidget(self.middle_view, 1)
 
         self.right_label = QLabel(STRINGS.task_right_title)
@@ -219,6 +236,10 @@ class TaskDistributionWidget(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.addWidget(self.right_label)
         right_layout.addWidget(self.right_search)
+        self.right_status = QLabel("")
+        self.right_status.setWordWrap(True)
+        self.right_status.setVisible(False)
+        right_layout.addWidget(self.right_status)
         right_layout.addWidget(self.right_view, 1)
 
         self.assign_button = QToolButton()
@@ -287,6 +308,12 @@ class TaskDistributionWidget(QWidget):
         self.export_button.setVisible(self.is_head_office)
         bottom.addWidget(self.export_button)
 
+        self.save_distribution_button = QToolButton()
+        self.save_distribution_button.setText(STRINGS.task_save_distribution)
+        self.save_distribution_button.clicked.connect(self._save_distribution)
+        self.save_distribution_button.setVisible(not self.is_head_office)
+        bottom.addWidget(self.save_distribution_button)
+
         layout = QVBoxLayout(self)
         layout.addLayout(top)
         layout.addWidget(self.splitter, 1)
@@ -298,10 +325,11 @@ class TaskDistributionWidget(QWidget):
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setStretchLastSection(False)
         for column, width in enumerate(
-            (90, 260, 110, 100, 100, 120, 120, 200)
+            (90, 240, 150, 100, 100, 120, 120, 200)
         ):
             view.setColumnWidth(column, width)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(True)
         view.sortByColumn(0, Qt.AscendingOrder)
 
     # ------------------------------------------------------------------
@@ -336,24 +364,51 @@ class TaskDistributionWidget(QWidget):
         return item
 
     def _select_key(self, key: NodeKey) -> None:
+        item = self._item_for_key(key)
+        if item is None:
+            return
+        parent = item.parent()
+        while parent is not None:
+            parent.setExpanded(True)
+            parent = parent.parent()
+        self.tree.clearSelection()
+        self.tree.setCurrentItem(item)
+        if item.isSelected():
+            self._selected_keys = [key]
+            self._on_tree_selection_changed()
+        self.tree.scrollToItem(item)
+
+    def _item_for_key(self, key: NodeKey) -> Optional[QTreeWidgetItem]:
         iterator = QTreeWidgetItemIterator(self.tree)
         while iterator.value():
             item = iterator.value()
             if item.data(0, KEY_ROLE) == key:
-                parent = item.parent()
-                while parent is not None:
-                    parent.setExpanded(True)
-                    parent = parent.parent()
-                self.tree.setCurrentItem(item)
-                self.tree.scrollToItem(item)
-                return
+                return item
             iterator += 1
+        return None
 
     def current_key(self) -> Optional[NodeKey]:
+        if self._selected_keys:
+            return self._selected_keys[0]
         item = self.tree.currentItem()
         if item is None:
             return None
         return item.data(0, KEY_ROLE)
+
+    def selected_keys(self) -> List[NodeKey]:
+        """Ключи выбранных узлов в порядке выделения (первый — ведущий)."""
+        return list(self._selected_keys)
+
+    def _selected_nodes(self) -> List[DistributionNode]:
+        nodes: List[DistributionNode] = []
+        for key in self._selected_keys:
+            node = self.service.node(key)
+            if node is not None:
+                nodes.append(node)
+        return nodes
+
+    def _assignable_selected_nodes(self) -> List[DistributionNode]:
+        return [node for node in self._selected_nodes() if node.assignable and node.active]
 
     def _reload_periods(self) -> None:
         previous = self.current_period.year if self.current_period else None
@@ -378,14 +433,49 @@ class TaskDistributionWidget(QWidget):
         self._populate_tree()
         self._reload_all()
 
-    def _on_tree_current_changed(
+    def _on_tree_current_item_changed(
         self, current: Optional[QTreeWidgetItem], _previous: Optional[QTreeWidgetItem]
     ) -> None:
-        if current is None:
-            self.current_node = None
+        """Запоминает порядок выделения: ведущий — выбранный первым."""
+        if current is None or not current.isSelected():
             return
         key = current.data(0, KEY_ROLE)
-        self.selected_assignable = bool(current.data(0, ASSIGNABLE_ROLE))
+        if key is not None and key not in self._selected_keys:
+            self._selected_keys.append(key)
+
+    def _on_tree_selection_changed(self) -> None:
+        """Обновляет ведущий узел и таблицы при множественном выборе.
+
+        Ведущим считается узел, выбранный первым: именно его задачи
+        показываются в правой таблице. Остальные выбранные узлы получают
+        задачи средней таблицы при нажатии «>>>».
+        """
+        selected = {
+            item.data(0, KEY_ROLE)
+            for item in self.tree.selectedItems()
+            if item.data(0, KEY_ROLE) is not None
+        }
+        ordered = [key for key in self._selected_keys if key in selected]
+        for item in self.tree.selectedItems():
+            key = item.data(0, KEY_ROLE)
+            if key is not None and key not in ordered:
+                ordered.append(key)
+        self._selected_keys = ordered
+
+        key = ordered[0] if ordered else None
+        if key is None:
+            self.current_node = None
+            self.selected_assignable = False
+            self.middle_model.set_tasks([], set())
+            self.right_model.set_tasks([], set())
+            self._update_empty_status(self.middle_status, 0, False)
+            self._update_empty_status(self.right_status, 0, False)
+            self._update_buttons()
+            return
+        item = self._item_for_key(key)
+        self.selected_assignable = bool(
+            item is not None and item.data(0, ASSIGNABLE_ROLE)
+        )
         self.current_node = self.service.node(key)
         self._refresh_tables()
 
@@ -463,11 +553,51 @@ class TaskDistributionWidget(QWidget):
             for task in right_tasks
             if self.service.is_undistributed(task, node)
         }
+        if self.distributed_button.isChecked():
+            # Оставляем только задачи, которые ещё не распределены ниже:
+            # в средней таблице — не переданы потомкам вышестоящего узла,
+            # в правой — не переданы потомкам выбранного узла.
+            middle_tasks = [
+                task for task in middle_tasks if task.id in middle_undistributed
+            ]
+            right_tasks = [
+                task for task in right_tasks if task.id in right_undistributed
+            ]
         self.middle_model.set_tasks(middle_tasks, middle_undistributed)
         self.right_model.set_tasks(right_tasks, right_undistributed)
+        self._update_empty_status(
+            self.middle_status, len(middle_tasks), self.distributed_button.isChecked()
+        )
+        self._update_empty_status(
+            self.right_status, len(right_tasks), self.distributed_button.isChecked()
+        )
+        if parent_key is None:
+            self.right_status.setVisible(False)
         self.middle_view.clearSelection()
         self.right_view.clearSelection()
         self._update_buttons()
+
+    @staticmethod
+    def _update_empty_status(label: QLabel, count: int, hide_distributed: bool) -> None:
+        """Показывает пояснение, если после фильтра не осталось строк."""
+        if count:
+            label.setVisible(False)
+            return
+        label.setText(
+            STRINGS.task_all_distributed
+            if hide_distributed
+            else STRINGS.task_empty
+        )
+        label.setVisible(True)
+
+    def _on_distributed_toggled(self, checked: bool) -> None:
+        """Переключает режим «показать/скрыть распределённые задачи»."""
+        self.distributed_button.setText(
+            STRINGS.task_show_distributed
+            if checked
+            else STRINGS.task_hide_distributed
+        )
+        self._refresh_tables()
 
     @staticmethod
     def _node_title(node: DistributionNode) -> str:
@@ -484,11 +614,21 @@ class TaskDistributionWidget(QWidget):
 
     def _update_buttons(self, *_args) -> None:
         node = self.current_node
+        nodes = self._selected_nodes()
+        assignable = self._assignable_selected_nodes()
         can_assign = False
         can_unassign = False
         if node is not None and self.selected_assignable:
-            can_assign = bool(self._selected_tasks(self.middle_view)) and self.service.can_assign(node)[0]
-            can_unassign = bool(self._selected_tasks(self.right_view)) and self.service.can_unassign(node)[0]
+            can_assign = (
+                bool(self._selected_tasks(self.middle_view))
+                and bool(assignable)
+                and len(assignable) == len(nodes)
+                and all(self.service.can_assign(target)[0] for target in assignable)
+            )
+            can_unassign = (
+                bool(self._selected_tasks(self.right_view))
+                and self.service.can_unassign(node)[0]
+            )
         self.assign_button.setEnabled(can_assign)
         self.unassign_button.setEnabled(can_unassign)
 
@@ -503,11 +643,25 @@ class TaskDistributionWidget(QWidget):
         self._assign_tasks(tasks)
 
     def _assign_tasks(self, tasks: Sequence[ScientificTask]) -> None:
-        node = self.current_node
-        if node is None or not tasks:
+        nodes = self._selected_nodes()
+        assignable = self._assignable_selected_nodes()
+        if not tasks or not nodes:
+            return
+        if len(assignable) != len(nodes):
+            QMessageBox.warning(
+                self,
+                STRINGS.title_error,
+                STRINGS.task_assign_invalid_nodes,
+            )
             return
         try:
-            self.service.assign(tasks, node)
+            for node in assignable:
+                try:
+                    self.service.assign(tasks, node)
+                except TaskDistributionError as error:
+                    raise TaskDistributionError(
+                        f"{self._node_title(node)}: {error}"
+                    ) from error
             self.session.commit()
         except (TaskDistributionError, Exception) as error:  # noqa: B014
             self.session.rollback()
@@ -797,10 +951,53 @@ class TaskDistributionWidget(QWidget):
             STRINGS.task_export_done.format(count=1, directory=str(Path(path).parent)),
         )
 
+    def _save_distribution(self) -> None:
+        """Сохраняет распределение задач филиала в Excel."""
+        period = self.current_period
+        if period is None or not self.branch_id:
+            QMessageBox.warning(
+                self, STRINGS.title_error, STRINGS.task_save_empty
+            )
+            return
+        if not branch_tasks(self.session, self.branch_id, period):
+            QMessageBox.warning(
+                self, STRINGS.title_error, STRINGS.task_save_empty
+            )
+            return
+
+        default_path = Path.home() / default_distribution_filename(
+            self.branch_id, period
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            STRINGS.task_save_distribution_title,
+            str(default_path),
+            STRINGS.task_save_filter,
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+        try:
+            rows = write_branch_distribution(
+                self.session, self.branch_id, period, Path(path)
+            )
+        except (TaskExportError, Exception) as error:  # noqa: B014
+            QMessageBox.warning(
+                self,
+                STRINGS.title_error,
+                STRINGS.task_save_error.format(error=error),
+            )
+            return
+        QMessageBox.information(
+            self,
+            STRINGS.task_save_distribution_title,
+            STRINGS.task_save_done.format(path=path, rows=rows),
+        )
+
     # ------------------------------------------------------------------
     # Тема
     # ------------------------------------------------------------------
-
     def apply_theme(self) -> None:
         """Перерисовывает таблицы после смены темы."""
         self.middle_model.refresh_theme()

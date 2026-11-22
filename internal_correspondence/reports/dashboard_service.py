@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import func, or_, select
@@ -17,7 +18,12 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, selectinload
 
 from internal_correspondence.core.constants import Role
-from internal_correspondence.core.domain_pack import enum_codes, enum_label, enum_weight
+from internal_correspondence.core.domain_pack import (
+    dir_name,
+    enum_codes,
+    enum_label,
+    enum_weight,
+)
 from internal_correspondence.core.enum_registry import pack_enum_display
 from internal_correspondence.orm.labels import entity_label
 from internal_correspondence.orm.models import (
@@ -57,7 +63,9 @@ MONTH_SHORT = (
     "дек",
 )
 
+NODE_REGION = "region"
 NODE_BRANCH = "branch"
+NODE_EMPLOYEE = "employee"
 
 
 @dataclass(frozen=True)
@@ -82,6 +90,7 @@ class KpiValue:
     value: str
     detail: str = ""
     delta: Optional[float] = None
+    attention: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,6 +106,31 @@ class RecentDocument:
 
 
 @dataclass(frozen=True)
+class TaskExecution:
+    """Выполнение задач филиалом или отделом."""
+
+    label: str
+    assigned_oz: int
+    assigned_dz: int
+    completed_oz: int
+    completed_dz: int
+
+    @property
+    def assigned_total(self) -> int:
+        return self.assigned_oz + self.assigned_dz
+
+    @property
+    def completed_total(self) -> int:
+        return self.completed_oz + self.completed_dz
+
+    @property
+    def completion_percent(self) -> float:
+        if not self.assigned_total:
+            return 0.0
+        return self.completed_total * 100.0 / self.assigned_total
+
+
+@dataclass(frozen=True)
 class DashboardData:
     """Полный набор данных для отрисовки вкладки."""
 
@@ -106,10 +140,22 @@ class DashboardData:
     telegrams_total: int
     evaluated_count: int
     evaluation_average: Optional[float]
+    evaluated_materials: int
+    evaluated_telegrams: int
+    materials_without_evaluation: int
+    reported_count: int
+    report_type_counts: List[Tuple[str, int]]
+    undelivered_count: int
     tasks_total: int
     tasks_assigned: int
     tasks_unassigned: int
     tasks_overdue: int
+    tasks_completed: int
+    tasks_uncompleted: int
+    tasks_due_soon: int
+    task_type_counts: List[Tuple[str, int]]
+    completed_task_type_counts: List[Tuple[str, int]]
+    task_execution: List[TaskExecution]
     changes_total: int
     import_status: Optional[str]
     import_matched: int
@@ -122,18 +168,27 @@ class DashboardData:
     evaluation_counts: List[Tuple[str, int]]
     ranking_title: str
     ranking: List[Tuple[str, int]]
+    ranking_children: List[List[Tuple[str, int]]]
     recent: List[RecentDocument]
     attention: List[Tuple[str, int]]
     kpi: List[KpiValue]
+    last_export: Optional[datetime] = None
 
 
 class DashboardService:
     """Считает показатели дашборда по данным приложения."""
 
-    def __init__(self, session: Session, role: str, branch_id: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        session: Session,
+        role: str,
+        branch_id: Optional[str] = None,
+        storage_root: Optional[Path] = None,
+    ) -> None:
         self.session = session
         self.role = Role(role)
         self.branch_id = branch_id
+        self.storage_root = Path(storage_root) if storage_root else None
         self._is_branch = self.role == Role.BRANCH
         if self._is_branch and not self.branch_id:
             raise ValueError("Для роли «филиал» не указан филиал.")
@@ -179,20 +234,44 @@ class DashboardService:
         previous_count = len(previous_documents)
         documents_delta = self._delta(len(documents), previous_count)
 
-        evaluated = [doc for doc in documents if doc.latest_evaluation is not None]
-        evaluated_count = len(evaluated)
+        evaluated_materials_list = [
+            doc for doc in materials if doc.latest_evaluation is not None
+        ]
+        evaluated_telegrams_list = [
+            doc for doc in telegrams if doc.latest_evaluation is not None
+        ]
+        evaluated = evaluated_materials_list + evaluated_telegrams_list
+        evaluated_materials = len(evaluated_materials_list)
+        evaluated_telegrams = len(evaluated_telegrams_list)
+        evaluated_count = evaluated_materials + evaluated_telegrams
         evaluation_average = self._evaluation_average(evaluated)
+        materials_without_evaluation = len(materials) - evaluated_materials
+
+        reported = [doc for doc in telegrams if doc.report_type is not None]
+        reported_count = len(reported)
+        report_type_counts = self._report_type_counts(reported)
+        undelivered_count = len(telegrams) - reported_count
 
         assigned, unassigned, overdue = self._task_stats(
             tasks, task_assignments, scope
         )
+        completed, uncompleted, due_soon = self._task_completion(tasks)
+        today = date.today()
+        completed_tasks = [
+            task
+            for task in tasks
+            if task.end_date is not None and task.end_date < today
+        ]
+        task_type_counts = self._task_type_counts(tasks)
+        completed_task_type_counts = self._task_type_counts(completed_tasks)
+        task_execution = self._task_execution(tasks, task_assignments, scope)
         monthly_labels, monthly_materials, monthly_telegrams = self._monthly_series(
             period, materials, telegrams
         )
         material_types = self._type_counts(materials, "material_type")
         telegram_types = self._type_counts(telegrams, "telegram_type")
         evaluation_counts = self._evaluation_counts(evaluated)
-        ranking_title, ranking = self._ranking(documents, scope)
+        ranking_title, ranking, ranking_children = self._ranking(documents, scope)
 
         recent = self._recent_documents(documents)
         attention = self._attention(
@@ -209,9 +288,20 @@ class DashboardService:
             telegrams_total=len(telegrams),
             documents_delta=documents_delta,
             evaluated_count=evaluated_count,
+            evaluated_telegrams=evaluated_telegrams,
             evaluation_average=evaluation_average,
+            materials_without_evaluation=materials_without_evaluation,
+            reported_count=reported_count,
+            report_type_counts=report_type_counts,
+            undelivered_count=undelivered_count,
             tasks_assigned=assigned,
             tasks_unassigned=unassigned,
+            tasks_total=len(tasks),
+            tasks_completed=completed,
+            tasks_uncompleted=uncompleted,
+            tasks_due_soon=due_soon,
+            task_type_counts=task_type_counts,
+            completed_task_type_counts=completed_task_type_counts,
             changes_total=changes_total,
             import_info=import_info,
         )
@@ -223,10 +313,22 @@ class DashboardService:
             telegrams_total=len(telegrams),
             evaluated_count=evaluated_count,
             evaluation_average=evaluation_average,
+            evaluated_materials=evaluated_materials,
+            evaluated_telegrams=evaluated_telegrams,
+            materials_without_evaluation=materials_without_evaluation,
+            reported_count=reported_count,
+            report_type_counts=report_type_counts,
+            undelivered_count=undelivered_count,
             tasks_total=len(tasks),
             tasks_assigned=assigned,
             tasks_unassigned=unassigned,
             tasks_overdue=overdue,
+            tasks_completed=completed,
+            tasks_uncompleted=uncompleted,
+            tasks_due_soon=due_soon,
+            task_type_counts=task_type_counts,
+            completed_task_type_counts=completed_task_type_counts,
+            task_execution=task_execution,
             changes_total=changes_total,
             import_status=import_info[0] if import_info else None,
             import_matched=import_info[1] if import_info else 0,
@@ -239,9 +341,11 @@ class DashboardService:
             evaluation_counts=evaluation_counts,
             ranking_title=ranking_title,
             ranking=ranking,
+            ranking_children=ranking_children,
             recent=recent,
             attention=attention,
             kpi=kpi,
+            last_export=self._last_export(),
         )
 
     # ------------------------------------------------------------------
@@ -307,6 +411,7 @@ class DashboardService:
                 .options(
                     selectinload(model.evaluations).selectinload(Evaluation.evaluation_list),
                     selectinload(model.departments),
+                    selectinload(model.employees),
                     selectinload(model.branch),
                 )
             )
@@ -360,6 +465,20 @@ class DashboardService:
             reverse=True,
         )
 
+    def _report_type_counts(self, telegrams: Sequence[Telegram]) -> List[Tuple[str, int]]:
+        """Количество доложенных телеграмм по типам докладов."""
+        counts: Dict[str, int] = {}
+        for telegram in telegrams:
+            if telegram.report_type is None:
+                continue
+            code = pack_enum_display("telegram_report_type", int(telegram.report_type))
+            counts[code] = counts.get(code, 0) + 1
+        return [
+            (code, counts[code])
+            for code in enum_codes("telegram_report_type")
+            if counts.get(code)
+        ]
+
     def _evaluation_counts(self, documents: Sequence[object]) -> List[Tuple[str, int]]:
         counts: Dict[str, int] = {}
         for document in documents:
@@ -369,7 +488,7 @@ class DashboardService:
             code = pack_enum_display("evaluation_value", int(evaluation.value))
             counts[code] = counts.get(code, 0) + 1
         return [
-            (f"{enum_label('evaluation_value', code)} ({code})", counts[code])
+            (code, counts[code])
             for code in enum_codes("evaluation_value")
             if counts.get(code)
         ]
@@ -422,14 +541,21 @@ class DashboardService:
 
     def _ranking(
         self, documents: Sequence[object], scope: Optional[str]
-    ) -> Tuple[str, List[Tuple[str, int]]]:
+    ) -> Tuple[str, List[Tuple[str, int]], List[List[Tuple[str, int]]]]:
         counts: Dict[str, int] = {}
+        children: Dict[str, Dict[str, int]] = {}
         if self._is_branch or scope:
             title = STRINGS.dashboard_chart_ranking_departments
             for document in documents:
                 for department in document.departments:
                     label = department.short_name or department.name
                     counts[label] = counts.get(label, 0) + 1
+                    bucket = children.setdefault(label, {})
+                    for employee in document.employees:
+                        if employee.department_id != department.id:
+                            continue
+                        child = employee.display_name()
+                        bucket[child] = bucket.get(child, 0) + 1
         else:
             title = STRINGS.dashboard_chart_ranking
             for document in documents:
@@ -439,7 +565,16 @@ class DashboardService:
                     else STRINGS.dashboard_no_branch
                 )
                 counts[label] = counts.get(label, 0) + 1
-        return title, sorted(counts.items(), key=lambda item: item[1], reverse=True)[:5]
+                bucket = children.setdefault(label, {})
+                for department in document.departments:
+                    child = department.short_name or department.name
+                    bucket[child] = bucket.get(child, 0) + 1
+        ranking = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:5]
+        ranking_children = [
+            sorted(children.get(label, {}).items(), key=lambda item: item[1], reverse=True)[:5]
+            for label, _ in ranking
+        ]
+        return title, ranking, ranking_children
 
     # ------------------------------------------------------------------
     # Задачи
@@ -478,6 +613,87 @@ class DashboardService:
             )
         return result
 
+    def _task_type_code(self, task: ScientificTask) -> str:
+        """Код типа задачи (ОЗ/ДЗ) с поддержкой IntEnum и строковых кодов."""
+        try:
+            return pack_enum_display("scientific_task_type", int(task.type))
+        except (TypeError, ValueError):
+            return enum_label("scientific_task_type", str(task.type))
+
+    def _task_type_counts(
+        self, tasks: Sequence[ScientificTask]
+    ) -> List[Tuple[str, int]]:
+        """Количество задач по типам (коды ОЗ/ДЗ)."""
+        counts: Dict[str, int] = {}
+        for task in tasks:
+            code = self._task_type_code(task)
+            counts[code] = counts.get(code, 0) + 1
+        return [
+            (code, counts[code])
+            for code in enum_codes("scientific_task_type")
+            if counts.get(code)
+        ]
+
+    def _task_execution(
+        self,
+        tasks: Sequence[ScientificTask],
+        assignments: Dict[str, Set[Tuple[str, str]]],
+        scope: Optional[str],
+    ) -> List[TaskExecution]:
+        """Назначенные и выполненные задачи по филиалам или отделам."""
+        today = date.today()
+        if scope:
+            entities = list(
+                self.session.scalars(
+                    select(Department)
+                    .where(Department.branch_id == scope)
+                    .order_by(Department.short_name, Department.name)
+                )
+            )
+            target_type = "department"
+        else:
+            entities = list(
+                self.session.scalars(
+                    select(Branch).order_by(Branch.short_name, Branch.name)
+                )
+            )
+            target_type = NODE_BRANCH
+
+        labels = {
+            str(entity.id): (entity.short_name or entity.name)
+            for entity in entities
+        }
+        counts: Dict[str, List[int]] = {
+            node_id: [0, 0, 0, 0] for node_id in labels
+        }
+        for task in tasks:
+            code = self._task_type_code(task)
+            completed = task.end_date is not None and task.end_date < today
+            for node_type, node_id in assignments.get(task.id, set()):
+                if node_type != target_type or node_id not in counts:
+                    continue
+                bucket = counts[node_id]
+                base = 0 if code == "ОЗ" else 2
+                bucket[base] += 1
+                if completed:
+                    bucket[base + 1] += 1
+
+        result: List[TaskExecution] = []
+        for node_id, bucket in counts.items():
+            assigned_oz, completed_oz, assigned_dz, completed_dz = bucket
+            if assigned_oz + assigned_dz == 0:
+                continue
+            result.append(
+                TaskExecution(
+                    label=labels[node_id],
+                    assigned_oz=assigned_oz,
+                    assigned_dz=assigned_dz,
+                    completed_oz=completed_oz,
+                    completed_dz=completed_dz,
+                )
+            )
+        return result
+
     def _task_stats(
         self,
         tasks: Sequence[ScientificTask],
@@ -491,15 +707,20 @@ class DashboardService:
         for task in tasks:
             nodes = assignments.get(task.id, set())
             if scope:
-                assigned += 1
-                has_child = any(
-                    node_type != NODE_BRANCH or node_id != scope
-                    for node_type, node_id in nodes
+                # В филиале задача распределена, только если дошла до сотрудника.
+                has_employee = any(
+                    node_type == NODE_EMPLOYEE for node_type, _node_id in nodes
                 )
-                if not has_child:
+                if has_employee:
+                    assigned += 1
+                else:
                     unassigned += 1
             else:
-                if nodes:
+                # В головном офисе достаточно назначения на регион.
+                has_region = any(
+                    node_type == NODE_REGION for node_type, _node_id in nodes
+                )
+                if has_region:
                     assigned += 1
                 else:
                     unassigned += 1
@@ -507,11 +728,46 @@ class DashboardService:
                 overdue += 1
         return assigned, unassigned, overdue
 
+    def _task_completion(
+        self, tasks: Sequence[ScientificTask]
+    ) -> Tuple[int, int, int]:
+        """Выполненные, невыполненные и истекающие в течение месяца задачи."""
+        today = date.today()
+        horizon = today + timedelta(days=30)
+        completed = 0
+        due_soon = 0
+        for task in tasks:
+            if task.end_date is None:
+                continue
+            if task.end_date < today:
+                completed += 1
+            elif task.end_date <= horizon:
+                due_soon += 1
+        uncompleted = len(tasks) - completed
+        return completed, uncompleted, due_soon
+
     # ------------------------------------------------------------------
     # Изменения и импорт
     # ------------------------------------------------------------------
     def _changes_count(self) -> int:
         return int(self.session.scalar(select(func.count(Change.id))) or 0)
+
+    def _last_export(self) -> Optional[datetime]:
+        """Время последнего ZIP-экспорта по файлам каталога «Экспорт»."""
+        if self.storage_root is None:
+            return None
+        export_dir = self.storage_root / dir_name("export")
+        try:
+            files = [item for item in export_dir.iterdir() if item.is_file()]
+        except OSError:
+            return None
+        if not files:
+            return None
+        try:
+            latest = max(item.stat().st_mtime for item in files)
+        except OSError:
+            return None
+        return datetime.fromtimestamp(latest)
 
     def _latest_import(self) -> Optional[Tuple[str, int, int]]:
         try:
@@ -561,18 +817,47 @@ class DashboardService:
         telegrams_total: int,
         documents_delta: Optional[float],
         evaluated_count: int,
+        evaluated_telegrams: int,
         evaluation_average: Optional[float],
+        materials_without_evaluation: int,
+        reported_count: int,
+        report_type_counts: List[Tuple[str, int]],
+        undelivered_count: int,
         tasks_assigned: int,
         tasks_unassigned: int,
+        tasks_total: int,
+        tasks_completed: int,
+        tasks_uncompleted: int,
+        tasks_due_soon: int,
+        task_type_counts: List[Tuple[str, int]],
+        completed_task_type_counts: List[Tuple[str, int]],
         changes_total: int,
         import_info: Optional[Tuple[str, int, int]],
     ) -> List[KpiValue]:
+        denominator = materials_total + evaluated_telegrams
         share = (
-            f"{evaluated_count * 100 / documents_total:.0f} %"
-            if documents_total
+            f"{evaluated_count * 100 / denominator:.0f} %"
+            if denominator
             else "—"
         )
-        average = f"{evaluation_average:.1f}".replace(".", ",") if evaluation_average else "—"
+        average = (
+            f"{evaluation_average:.1f}".replace(".", ",")
+            if evaluation_average is not None
+            else "—"
+        )
+        report_breakdown = " · ".join(
+            f"{label}: {count}" for label, count in report_type_counts
+        ) or "—"
+        task_breakdown = " · ".join(
+            f"{label}: {count}" for label, count in task_type_counts
+        ) or "—"
+        completed_task_breakdown = " · ".join(
+            f"{label}: {count}" for label, count in completed_task_type_counts
+        ) or "—"
+        total_tasks = tasks_completed + tasks_uncompleted
+        completed_percent = (
+            tasks_completed * 100 / total_tasks if total_tasks else 0.0
+        )
         result = [
             KpiValue(
                 "documents",
@@ -585,14 +870,52 @@ class DashboardService:
             KpiValue(
                 "evaluated",
                 STRINGS.dashboard_evaluated,
-                share,
-                STRINGS.dashboard_average.format(value=average),
+                str(evaluated_count),
+                f"{share} · {STRINGS.dashboard_average.format(value=average)}",
+                attention=(
+                    STRINGS.dashboard_unevaluated_materials.format(
+                        count=materials_without_evaluation
+                    )
+                    if materials_without_evaluation
+                    else ""
+                ),
+            ),
+            KpiValue(
+                "reported",
+                STRINGS.dashboard_reported,
+                str(reported_count),
+                report_breakdown,
+                attention=(
+                    STRINGS.dashboard_undelivered.format(count=undelivered_count)
+                    if undelivered_count
+                    else ""
+                ),
             ),
             KpiValue(
                 "tasks",
                 STRINGS.dashboard_tasks,
-                f"{tasks_assigned} / {tasks_unassigned}",
-                STRINGS.dashboard_tasks_detail,
+                str(tasks_total),
+                task_breakdown,
+                attention=(
+                    STRINGS.dashboard_unassigned_tasks.format(
+                        count=tasks_unassigned
+                    )
+                    if tasks_unassigned
+                    else ""
+                ),
+            ),
+            KpiValue(
+                "completed",
+                STRINGS.dashboard_completed_tasks,
+                f"{tasks_completed} ({completed_percent:.0f} %)",
+                completed_task_breakdown,
+                attention=(
+                    STRINGS.dashboard_uncompleted_tasks.format(
+                        count=tasks_uncompleted
+                    )
+                    if tasks_uncompleted
+                    else ""
+                ),
             ),
         ]
         if self._is_branch:

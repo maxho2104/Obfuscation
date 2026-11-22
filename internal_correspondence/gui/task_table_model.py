@@ -40,6 +40,35 @@ def _format_date(value: Optional[date]) -> str:
     return value.strftime("%d.%m.%Y") if value else ""
 
 
+def task_type_code(task: ScientificTask) -> str:
+    """Возвращает короткий код типа задачи (например, «ОЗ» или «ДЗ»)."""
+    value = task.type
+    if value is None:
+        return ""
+    try:
+        return pack_enum_display("scientific_task_type", int(value)) or ""
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def task_type_full_label(task: ScientificTask) -> str:
+    """Возвращает полную метку типа задачи для поиска и сортировки."""
+    code = task_type_code(task)
+    if not code:
+        return ""
+    return enum_label("scientific_task_type", code) or code
+
+
+def task_type_label(task: ScientificTask) -> str:
+    """Возвращает краткую метку типа задачи для таблиц.
+
+    ``ScientificTask.type`` может быть как IntEnum (актуальная схема),
+    так и строковым кодом пакета. Для неизвестного значения возвращается
+    его строковое представление, чтобы колонка «Тип» не оставалась пустой.
+    """
+    return task_type_code(task) or task_type_full_label(task)
+
+
 class TaskTableModel(QAbstractTableModel):
     """Таблица задач с поиском, сортировкой и подсветкой нераспределённых."""
 
@@ -91,13 +120,8 @@ class TaskTableModel(QAbstractTableModel):
         self.endResetModel()
 
     def _type_label(self, task: ScientificTask) -> str:
-        """Метка типа задачи: IntEnum -> код пакета -> человекочитаемая метка."""
-        value = task.type
-        try:
-            code = pack_enum_display("scientific_task_type", int(value))
-        except (TypeError, ValueError):
-            return str(value or "")
-        return enum_label("scientific_task_type", code)
+        """Полная метка типа для поиска и сортировки."""
+        return task_type_full_label(task)
 
     def _apply_filter_and_sort(self) -> None:
         tasks = self._tasks
@@ -108,6 +132,7 @@ class TaskTableModel(QAbstractTableModel):
                 if self._search in (task.id or "").lower()
                 or self._search in (task.name or "").lower()
                 or self._search in self._type_label(task).lower()
+                or self._search in task_type_label(task).lower()
                 or self._search in (task.comment or "").lower()
             ]
         tasks = sorted(tasks, key=self._sort_key, reverse=self._sort_order == Qt.DescendingOrder)
@@ -189,7 +214,7 @@ class TaskTableModel(QAbstractTableModel):
             if field in ("partial_threshold", "full_threshold"):
                 return _format_number(value)
             if field == "type":
-                return self._type_label(task)
+                return task_type_label(task)
             return "" if value is None else str(value)
 
         if role == Qt.BackgroundRole and task.id in self._undistributed:

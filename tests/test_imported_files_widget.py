@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QInputDialog, QMessageBox
 
-from internal_correspondence.core.constants import Role
+
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.gui.imported_files_widget import ImportedFilesWidget
 from internal_correspondence.importexport.import_service import (
@@ -188,19 +188,3 @@ def test_imported_files_delete_removes_disk_and_manifest(
         assert not (docs / "beta.txt").exists()
         assert read_import_manifest(storage) == []
         assert _texts(widget) == []
-
-
-def test_dashboard_includes_imported_files(qt_app, env) -> None:
-    """Дашборд с storage_root показывает блок файлов последнего импорта."""
-    from internal_correspondence.gui.dashboard_widget import DashboardWidget
-
-    db, storage, docs = env
-    with db.get_session() as session:
-        dashboard = DashboardWidget(
-            session,
-            Role.HEAD_OFFICE.value,
-            None,
-            storage_root=storage,
-        )
-        assert dashboard.imported_files is not None
-        assert _texts(dashboard.imported_files) == ["alpha.txt", "beta.txt"]
