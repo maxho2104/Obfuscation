@@ -45,6 +45,7 @@ from PyQt5.QtWidgets import (
 )
 
 from internal_correspondence.core.constants import Role
+from internal_correspondence.gui.imported_files_widget import ImportedFilesWidget
 from internal_correspondence.reports.dashboard_service import (
     DashboardData,
     DashboardFilter,
@@ -440,6 +441,13 @@ class DashboardWidget(QWidget):
         charts.setRowStretch(1, 1)
         root.addLayout(charts, 1)
 
+        self.imported_files: Optional[ImportedFilesWidget] = None
+        if self.role == Role.HEAD_OFFICE.value and self.storage_root is not None:
+            self.imported_files = ImportedFilesWidget(
+                self.session, self.storage_root
+            )
+            root.addWidget(self.imported_files)
+
     @staticmethod
     def _chart_view() -> QChartView:
         view = QChartView()
@@ -588,6 +596,8 @@ class DashboardWidget(QWidget):
         self._render_kpi()
         self._render_charts()
         self._render_notifications()
+        if self.imported_files is not None:
+            self.imported_files.refresh()
 
     def _notifications_text(self) -> str:
         """Формирует сообщения бегущей строки по текущим данным."""

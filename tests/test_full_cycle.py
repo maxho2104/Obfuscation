@@ -16,6 +16,7 @@
 """
 
 import os
+from argparse import Namespace
 from datetime import date
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -33,10 +34,11 @@ from internal_correspondence.orm.models import (
     Country,
     ScientificMaterial,
     Telegram,
+    TerritorialUnit,
 )
 from internal_correspondence.services.change_tracking import register_change_tracking
-from tests import seed_branch, seed_head_office
-from tests.seed_branch import _ensure_reference_data
+from tests import seed_branch, seed_head_office, seed_reference
+from tests.seed_reference import create_reference_data
 
 BRANCHES: List[Tuple[str, str]] = [
     ("BR-001", "Ф-1"),
@@ -106,16 +108,18 @@ def _step1_head_office_reference(
     fake = Faker("ru_RU")
     try:
         with db.get_session() as session:
-            _ensure_reference_data(session, fake, 3, date.today())
-            for index, (_branch_id, short) in enumerate(BRANCHES, start=1):
-                session.add(
-                    Branch(
-                        id=f"BR-{index:03d}",
-                        name=f"Филиал «{fake.company()}»",
-                        short_name=short,
-                        territorial_unit_id="TU-001",
-                    )
-                )
+            create_reference_data(
+                session,
+                fake,
+                Namespace(
+                    units=3,
+                    branches_per_unit=1,
+                    countries=(30, 40),
+                    consumers=10,
+                    leaders=5,
+                    tasks=60,
+                ),
+            )
             session.commit()
             service = _hq_service(session, hq_storage)
             outputs = service.export_for_branches([b for b, _s in BRANCHES])
@@ -157,7 +161,7 @@ def _step2_branches(
             [
                 "--db-url", db_url,
                 "--storage", storage.as_posix(),
-                "--branch", short,
+
                 "--from", PERIOD[0],
                 "--to", PERIOD[1],
                 "--materials-per-day", "1-2",
@@ -301,22 +305,65 @@ def test_cycle_synchronizes_documents(cycle: Path, branch_id: str, short: str) -
     assert hq["materials"] == branch["materials"]
     assert hq["telegrams"] == branch["telegrams"]
 
-    # Все материалы зарегистрированы и оценены головным офисом.
-    for incoming_number, incoming_date, evaluation, _consumer, _comment in (
+    # Все материалы зарегистрированы и оценены головным офисом,
+    # потребитель заполнен (пустым поле не остаётся).
+    for incoming_number, incoming_date, evaluation, consumer, _comment in (
         branch["materials"].values()
     ):
         assert incoming_number is not None
         assert incoming_date is not None
         assert evaluation is not None
+        assert consumer is not None
+
+
+def test_cycle_distributes_all_tasks(cycle: Path) -> None:
+    """Назначенные филиалу задачи распределены по ОШС без остатка."""
+    from internal_correspondence.orm.models import AddedTask
+
+    for branch_id, short in BRANCHES:
+        db = DatabaseManager(_db_url(cycle, f"{short}.db"))
+        try:
+            with db.get_session() as session:
+                branch_tasks = {
+                    row.task_id
+                    for row in session.query(AddedTask)
+                    .filter_by(node_type="branch", node_id=branch_id)
+                }
+                assert branch_tasks, "филиалу должны быть назначены задачи"
+                department_tasks = {
+                    row.task_id
+                    for row in session.query(AddedTask)
+                    .filter_by(node_type="department")
+                }
+                workgroup_tasks = {
+                    row.task_id
+                    for row in session.query(AddedTask)
+                    .filter_by(node_type="workgroup")
+                }
+                employee_tasks = {
+                    row.task_id
+                    for row in session.query(AddedTask)
+                    .filter_by(node_type="employee")
+                }
+                # Нераспределённых внутри филиала и отделов нет:
+                # каждая задача филиала опущена до отделов, групп, сотрудников
+                assert department_tasks == branch_tasks
+                assert workgroup_tasks == branch_tasks
+                assert employee_tasks == branch_tasks
+        finally:
+            db.close()
 
 
 def test_cycle_imports_references(cycle: Path) -> None:
-    """Справочники доехали до филиалов."""
+    """Справочники доехали до филиала — персонально и общие."""
     for _branch_id, short in BRANCHES:
         db = DatabaseManager(_db_url(cycle, f"{short}.db"))
         try:
             with db.get_session() as session:
-                assert session.query(Branch).count() == len(BRANCHES)
-                assert session.query(Country).count() == 10
+                # Персональные справочники: только сам филиал и его регион
+                assert session.query(Branch).count() == 1
+                assert session.query(TerritorialUnit).count() == 1
+                # Общие справочники — целиком
+                assert 30 <= session.query(Country).count() <= 40
         finally:
             db.close()

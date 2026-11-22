@@ -1,9 +1,9 @@
 """Наполнение базы данных от имени филиала (фаза филиала).
 
-Скрипт моделирует работу филиала за заданный период: создаёт (при
-отсутствии) справочные значения, организационно-штатную структуру
-филиала (отделы, рабочие группы, сотрудники), источники, научные
-материалы и телеграммы по правилам нумерации:
+Скрипт моделирует работу филиала за заданный период: создаёт
+организационно-штатную структуру филиала (отделы, рабочие группы,
+сотрудники), источники, научные материалы и телеграммы по правилам
+нумерации:
 
 - исходящие номера материалов (``ИСХ-NNNNN``) и телеграмм (``ТЛГ-NNNNN``)
   — отдельные годовые счётчики, цифры по порядку в течение года;
@@ -13,11 +13,20 @@
   серийный номер, год выпуска и разрешительный документ, для образцов
   продукции — ещё стоимость.
 
-Филиал задаётся параметром ``--branch`` (сокращённое наименование); если
-он не указан или филиал в базе отсутствует — генерируется новый филиал.
+Справочные данные (территориальные единицы, филиалы, страны, научные
+звания, потребители, руководители, научные задачи) в базе филиала не
+создаются: они загружаются из экспортного архива головного офиса (см.
+``internal_correspondence.importexport.branch_import`` и мастер первого
+запуска). Задачи, назначенные филиалу, каскадно распределяются по
+отделам, рабочим группам и сотрудникам — нераспределённых задач не
+должно остаться.
+
+Филиал берётся из базы (загруженной ранее из экспортного архива
+головного офиса): при единственном филиале он используется безусловно,
+при нескольких — скрипт сообщит перечень и завершится ошибкой.
 
 Примеры запуска:
-    python -m tests.seed_branch --branch Ф-1
+    python -m tests.seed_branch
     python -m tests.seed_branch --from 2026-09-01 --to 2026-09-30 \
         --materials-per-day 2-4 --telegrams-per-day 1-2 --with-files
 """
@@ -39,13 +48,13 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from internal_correspondence.core.constants import (  # noqa: E402
     MaterialType,
-    ScientificTaskType,
     SourceType,
     TelegramType,
 )
 from internal_correspondence.core.database import DatabaseManager  # noqa: E402
 from internal_correspondence.orm.models import (  # noqa: E402
     AcademicTitle,
+    AddedTask,
     Branch,
     Consumer,
     Country,
@@ -63,6 +72,12 @@ from internal_correspondence.orm.models import (  # noqa: E402
 )
 from internal_correspondence.services.change_tracking import (  # noqa: E402
     register_change_tracking,
+)
+from internal_correspondence.services.task_distribution_service import (  # noqa: E402
+    NODE_BRANCH,
+    NODE_DEPARTMENT,
+    NODE_EMPLOYEE,
+    NODE_WORKGROUP,
 )
 from tests.seed_common import (  # noqa: E402
     YearlyCounter,
@@ -88,14 +103,6 @@ POSITIONS = [
     "Инженер-исследователь",
     "Ведущий специалист",
     "Аналитик",
-]
-
-ACADEMIC_TITLES = [
-    ("Д-р", "Доктор наук", "Доктора наук", "Доктору наук", 1),
-    ("К-т", "Кандидат наук", "Кандидата наук", "Кандидату наук", 2),
-    ("Доц.", "Доцент", "Доцента", "Доценту", 3),
-    ("Проф.", "Профессор", "Профессора", "Профессору", 4),
-    ("Акад.", "Академик", "Академика", "Академику", 5),
 ]
 
 DEPARTMENT_NAMES = [
@@ -164,11 +171,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--storage", help="Каталог файлового хранилища (по умолчанию из settings.ini)"
     )
     parser.add_argument(
-        "--branch",
-        help="Сокращённое наименование филиала; если филиала нет в базе — "
-        "он будет создан (по умолчанию генерируется новый филиал)",
-    )
-    parser.add_argument(
         "--from",
         dest="date_from",
         type=parse_date,
@@ -230,73 +232,13 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _ensure_reference_data(
-    session: Session, fake: Faker, branches_count: int, today: date
-) -> Dict[str, list]:
-    """Создаёт справочники, если они отсутствуют в базе."""
-    if session.query(TerritorialUnit).count() == 0:
-        units = [
-            TerritorialUnit(id=f"TU-{index:03d}", name=fake.region())
-            for index in range(1, max(2, branches_count) + 1)
-        ]
-        session.add_all(units)
-    if session.query(Country).count() == 0:
-        used_codes = set()
-        countries = []
-        for index in range(1, 11):
-            code = fake.country_code(representation="alpha-3")
-            if code in used_codes:
-                code = f"C{index:02d}"
-            used_codes.add(code)
-            countries.append(Country(id=code, name=fake.country()))
-        session.add_all(countries)
-    if session.query(AcademicTitle).count() == 0:
-        session.add_all(
-            AcademicTitle(
-                id=title_id,
-                name=name,
-                genitive=genitive,
-                dative=dative,
-                sort_order=order,
-            )
-            for title_id, name, genitive, dative, order in ACADEMIC_TITLES
-        )
-    if session.query(Consumer).count() == 0:
-        session.add_all(
-            Consumer(
-                id=f"CONS-{index:03d}",
-                short_name=f"Потр-{index}",
-                name=f"{fake.company()} ({fake.city()})",
-            )
-            for index in range(1, 7)
-        )
-    if session.query(Leader).count() == 0:
-        session.add_all(Leader(id=f"LEAD-{index:03d}") for index in range(1, 5))
-    if session.query(ScientificTask).count() == 0:
-        tasks = []
-        for index in range(1, 7):
-            start = fake.date_between_dates(
-                date_start=today - timedelta(days=730), date_end=today
-            )
-            tasks.append(
-                ScientificTask(
-                    id=f"TASK-{index:04d}",
-                    name=f"Научная задача «{fake.catch_phrase()}»",
-                    type=(
-                        ScientificTaskType.MAIN.value
-                        if index % 2
-                        else ScientificTaskType.ADDITIONAL.value
-                    ),
-                    start_date=start,
-                    end_date=start + timedelta(days=365),
-                    comment=fake.sentence(nb_words=10)[:300],
-                    partial_threshold=fake.random_int(30, 70),
-                    full_threshold=fake.random_int(80, 100),
-                )
-            )
-        session.add_all(tasks)
-    session.flush()
-    return {
+def _load_reference_data(session: Session) -> Dict[str, list]:
+    """Читает справочники, загруженные из экспортного архива головного офиса.
+
+    Справочники в базе филиала не создаются: их источник — архив ГО (см.
+    ``branch_import`` и мастер первого запуска).
+    """
+    references = {
         "territorial_units": list(session.query(TerritorialUnit)),
         "countries": list(session.query(Country)),
         "academic_titles": list(session.query(AcademicTitle)),
@@ -304,41 +246,45 @@ def _ensure_reference_data(
         "leaders": list(session.query(Leader)),
         "tasks": list(session.query(ScientificTask)),
     }
-
-
-def _resolve_branch(
-    session: Session, fake: Faker, branch_arg: Optional[str]
-) -> Branch:
-    """Возвращает существующий филиал или создаёт новый."""
-    if branch_arg:
-        existing = (
-            session.query(Branch).filter(Branch.short_name == branch_arg).one_or_none()
+    missing = [
+        title
+        for title, rows in (
+            ("страны", references["countries"]),
+            ("научные звания", references["academic_titles"]),
+            ("потребители", references["consumers"]),
+            ("руководители", references["leaders"]),
+            ("научные задачи", references["tasks"]),
         )
-        if existing is not None:
-            return existing
+        if not rows
+    ]
+    if missing:
+        raise BranchSeedError(
+            "В базе отсутствуют справочные данные головного офиса "
+            f"({', '.join(missing)}). Импортируйте архив ГО и повторите запуск."
+        )
+    return references
 
-    company = (
-        fake.company().replace("«", "").replace("»", "").replace('"', "").strip()
+
+def _resolve_branch(session: Session) -> Branch:
+    """Возвращает единственный филиал базы.
+
+    Филиалы появляются в базе только из экспортного архива головного
+    офиса; при нескольких филиалах без однозначного выбора — ошибка.
+    """
+    branches = session.query(Branch).order_by(Branch.id).all()
+    if len(branches) == 1:
+        return branches[0]
+    if not branches:
+        raise BranchSeedError(
+            "В базе нет филиалов. Импортируйте архив головного офиса "
+            "(мастер первого запуска) и повторите запуск."
+        )
+    raise BranchSeedError(
+        "В базе несколько филиалов — скрипт не знает, какой из них "
+        "наполнять: "
+        + ", ".join(branch.short_name for branch in branches[:10])
+        + ". Наполняйте базу отдельно для каждого филиала."
     )
-    if branch_arg:
-        short_name = branch_arg
-    else:
-        used = {name for (name,) in session.query(Branch.short_name)}
-        index = 1
-        while f"Ф-{index}" in used:
-            index += 1
-        short_name = f"Ф-{index}"
-    unit = session.query(TerritorialUnit).order_by(TerritorialUnit.id).first()
-    index = session.query(Branch).count() + 1
-    branch = Branch(
-        id=f"BR-{index:03d}",
-        name=f"Филиал «{company}»",
-        short_name=short_name,
-        territorial_unit_id=unit.id if unit else None,
-    )
-    session.add(branch)
-    session.flush()
-    return branch
 
 
 def _create_branch_structure(
@@ -350,7 +296,13 @@ def _create_branch_structure(
     employees_range: tuple,
     today: date,
 ) -> None:
-    """Создаёт отделы, рабочие группы и сотрудников филиала."""
+    """Создаёт отделы, рабочие группы и сотрудников филиала.
+
+    Структура гарантирует распределяемость задач: в каждом отделе есть
+    действующий сотрудник, действующая рабочая группа и действующий
+    участник каждой группы — иначе каскадное распределение задач
+    остановилось бы на уровне отдела.
+    """
     for dept_index in range(random.randint(*departments_range)):
         offset = sum(ord(char) for char in branch.id)
         department = Department(
@@ -370,7 +322,11 @@ def _create_branch_structure(
         ]
         for group in groups:
             department.workgroups.append(group)
+        # В отделе должна быть хотя бы одна действующая группа.
+        if groups and not any(group.active for group in groups):
+            groups[0].active = True
 
+        employees: List[Employee] = []
         for _ in range(random.randint(*employees_range)):
             gender = random.choice(("male", "female"))
             last_name = (
@@ -398,6 +354,7 @@ def _create_branch_structure(
                     else None
                 ),
             )
+            employees.append(employee)
             if groups and fake.boolean(chance_of_getting_true=60):
                 group = fake.random_element(groups)
                 start = fake.date_between_dates(
@@ -415,6 +372,104 @@ def _create_branch_structure(
                     )
                 )
             department.employees.append(employee)
+        # В отделе должен быть хотя бы один действующий сотрудник.
+        if employees and not any(employee.active for employee in employees):
+            employees[0].active = True
+        # У каждой группы должен быть хотя бы один действующий участник,
+        # иначе задачи не опустятся ниже уровня отдела.
+        for group in groups:
+            has_member = any(
+                membership.is_active_on(today) and membership.employee.active
+                for membership in group.memberships
+            )
+            if has_member:
+                continue
+            candidate = next(
+                (employee for employee in employees if employee.active), None
+            )
+            if candidate is not None:
+                candidate.workgroup_memberships.append(
+                    WorkGroupMembership(
+                        working_group=group,
+                        start_date=today - timedelta(days=180),
+                        end_date=None,
+                    )
+                )
+
+
+def _ensure_task_assignment(
+    session: Session, task_id: str, node_type: str, node_id: str
+) -> bool:
+    """Добавляет назначение задачи узлу, если его ещё нет; возвращает признак."""
+    exists = (
+        session.query(AddedTask)
+        .filter_by(task_id=task_id, node_type=node_type, node_id=node_id)
+        .first()
+    )
+    if exists is not None:
+        return False
+    session.add(AddedTask(task_id=task_id, node_type=node_type, node_id=node_id))
+    return True
+
+
+def _distribute_branch_tasks(
+    session: Session, branch: Branch, today: date
+) -> Dict[str, int]:
+    """Каскадно распределяет задачи филиала по ОШС: отделы, группы, сотрудники.
+
+    Каждая задача, назначенная филиалу, получает минимум одно назначение
+    на отдел; каждый выбранный отдел получает минимум одну рабочую группу,
+    каждая группа — минимум одного действующего сотрудника. Благодаря
+    гарантиям структуры (см. ``_create_branch_structure``) нераспределённых
+    задач внутри филиала и отделов не остаётся. Назначения даются только
+    действующим узлам (как в ``TaskDistributionService.can_assign``).
+    """
+    assignments = (
+        session.query(AddedTask)
+        .filter_by(node_type=NODE_BRANCH, node_id=branch.id)
+        .all()
+    )
+    task_ids = [assignment.task_id for assignment in assignments]
+    stats = {"tasks": len(task_ids), "created": 0, "undistributed": 0}
+    departments = [department for department in branch.departments if department.active]
+    for task_id in task_ids:
+        if not departments:
+            stats["undistributed"] += 1
+            continue
+        chosen = random.sample(
+            departments, k=min(len(departments), random.randint(1, 3))
+        )
+        for department in chosen:
+            if _ensure_task_assignment(
+                session, task_id, NODE_DEPARTMENT, str(department.id)
+            ):
+                stats["created"] += 1
+            groups = [group for group in department.workgroups if group.active]
+            if not groups:
+                continue
+            for group in random.sample(
+                groups, k=random.randint(1, len(groups))
+            ):
+                if _ensure_task_assignment(
+                    session, task_id, NODE_WORKGROUP, str(group.id)
+                ):
+                    stats["created"] += 1
+                members = [
+                    membership.employee
+                    for membership in group.memberships
+                    if membership.is_active_on(today) and membership.employee.active
+                ]
+                if not members:
+                    continue
+                for employee in random.sample(
+                    members, k=min(len(members), random.randint(1, 3))
+                ):
+                    if _ensure_task_assignment(
+                        session, task_id, NODE_EMPLOYEE, str(employee.id)
+                    ):
+                        stats["created"] += 1
+    session.flush()
+    return stats
 
 
 def _create_sources(
@@ -624,8 +679,8 @@ def _seed(
     today: date,
 ) -> Branch:
     """Создаёт данные филиала за период; возвращает филиал."""
-    references = _ensure_reference_data(session, fake, 3, today)
-    branch = _resolve_branch(session, fake, args.branch)
+    references = _load_reference_data(session)
+    branch = _resolve_branch(session)
     if not branch.departments:
         _create_branch_structure(
             fake,
@@ -637,6 +692,12 @@ def _seed(
             today,
         )
     session.flush()
+    distribution = _distribute_branch_tasks(session, branch, today)
+    print(
+        f"Распределение задач: назначено филиалу {distribution['tasks']}, "
+        f"добавлено назначений по ОШС {distribution['created']}, "
+        f"нераспределённых {distribution['undistributed']}."
+    )
 
     existing_sources = session.query(Source).count()
     sources = _create_sources(fake, args.sources, existing_sources, branch)
@@ -703,6 +764,7 @@ def _print_statistics(session: Session, branch: Branch) -> None:
         ("Страны", Country),
         ("Научные звания", AcademicTitle),
         ("Научные задачи", ScientificTask),
+        ("Назначения задач", AddedTask),
         ("Потребители", Consumer),
         ("Руководители", Leader),
         ("Источники", Source),

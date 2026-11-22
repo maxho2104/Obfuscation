@@ -1,52 +1,139 @@
 # Код-ревью проекта «Внутренняя корреспонденция»
 
-Дата: 2026-11-17. Ветка: `alex_develop` (head `f762157`).
-Объект: 73 модуля, ~22 000 строк кода (`internal_correspondence`), 31 тестовый файл, 341 тест.
-Методика: автоматические сканы типовых рисков, замер покрытия тестами (pytest-cov), целевое чтение критичных мест (change tracking, импорт/экспорт, сессии БД, GUI-паттерны Qt). Полное построчное чтение не выполнялось.
+Дата: 2026-11-20. Ветка: `alex_develop` (head `0b34f81`). Предыдущее ревью: 2026-11-17 (`f762157`).
+Объект: 83 модуля, ~27 000 строк кода (`internal_correspondence`), 43 тестовых файла.
+Методика: pyflakes + vulture (каждая находка проверена вручную — ложные срабатывания
+на переопределениях Qt и методах SQLAlchemy отфильтрованы), AST-анализ длин функций,
+проверка обращений к ключам `AppStrings`, прогон тестов: **434 passed**.
+Полное построчное чтение не выполнялось; новые модули последнего коммита
+(`dashboard_widget`, `dashboard_service`, `imported_files_widget`, `exchange_dialogs`,
+`oshm_element_charts`) просмотрены выборочно.
 
 ## Сводка
 
-Проект в зрелом состоянии: архитектурные инварианты (AGENTS.md) соблюдаются, ядро покрыто тестами на 88–98%, критических дефектов не выявлено. Основные риски — ресурсная утечка сессий БД в диалогах, остатки захардкоженных строк вне `AppStrings`, низкое покрытие новых модулей распределения задач, накопление мёртвых ключей строк.
+Проект остаётся в зрелом состоянии: инварианты AGENTS.md соблюдаются, ядро покрыто
+тестами, критических архитектурных дефектов нет. От ревью 17.11 добавились **два
+подтверждённых бага NameError** (потерянные импорты на редких путях), накопился
+заметный пласт мёртвого кода (класс, ~15 функций, ~50 ключей строк, ~45 импортов)
+и подтвердилась ресурсная утечка сессий БД в модальных диалогах.
 
-## Сильные стороны
+## Баги (новые, подтверждённые)
 
-- **Инвариант change tracking идеален**: множество таблиц в `_TRACKED_TABLES` в точности совпадает с множеством классов `ChangeTrackedMixin` (расхождений нет в обе стороны).
-- **Пакет предметной области полон**: все 399 ключей `AppStrings` присутствуют в секции `strings`, лишних нет.
-- **Нет bare `except`**, нет `eval/exec/pickle`, нет SQL-инъекций (все запросы через ORM; raw SQL только в миграциях).
-- **Покрытие ядра высокое**: `models.py` 98%, `change_tracking.py` 92%, `export_service.py` 88%, `statistics_service.py` 90%, `domain_pack`/`string_resources` 99%.
-- **ZIP-импорт**: `extractall` неуязвим для zip slip (санитизация путей в stdlib), в каждый архив пишется `meta.json` с проверкой пакета.
-- Миграции снабжены скриптами проверки (upgrade/downgrade на SQLite), цепочка линейна, head — `f4c6a8d0e2b1`.
+1. **`gui/oshm_details_panel.py:503` — NameError при печати панели.** `QPainter` не
+   импортирован (из QtGui импортирован только `QPixmap`). Путь: печать панели →
+   нативный `QPrintDialog` принят → `painter = QPainter()` → падение. Импорт потерян
+   при одном из коммитов печати.
+2. **`gui/evaluation_import_dialog.py:851` — NameError в `RulesViewerDialog`.**
+   `QDesktopServices` не импортирован; кнопка «открыть файл правил» падает по клику.
+   Класс нигде не инстанцируется (см. мёртвый код), поэтому баг не всплывал.
+3. **`gui/oshm_details_panel.py:580-581` — недостижимый код:** двойной `return True`
+   подряд (остаток после слияния веток).
 
-## Находки (по убыванию важности)
+## Неиспользуемый код (подтверждено: 0 ссылок вне определения)
 
-### Средние
+### Классы и функции
 
-1. **Утечка сессий БД в диалогах.** `application.py` создаёт `db_manager.get_session()` для `OSHMDialog`, `ReportDialog`, `EvaluationImportDialog`, диалога настроек и ряда операций, но не вызывает `session.close()` после `exec_()` (закрытий всего 6 при ~15 точках создания). Каждое открытие диалога держит соединение пула; при долгой работе и множестве открытий ОШС — риск исчерпания пула/файловых дескрипторов SQLite. Рекомендация: закрывать сессию по закрытии диалога (или передавать общую сессию вкладок).
+| Объект | Где | Комментарий |
+|---|---|---|
+| `ParticipatingEmployeesWidget` (весь класс, ~45 строк) | `gui/employee_picker.py:96` | Мёртв; дополнительно нарушает инвариант 1 (захардкоженные «Причастные сотрудники», тултипы) |
+| `ParsingError` | `text_import/errors.py:44` | Нигде не поднимается и не ловится |
+| `problem_at()` | `text_import/models.py:247` | — |
+| `valid_count`, `duplicate_count` | `text_import/models.py:239,310` | Используются только в тестах |
+| `node_label()` | `services/task_distribution_service.py:452` | — |
+| `assigned_task_ids()` | `services/task_distribution_service.py:575` | — |
+| `is_assigned()` | `services/task_distribution_service.py:582` | Только тесты |
+| `reload()` | `services/task_distribution_service.py:571` | — |
+| `is_leaf` (property) | `services/task_distribution_service.py:102` | — |
+| `current_filters()` | `gui/document_list_widget.py:206` | — |
+| `current_instance()` | `gui/edit_elements.py:455` | — |
+| `_address_rows()` | `gui/edit_elements.py:698` | — |
+| `current_employees` (property) | `orm/models.py:546` | — |
+| `update_with_files()` ×2 | `services/document_service.py:222,258` | Только тесты; GUI правит документы через `service.create/update` |
+| `create_with_files()` ×2 | `services/document_service.py:209,245` | Только тесты и один тест экспорта |
+| `get_paginated()` | `services/base_service.py:45` | Только тест |
+| `evaluation_share` (property) | `orm/models.py:978` | Только тесты; при этом `evaluation_display` дублирует её логику инлайн |
+| `RulesViewerDialog` | `gui/evaluation_import_dialog.py:829` | Диалог определён, но нигде не создаётся |
 
-2. **Захардкоженные строки вне `AppStrings` (нарушение инварианта 1, backlog не закрыт).** Подтверждено ревью: `first_run_wizard.py` (placeholder «Выберите или введите индекс филиала», литералы экранов мастера), `filter_dialog.py` («Да»/«Нет» для bool-условий), фрагменты `settings_dialog.py`, `employee_picker.py`, `table_model.py`, `evaluation_delegate.py`, `reference_editor.py`. Месяцы и римские цифры в статистике — осознанное исключение (локализация, не домен).
+### Ключи `AppStrings` (~50 шт.)
 
-3. **Мёртвые ключи `AppStrings` (~28 шт.).** Остатки удалённых фич: `oshm_col_status`, `status_active_m/f`, `status_inactive_*`, `tooltip_split_ratio` (слайдер убран), `task_empty`, `task_no_periods`, `task_select_node/tasks`, `file_new_suffix`, `msg_detach_confirm`, `msg_value_must_be_int/float`, `button_ok`, `dialog_select_branch`, блок `import_load/matches/errors/open_log/no_schemes/no_rules/select_rule/file_loaded/*_count/rule_invalid`. Ключи `import_problem_*`/`import_reason_*` используются динамически (`getattr`) — не мертвы. Мусор размывает пакет и путает авторов внешних пакетов.
+Ключи есть и в `string_resources.py`, и в пакете, но ни одного обращения
+(`STRINGS.key` или `getattr`). Живые исключения — `import_problem_*` и `import_reason_*`:
+они используются динамически (`getattr(STRINGS, f"import_problem_{code}")`,
+`gui/evaluation_import_dialog.py:386-392`), удалять нельзя.
 
-4. **Низкое покрытие живых модулей.** Общее покрытие 76%, но: `task_dialog.py` 16%, `task_export.py` 31% / `task_import.py` 37% (выгрузка задач по регионам — ключевая фича модуля «Задачи», почти не покрыта), `reference_editor.py` 15%, `evaluation_delegate.py` 29%, `employee_picker.py` 48%, `oshm_dialog.py` 50% (часть путей — drag&drop, известно). Qt-перетаскивание не покрывается автотестами (зафиксировано ранее).
+Мусор: блок `import_load`, `import_matches`, `import_errors`, `import_open_log`,
+`import_no_schemes`, `import_no_rules`, `import_select_rule`, `import_file_loaded`,
+`import_matched_count`, `import_unmatched_count`, `import_skipped_count`,
+`import_rejected_count`, `import_rule`, `import_rule_invalid`,
+`import_duplicate_skip`, `import_duplicate_update`, `import_apply_to_all`;
+`status_active_m/f`, `status_inactive_dept/wg/emp/via_dept`, `oshm_col_status`;
+`task_empty`, `task_no_periods`, `task_select_node`, `task_select_tasks`;
+`file_new_suffix`, `msg_detach_confirm`, `msg_value_must_be_int/float`,
+`button_ok`, `dialog_select_branch`, `tooltip_split_ratio`;
+`dashboard_empty`, `dashboard_updated` (добавлены при работе над дашбордом,
+в виджет не подключены).
 
-5. **Пароль PostgreSQL в открытом виде.** Учётные данные встроены в `db_url` и хранятся в `settings.ini` без шифрования. Согласуется с принципом «безопасность обеспечивается организационно-техническими мерами» (как для ZIP), но стоит зафиксировать в README явно.
+### Неиспользуемые импорты (~45) и переменные
 
-### Низкие
+pyflakes: `logging_config.py` (`os`), `settings.py` (`dataclasses.field`),
+`dashboard_widget.py` (`calendar`, `QTimer`, `QPen`), `models.py` (`sqlalchemy.Float`),
+`change_tracking.py` (`uuid`), `avatar_service.py` (`shutil`),
+`document_dialogs.py` (`TelegramType`, `entity_label`),
+`document_list_widget.py` (`DEFAULT_PAGE_SIZE`, `SqlAlchemyTableModel`, `Telegram`),
+`dashboard_service.py` (`calendar`, `Decimal`, `Iterable`, `Department`),
+`report_service.py` (`WorkingGroup`) и др. Локальная переменная `current_reported`
+(`reports/report_service.py:431`) присваивается, но не используется.
 
-6. **28 `session.commit()` в GUI-слое** (вне сервисов) — диалоги и виджеты управляют транзакциями напрямую, в обход сервисного слоя; противоречит стилю README («описания сущностей отделены от механизмов»). Работает, но повышает стоимость сопровождения.
+## Что можно упростить (дублирование)
 
-7. **TODO в `import_service.py:507`**: для ОШС при импорте не проверяется принадлежность сущности филиалу-владельцу (роль головного офиса пропускает все поля). Согласуется с правилом «ОШС: филиал авторитетен для своей структуры», но приёмник при конфликте UUID молча перезаписывает — стоит хотя бы предупреждение в `warnings`.
+1. **`ScientificMaterialService` / `TelegramService` — полное дублирование (~60 строк ×2).**
+   `create_with_files`/`update_with_files` идентичны с точностью до типа сущности.
+   Уже существует `DocumentFilesMixin` — оба метода естественно поднять туда
+   (возврат через `BaseService.model`), классы сервисов схлопнутся до `_files_dir_key`
+   и `__init__`.
+2. **`material_columns` / `telegram_columns` (`gui/application.py`)** — общий хвост
+   (задачи, входящие реквизиты, оценка, участники) собирается дважды; вынести
+   в `_common_document_columns()`.
+3. **`EvaluationMixin.evaluation_display`** пересчитывает `1.0 / documents_count`
+   вместо вызова `self.evaluation_share` — дублирование логики; вызов свойства
+   оживит его и для прода.
+4. **`_ensure_tree` (177 строк, `services/task_distribution_service.py:220`)** —
+   самая длинная функция проекта: загрузка 5 сущностей + построение 7 индексов +
+   сборка дерева. Расписать на `_load_entities()` / `_build_indexes()` / `_assemble_tree()`.
+5. **`gui/application.py` — 1416 строк** (было 1058 три дня назад). Кандидаты на вынос
+   по образцу `exchange_dialogs.py`: описания колонок таблиц, генерация отчётов
+   (`_generate_report` + меню-обвязка).
 
-8. **Глобальные реестры-синглтоны** (`domain_pack`, `STRINGS`, theme через `current_theme()`) — при текущей однопоточной модели безопасно; при появлении фоновых потоков (будущие прогресс-бары) потребуется аккуратность.
+## Подтверждения ревью 17.11
 
-9. **Крупные модули**: `application.py` 1058 строк (координация окон/меню/импорт-экспорт), `models.py` 1342 (оправдано ролью слоя сущностей), `oshm_dialog.py` 904. Кандидаты на декомposition при следующих крупных правках.
+- **Утечка сессий БД — актуальна.** Новый код (`exchange_dialogs.py`, воркеры потоков,
+  `settings_dialog`) закрывает сессии корректно (`try/finally/session.close()`),
+  но модальные диалоги — нет: `OSHMDialog`, `ReportDialog`, `ReferenceEditorDialog`,
+  `EvaluationImportDialog`, а также вкладки и док-виджет (`DocumentListWidget`,
+  `AttachedFilesWidget`, дашборд, статистика, задачи) получают `get_session()` и никогда
+  не закрывают. `closeEvent`/`__del__` с закрытием есть только в `application.py` и
+  `evaluation_lists_dialog.py`. Каждое открытие справочника/ОШС — минус одно соединение пула.
+- Инвариант change tracking в норме: множество таблиц `_TRACKED_TABLES` совпадает
+  с множеством классов `ChangeTrackedMixin` (20 шт., расхождений нет).
+- Пакет: ключи `AppStrings` синхронизированы с `domain_pack.default.json` в обе
+  стороны; проблема — не рассинхронизация, а ~50 мёртвых ключей (см. выше).
+- Захардкоженные строки вне `AppStrings` — не проверялись заново (backlog
+  ревью 17.11 сохраняется; `ParticipatingEmployeesWidget` добавляет к нему свои).
 
-10. **Известные и зафиксированные ранее (не дефекты, ограничения)**: статистика грузит документы в память и считает в UI-потоке; импорт оценок синхронный; дельта-обмен уязвим к потере архива (идея служебного запроса в backlog); автотест Qt drag&drop отсутствует.
+## Что НЕ трогать
 
-## Рекомендации (приоритет)
+- Месяцы и римские цифры в статистике — осознанное исключение (локализация, не домен).
+- Глобальные реестры (`domain_pack`, `STRINGS`, тема) — безопасны при однопоточной модели.
+- Автотесты Qt drag&drop — зафиксированное ограничение.
+- Ключи `import_problem_*` / `import_reason_*` — живы через динамический `getattr`.
 
-1. Закрыть сессии диалогов (п. 1) — малая правка, реальный ресурсный риск.
-2. Довынос строк по существующему списку backlog и удалить мёртвые ключи (п. 2, 3) — вернуть инвариант 1 к нулевым исключениям.
-3. Дотестировать `task_export`/`task_import`/`task_dialog` (п. 4).
-4. Зафиксировать в README хранение пароля СУБД в открытом виде (п. 5).
-5. При ближайшем касании `import_service` — предупреждение о владельце ОШС (п. 7).
+## Рекомендации (сводно, подробный план — в Refactoring_plan.md)
+
+1. Исправить баги NameError и недостижимый код (полдня).
+2. Удалить неиспользуемые импорты; добавить pyflakes в проверки.
+3. Почистить мёртвые ключи `AppStrings`, перегенерировать секцию `strings`.
+4. Удалить мёртвые классы/функции; решить судьбу API, живущего только в тестах.
+5. Дедупликация: сервисы документов, колонки, `evaluation_display`.
+6. Разбить `_ensure_tree`; планомерно уменьшать `application.py`.
+7. Устранить утечку сессий — единый принцип владения сессией (вариант Б:
+   одна сессия приложения для GUI, новые сессии только в фоновых воркерах).

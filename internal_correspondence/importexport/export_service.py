@@ -20,6 +20,7 @@ from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.importexport.branch_scope import (
     branches_for_change,
     pending_branch_ids,
+    reference_keys_for_branch,
 )
 from internal_correspondence.orm.models import Branch, Change, FileRecord, MissingRequest
 from internal_correspondence.orm.utils import parse_primary_key, resolve_entity_class
@@ -141,9 +142,12 @@ class ExportService:
         """Формирует по архиву для каждого выбранного филиала.
 
         В каждый архив входят изменения записей этого филиала (документы,
-        ОШС, оценки, адресация, файлы — см. ``branch_scope``) и полный набор
-        изменений справочников. Изменения помечаются экспортированными
-        только после успешной записи всех архивов.
+        ОШС, оценки, адресация, файлы — см. ``branch_scope``), полный набор
+        изменений общих справочников (страны, звания, потребители,
+        руководители) и персональные справочники филиала — только его
+        территориальная единица, его запись и назначенные ему задачи.
+        Изменения помечаются экспортированными только после успешной
+        записи всех архивов.
         """
         if self.role != Role.HEAD_OFFICE.value:
             raise ExportError("Экспорт по филиалам доступен только в головном офисе")
@@ -175,12 +179,14 @@ class ExportService:
 
         plans: List[Tuple[Path, Dict[str, Dict[str, Dict[str, Any]]], List[FileRecord], List[Change]]] = []
         for branch_id, bucket in buckets.items():
-            branch_changes = bucket + reference_changes
+            branch = branches.get(branch_id)
+            branch_changes = bucket + self._reference_changes_for_branch(
+                branch, reference_changes
+            )
             export_data = self._build_export_data(branch_changes)
             if not export_data:
                 continue
             file_records = self._collect_files(export_data)
-            branch = branches.get(branch_id)
             short = branch.short_name if branch is not None else branch_id
             output_path = self.export_dir / archive_filename(timestamp, "для", short)
             plans.append((output_path, export_data, file_records, branch_changes))
@@ -190,6 +196,47 @@ class ExportService:
 
         self._write_archives(plans)
         return [plan[0] for plan in plans]
+
+    def _reference_changes_for_branch(
+        self, branch: Optional[Branch], reference_changes: List[Change]
+    ) -> List[Change]:
+        """Отбирает справочные изменения для архива одного филиала.
+
+        Общие справочники уходят целиком; территориальная единица, запись
+        филиала и научные задачи — только персональные филиалу. Если нужная
+        запись уже была отправлена ранее (её изменение поглощено), изменения
+        по ней дозабираются из журнала — иначе новый филиал не получил бы
+        записи, ссылаемые свежими назначениями.
+        """
+        if branch is None:
+            return list(reference_changes)
+        allowed = reference_keys_for_branch(self.session, branch)
+        result = [
+            change
+            for change in reference_changes
+            if change.entity_name not in allowed
+            or change.entity_pk in allowed[change.entity_name]
+        ]
+        missing = {
+            entity: keys
+            - {change.entity_pk for change in result if change.entity_name == entity}
+            for entity, keys in allowed.items()
+        }
+        for entity, keys in missing.items():
+            if not keys:
+                continue
+            rows = (
+                self.session.query(Change)
+                .filter(
+                    Change.entity_name == entity,
+                    Change.entity_pk.in_(list(keys)),
+                )
+                .order_by(Change.id)
+                .all()
+            )
+            # Несколько изменений одной записи объединяются при сериализации
+            result.extend(rows)
+        return result
 
     # --- внутренние этапы ---
 

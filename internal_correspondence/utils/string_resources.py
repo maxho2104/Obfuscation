@@ -43,6 +43,19 @@ class AppStrings:
     wizard_storage_subtitle: str = "Выберите корневую директорию для хранения файлов, шаблонов и экспорта."
     wizard_role_title: str = "Роль приложения"
     wizard_role_subtitle: str = "Выберите, как будет использоваться приложение."
+    wizard_archive_group: str = "Первоначальная загрузка из архива головного офиса"
+    wizard_archive_hint: str = (
+        "База пуста. Выберите экспортный архив головного офиса — "
+        "список филиалов будет заполнен из его состава."
+    )
+    wizard_archive_browse: str = "Обзор..."
+    wizard_archive_not_selected: str = "Архив не выбран — филиал можно указать вручную."
+    wizard_archive_filter: str = "Экспортный архив (*.zip)"
+    wizard_archive_error: str = "Не удалось прочитать архив: {error}"
+    wizard_archive_no_branches: str = "В архиве не найдены филиалы."
+    wizard_archive_import_error: str = (
+        "Первоначальная загрузка из архива не выполнена: {error}"
+    )
     msg_db_error: str = "Не удалось инициализировать базу данных:\n{error}"
     msg_settings_saved: str = "Настройки сохранены. Изменения в подключении к БД вступят в силу после перезапуска."
 
@@ -658,9 +671,13 @@ class AppStrings:
     dashboard_recent: str = "Последние документы"
     dashboard_attention: str = "Требуют внимания"
     dashboard_imported_files: str = "Файлы последнего импорта"
-    dashboard_imported_filter_placeholder: str = "Фильтр по имени файла (regex)"
+    dashboard_imported_filter_placeholder: str = "Поиск по таблице"
     dashboard_imported_empty: str = "Файлы последнего импорта отсутствуют."
-    dashboard_imported_invalid_regex: str = "Некорректное регулярное выражение"
+    dashboard_imported_col_file: str = "Имя файла"
+    dashboard_imported_col_branch: str = "Филиал"
+    dashboard_imported_col_type: str = "Тип документ"
+    dashboard_imported_col_outgoing: str = "Номер и дата исходящего"
+    dashboard_imported_outgoing_full: str = "{number} от {date}"
     dashboard_no_data: str = "Нет данных за период"
     dashboard_no_evaluations: str = "Нет оценок за период"
     dashboard_empty: str = "Данных пока нет"

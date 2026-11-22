@@ -12,16 +12,24 @@
 - источник → через документы, в которых он используется; если таких
   нет (сирота) — не попадает ни в один архив и остаётся
   неэкспортированным;
-- справочные сущности (территориальные единицы, филиалы, страны, звания,
-  потребители, руководители, научные задачи и назначения) → ``None``
-  (пометка «справочник»: полный набор изменений кладётся в каждый архив).
+- назначение задачи (``AddedTask``) → по узлу: филиал — напрямую,
+  регион — всем филиалам региона, отдел/рабочая группа/сотрудник —
+  через их филиал;
+- справочные сущности (страны, звания, потребители, руководители) →
+  ``None`` (пометка «справочник»: полный набор изменений кладётся в каждый
+  архив); территориальные единицы, филиалы и научные задачи персональны:
+  в архив филиала уходят только его единица, его запись и его задачи
+  (см. ``reference_keys_for_branch``).
 """
 
-from typing import Optional, Set
+from typing import Dict, Optional, Set
+import uuid
 
 from sqlalchemy.orm import Session
 
 from internal_correspondence.orm.models import (
+    AddedTask,
+    Branch,
     Change,
     Department,
     Employee,
@@ -30,12 +38,20 @@ from internal_correspondence.orm.models import (
     FileRecord,
     ReportAddress,
     ScientificMaterial,
+    ScientificTask,
     Source,
     Telegram,
     WorkGroupMembership,
     WorkingGroup,
 )
 from internal_correspondence.orm.utils import parse_primary_key, resolve_entity_class
+from internal_correspondence.services.task_distribution_service import (
+    NODE_BRANCH,
+    NODE_DEPARTMENT,
+    NODE_EMPLOYEE,
+    NODE_REGION,
+    NODE_WORKGROUP,
+)
 
 # Сущности-справочники: их изменения рассылаются всем филиалам.
 REFERENCE_ENTITIES = {
@@ -46,11 +62,43 @@ REFERENCE_ENTITIES = {
     "Consumer",
     "Leader",
     "ScientificTask",
-    "AddedTask",
 }
 
 # Документы: напрямую несут branch_id.
 _DOCUMENT_ENTITIES = {"ScientificMaterial", "Telegram"}
+
+# Справочники с персональным составом для филиала: в архив выбранного
+# филиала уходят только его запись, его территориальная единица и задачи,
+# назначенные ему (остальные справочники — по-прежнему целиком).
+_SCOPED_REFERENCE_ENTITIES = {"Branch", "TerritorialUnit", "ScientificTask"}
+
+
+def reference_keys_for_branch(session: Session, branch: Branch) -> Dict[str, Set[str]]:
+    """Возвращает первичные ключи персональных справочников филиала.
+
+    Для ``Branch`` — сам филиал, для ``TerritorialUnit`` — единица филиала,
+    для ``ScientificTask`` — задачи, назначенные филиалу или его региону,
+    и задачи документов филиала.
+    """
+    keys: Dict[str, Set[str]] = {
+        "Branch": {branch.id},
+        "TerritorialUnit": {str(branch.territorial_unit_id)},
+    }
+    task_rows = (
+        session.query(AddedTask.task_id)
+        .filter(
+            (AddedTask.node_type == NODE_BRANCH) & (AddedTask.node_id == branch.id)
+            | (AddedTask.node_type == NODE_REGION)
+            & (AddedTask.node_id == str(branch.territorial_unit_id))
+        )
+        .all()
+    )
+    task_ids = {row[0] for row in task_rows}
+    for model in (ScientificMaterial, Telegram):
+        for document in session.query(model).filter_by(branch_id=branch.id):
+            task_ids.update(task.id for task in document.tasks)
+    keys["ScientificTask"] = task_ids
+    return keys
 
 
 def _load(session: Session, entity_name: str, entity_pk: str):
@@ -70,6 +118,37 @@ def _document_branches(documents) -> Set[str]:
     return {document.branch_id for document in documents if document is not None}
 
 
+def _added_task_branches(session: Session, instance: AddedTask) -> Set[str]:
+    """Возвращает филиалы-получатели назначения задачи по его узлу."""
+    node_type = instance.node_type
+    node_id = str(instance.node_id)
+    if node_type == NODE_BRANCH:
+        return {node_id}
+    if node_type == NODE_REGION:
+        return {
+            branch.id
+            for branch in session.query(Branch).filter(
+                Branch.territorial_unit_id == node_id
+            )
+        }
+    node_class = {
+        NODE_DEPARTMENT: Department,
+        NODE_WORKGROUP: WorkingGroup,
+        NODE_EMPLOYEE: Employee,
+    }.get(node_type)
+    if node_class is None:
+        return set()
+    try:
+        node = session.get(node_class, uuid.UUID(node_id))
+    except (TypeError, ValueError):
+        return set()
+    if node is None:
+        return set()
+    if isinstance(node, Department):
+        return {node.branch_id}
+    return {node.department.branch_id}
+
+
 def branches_for_instance(session: Session, instance) -> Set[str]:
     """Возвращает филиалы, связанные с экземпляром сущности.
 
@@ -86,6 +165,8 @@ def branches_for_instance(session: Session, instance) -> Set[str]:
     if isinstance(instance, WorkGroupMembership):
         employee = instance.employee
         return {employee.department.branch_id} if employee is not None else set()
+    if isinstance(instance, AddedTask):
+        return _added_task_branches(session, instance)
     if isinstance(instance, (Evaluation, FileRecord)):
         return _document_branches(
             list(instance.materials) + list(instance.telegrams)

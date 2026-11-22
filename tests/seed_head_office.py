@@ -154,6 +154,10 @@ def _register_documents(
         material.incoming_date = material.outgoing_date
         if consumers and random.random() < CONSUMER_CHANGE_PROBABILITY:
             material.consumer_id = fake.random_element(consumers).id
+        # Потребитель не остаётся пустым: при регистрации ГО заполняет
+        # поле, если филиал его не указал.
+        if consumers and not material.consumer_id:
+            material.consumer_id = fake.random_element(consumers).id
         if random.random() < COMMENT_CHANGE_PROBABILITY:
             material.comment = fake.sentence(nb_words=12)[:300]
         registered_materials.append(material)

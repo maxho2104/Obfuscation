@@ -410,6 +410,18 @@ class TaskDistributionWidget(QWidget):
     def _assignable_selected_nodes(self) -> List[DistributionNode]:
         return [node for node in self._selected_nodes() if node.assignable and node.active]
 
+    def _period_index(self, year: int) -> int:
+        """Возвращает индекс периода в списке по году (-1 — не найден).
+
+        ``QComboBox.findData`` не сравнивает пользовательские объекты
+        Python по равенству, поэтому поиск выполняется вручную.
+        """
+        for index in range(self.period_combo.count()):
+            period = self.period_combo.itemData(index)
+            if period is not None and period.year == year:
+                return index
+        return -1
+
     def _reload_periods(self) -> None:
         previous = self.current_period.year if self.current_period else None
         periods = self.service.available_periods()
@@ -418,11 +430,18 @@ class TaskDistributionWidget(QWidget):
         for period in periods:
             self.period_combo.addItem(period.title, period)
         if previous is not None:
-            index = self.period_combo.findData(FinancialPeriod(previous))
+            index = self._period_index(previous)
             if index >= 0:
                 self.period_combo.setCurrentIndex(index)
-        if self.period_combo.currentIndex() < 0 and periods:
-            self.period_combo.setCurrentIndex(0)
+        else:
+            # Первое заполнение: по умолчанию — текущий финансовый год,
+            # а не самый поздний из списка: в будущих периодах задач
+            # обычно нет. (После addItem индекс 0 уже выбран, поэтому
+            # ориентируемся на previous, а не на currentIndex.)
+            current_index = self._period_index(FinancialPeriod.current().year)
+            self.period_combo.setCurrentIndex(
+                current_index if current_index >= 0 else 0
+            )
         self.period_combo.blockSignals(False)
         self.current_period = self.period_combo.currentData()
 

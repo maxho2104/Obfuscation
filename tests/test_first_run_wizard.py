@@ -133,3 +133,96 @@ def test_browse_existing_database_rejected(qt_app, monkeypatch, tmp_path: Path) 
     page._browse_sqlite()
 
     assert page.sqlite_path.text() == ""
+
+
+# ---------------------------------------------------------------------------
+# Первоначальная загрузка из архива головного офиса
+# ---------------------------------------------------------------------------
+
+
+def _archive_with_branches(tmp_path: Path) -> Path:
+    """Создаёт экспортный архив с двумя филиалами."""
+    import json
+    import zipfile
+
+    export_data = {
+        "Branch": {
+            "BR-1": {"name": "Филиал 1", "territorial_unit_id": "TU-1"},
+            "BR-2": {"name": "Филиал 2", "territorial_unit_id": "TU-1"},
+        }
+    }
+    archive_path = tmp_path / "go_export.zip"
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("export.json", json.dumps(export_data, ensure_ascii=False))
+    return archive_path
+
+
+def test_role_page_archive_group_hidden_by_default(qt_app) -> None:
+    """Блок выбора архива скрыт, пока он не разрешён (база не пуста)."""
+    page = RolePage(AppSettings())
+    assert page.archive_group.isHidden() is True
+    page.set_archive_allowed(False)
+    assert page.archive_group.isHidden() is True
+
+
+def test_role_page_archive_allowed_shown_for_branch(qt_app) -> None:
+    """При пустой базе блок архива показывается только для роли «Филиал»."""
+    page = RolePage(AppSettings())
+    page.set_archive_allowed(True)
+    # По умолчанию выбрана роль «Филиал» — блок виден
+    assert page.archive_group.isHidden() is False
+    page.head_office_radio.setChecked(True)
+    assert page.archive_group.isHidden() is True
+    page.branch_radio.setChecked(True)
+    assert page.archive_group.isHidden() is False
+
+
+def test_role_page_browse_archive_fills_branches(
+    qt_app, monkeypatch, tmp_path: Path
+) -> None:
+    """После выбора архива список филиалов заполняется из его состава."""
+    page = RolePage(AppSettings())
+    page.set_archive_allowed(True)
+    page.branch_radio.setChecked(True)
+    archive_path = _archive_with_branches(tmp_path)
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        staticmethod(lambda *_args, **_kwargs: (str(archive_path), "")),
+    )
+
+    page._browse_archive()
+
+    assert page.archive_path == archive_path
+    assert page.branch_combo.isEditable() is False
+    assert page.branch_combo.count() == 2
+    assert page.branch_combo.currentData() == "BR-1"
+    assert page.validatePage() is True
+    page.settings.role = "branch"
+    assert page.branch_combo.currentText() == "BR-1 — Филиал 1"
+
+
+def test_role_page_browse_archive_invalid_file(
+    qt_app, monkeypatch, tmp_path: Path
+) -> None:
+    """Некорректный архив не подставляется и показывает предупреждение."""
+    page = RolePage(AppSettings())
+    page.set_archive_allowed(True)
+    broken = tmp_path / "broken.zip"
+    broken.write_bytes(b"not a zip archive")
+    warnings = []
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        staticmethod(lambda *_args, **_kwargs: (str(broken), "")),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        staticmethod(lambda *_args, **_kwargs: warnings.append(_args)),
+    )
+
+    page._browse_archive()
+
+    assert page.archive_path is None
+    assert warnings
