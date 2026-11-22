@@ -302,8 +302,14 @@ class AttachedFilesWidget(QDockWidget):
         self._icon_provider = QFileIconProvider()
         self._thread: Optional[QThread] = None
         self.setObjectName("attached_files_dock")
-        self.setAllowedAreas(Qt.RightDockWidgetArea)
-        self.setFeatures(QDockWidget.DockWidgetClosable)
+        # Панель свободно перетаскивается за заголовок: во все области
+        # главного окна и в отдельное плавающее окно.
+        self.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.setFeatures(
+            QDockWidget.DockWidgetClosable
+            | QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+        )
         self._setup_ui()
 
     # --- интерфейс ---

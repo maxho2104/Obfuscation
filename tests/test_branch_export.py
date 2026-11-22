@@ -29,6 +29,7 @@ from internal_correspondence.importexport.export_service import (
 )
 from internal_correspondence.importexport.import_service import ImportService
 from internal_correspondence.orm.models import (
+    AddedTask,
     Branch,
     Change,
     Country,
@@ -36,12 +37,22 @@ from internal_correspondence.orm.models import (
     Employee,
     Evaluation,
     EvaluationList,
+    FileRecord,
     MissingRequest,
     ScientificMaterial,
+    ScientificTask,
     Source,
     TerritorialUnit,
+    WorkingGroup,
 )
 from internal_correspondence.services.change_tracking import register_change_tracking
+from internal_correspondence.services.task_distribution_service import (
+    NODE_BRANCH,
+    NODE_DEPARTMENT,
+    NODE_EMPLOYEE,
+    NODE_REGION,
+    NODE_WORKGROUP,
+)
 
 
 @pytest.fixture(scope="function")
@@ -141,6 +152,39 @@ def test_branch_scope_resolution(db_manager: DatabaseManager) -> None:
         assert resolved("TerritorialUnit", "MSK") is None
 
 
+def test_added_task_branch_scope(db_manager: DatabaseManager) -> None:
+    """Назначение задачи атрибутируется по узлу: филиал, регион, ОШС."""
+    with db_manager.get_session() as session:
+        _setup_two_branches(session)
+        department = session.query(Department).one()
+        group = WorkingGroup(name="Группа", department_id=department.id)
+        session.add(group)
+        session.flush()
+        employee = department.employees[0]
+        task = ScientificTask(
+            id="TASK-1", name="Задача", type=1, start_date=date(2026, 1, 1)
+        )
+        session.add(task)
+        session.flush()
+
+        def resolved(node_type: str, node_id: str):
+            assignment = AddedTask(
+                task_id=task.id, node_type=node_type, node_id=str(node_id)
+            )
+            session.add(assignment)
+            session.flush()
+            result = branches_for_change(session, Change(entity_name="AddedTask", entity_pk=str(assignment.id)))
+            session.delete(assignment)
+            session.flush()
+            return result
+
+        assert resolved(NODE_BRANCH, "FIL002") == {"FIL002"}
+        assert resolved(NODE_REGION, "MSK") == {"FIL001", "FIL002"}
+        assert resolved(NODE_DEPARTMENT, department.id) == {"FIL001"}
+        assert resolved(NODE_WORKGROUP, group.id) == {"FIL001"}
+        assert resolved(NODE_EMPLOYEE, employee.id) == {"FIL001"}
+
+
 def test_pending_branch_ids(db_manager: DatabaseManager) -> None:
     with db_manager.get_session() as session:
         _setup_two_branches(session)
@@ -199,6 +243,56 @@ def test_export_for_branches_creates_per_branch_archives(
         )
 
 
+def test_export_for_branches_scopes_personal_references(
+    db_manager: DatabaseManager, tmp_path: Path
+) -> None:
+    """В архив филиала — только его ТЕ, его запись и его задачи.
+
+    Общие справочники (страны и пр.) уходят целиком; задачи без назначения
+    филиалу не попадают в его архив.
+    """
+    storage = _storage(tmp_path)
+    with db_manager.get_session() as session:
+        _setup_two_branches(session)
+        session.add(TerritorialUnit(id="SPB", name="Санкт-Петербург"))
+        assigned = ScientificTask(
+            id="TASK-1", name="Задача филиала 1", type=1, start_date=date(2026, 1, 1)
+        )
+        foreign = ScientificTask(
+            id="TASK-2", name="Чужая задача", type=1, start_date=date(2026, 1, 1)
+        )
+        session.add_all([assigned, foreign])
+        session.flush()
+        session.add(
+            AddedTask(task_id="TASK-1", node_type=NODE_BRANCH, node_id="FIL001")
+        )
+        session.commit()
+
+        service = ExportService(
+            session, storage, role=Role.HEAD_OFFICE.value, branch_id=None
+        )
+        outputs = service.export_for_branches(["FIL001", "FIL002"])
+        session.commit()
+
+    by_branch = {}
+    for output in outputs:
+        data = _read_json(output, "export.json")
+        short = "Ф-1" if "Ф-1" in output.name else "Ф-2"
+        by_branch[short] = data
+
+    first = by_branch["Ф-1"]
+    assert set(first.get("Branch", {})) == {"FIL001"}
+    assert set(first.get("TerritorialUnit", {})) == {"MSK"}
+    assert set(first.get("ScientificTask", {})) == {"TASK-1"}
+    assert set(first.get("Country", {})) == {"RUS"}  # общий справочник целиком
+
+    second = by_branch["Ф-2"]
+    assert set(second.get("Branch", {})) == {"FIL002"}
+    assert set(second.get("TerritorialUnit", {})) == {"MSK"}
+    assert "TASK-1" not in second.get("ScientificTask", {})
+    assert "TASK-2" not in second.get("ScientificTask", {})
+
+
 def test_export_for_single_branch_keeps_other_branch_pending(
     db_manager: DatabaseManager, tmp_path: Path
 ) -> None:
@@ -219,14 +313,23 @@ def test_export_for_single_branch_keeps_other_branch_pending(
         ]
         assert pending_changes, "изменения FIL002 должны остаться неэкспортированными"
         for change in pending_changes:
-            assert branches_for_change(session, change) in ({"FIL002"}, set())
+            # None — справочники (запись чужого филиала остаётся ждать
+            # его собственного архива)
+            assert branches_for_change(session, change) in (
+                {"FIL002"},
+                set(),
+                None,
+            )
 
-        # Следующий экспортирует только FIL002: справочники уже ушли,
-        # в архиве — только его материал.
+        # Следующий экспортирует только FIL002: общие справочники уже ушли,
+        # в архиве — его материал, его запись и его территориальная единица
+        # (её изменение поглощено первым архивом и дозабрано из журнала).
         outputs = service.export_for_branches(["FIL002"])
         session.commit()
         data = _read_json(outputs[0], "export.json")
-        assert set(data) == {"ScientificMaterial"}
+        assert set(data) == {"ScientificMaterial", "Branch", "TerritorialUnit"}
+        assert set(data["Branch"]) == {"FIL002"}
+        assert set(data["TerritorialUnit"]) == {"MSK"}
 
 
 def test_meta_summary_counts_operations(
@@ -644,7 +747,7 @@ def test_import_archive_reports_progress(db_manager: DatabaseManager, tmp_path: 
 def test_import_writes_manifest_of_restored_files(
     db_manager: DatabaseManager, tmp_path: Path
 ) -> None:
-    """Импорт сохраняет манифест файлов, восстановленных в хранилище."""
+    """Импорт сохраняет в манифест UUID записей FileRecord восстановленных файлов."""
     from internal_correspondence.importexport.import_service import (
         LAST_IMPORT_MANIFEST,
         read_import_manifest,
@@ -652,6 +755,13 @@ def test_import_writes_manifest_of_restored_files(
 
     storage = _storage(tmp_path)
     file_id = uuid.uuid4()
+    with db_manager.get_session() as session:
+        session.add(
+            FileRecord(
+                id=file_id, path="Файлы/Документы", name="report", extension="txt"
+            )
+        )
+        session.commit()
     archive = tmp_path / "with_files.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("export.json", json.dumps({"Branch": {}}))
@@ -662,11 +772,10 @@ def test_import_writes_manifest_of_restored_files(
         result = service.import_archive(archive)
         session.commit()
 
-    assert len(result["files"]) == 1
-    relative = result["files"][0]
-    assert (storage / relative).read_text(encoding="utf-8") == "содержимое"
-    # Манифест перечитывается и содержит тот же относительный путь
-    assert read_import_manifest(storage) == [relative]
+    assert result["files"] == [str(file_id)]
+    assert (storage / "Файлы" / "Документы" / "report.txt").exists()
+    # Манифест перечитывается и содержит тот же первичный ключ
+    assert read_import_manifest(storage) == [str(file_id)]
     assert (storage / LAST_IMPORT_MANIFEST).exists()
 
 

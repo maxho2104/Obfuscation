@@ -1,9 +1,11 @@
 """Тесты скрипта наполнения базы данными головного офиса (``tests.seed_head_office``)."""
 
+from argparse import Namespace
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from faker import Faker
 
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.orm.models import (
@@ -12,15 +14,35 @@ from internal_correspondence.orm.models import (
     ScientificMaterial,
     Telegram,
 )
-from tests import seed_branch, seed_head_office
+from internal_correspondence.services.change_tracking import register_change_tracking
+from tests import seed_branch, seed_head_office, seed_reference
 
 
 def _seed_branch(tmp_path: Path) -> None:
+    """Филиал: справочники ГО (как из архива) + данные филиала."""
+    register_change_tracking()
+    db = DatabaseManager(f"sqlite:///{(tmp_path / 'seed.db').as_posix()}")
+    db.create_tables()
+    with db.get_session() as session:
+        seed_reference.create_reference_data(
+            session,
+            Faker("ru_RU"),
+            Namespace(
+                units=1,
+                branches_per_unit=1,
+                countries=(30, 40),
+                consumers=10,
+                leaders=5,
+                tasks=60,
+            ),
+        )
+        session.commit()
+    db.close()
     assert seed_branch.main(
         [
             "--db-url", f"sqlite:///{(tmp_path / 'seed.db').as_posix()}",
             "--storage", (tmp_path / "storage").as_posix(),
-            "--branch", "Ф-О",
+
             "--from", "2026-10-01",
             "--to", "2026-10-12",
             "--materials-per-day", "2-3",

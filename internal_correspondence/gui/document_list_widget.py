@@ -119,7 +119,13 @@ class DocumentListWidget(QWidget):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        # Перетаскивание заголовков мышью (порядок столбцов) — как в
+        # проводнике Windows; сортировка по щелчку сохраняется.
+        header.setSectionsMovable(True)
+        header.setContextMenuPolicy(Qt.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._header_context_menu)
         self.table.doubleClicked.connect(self._edit)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._table_context_menu)
@@ -276,6 +282,106 @@ class DocumentListWidget(QWidget):
     def column_widths(self) -> List[int]:
         """Возвращает текущие ширины колонок таблицы."""
         return [self.table.columnWidth(i) for i in range(len(self.columns))]
+
+    # ------------------------------------------------------------------
+    # Порядок, видимость и ширина колонок
+    # ------------------------------------------------------------------
+
+    def columns_layout(self) -> str:
+        """Сериализует раскладку колонок: «имя:ширина:видимость» по порядку.
+
+        Записи идут в визуальном порядке заголовка, поэтому строка
+        описывает и порядок, и ширину, и видимость каждой колонки.
+        """
+        header = self.table.horizontalHeader()
+        parts = []
+        for visual in range(len(self.columns)):
+            logical = header.logicalIndex(visual)
+            name = self.columns[logical].name
+            width = self.table.columnWidth(logical)
+            visible = 0 if header.isSectionHidden(logical) else 1
+            parts.append(f"{name}:{width}:{visible}")
+        return ",".join(parts)
+
+    def set_columns_layout(self, layout: str) -> None:
+        """Применяет раскладку колонок, сохранённую ``columns_layout``.
+
+        Неизвестные колонки пропускаются; нехватку записей виджет
+        переживает — остальные колонки остаются на местах.
+        """
+        entries = []
+        for part in layout.split(","):
+            name, _, rest = part.partition(":")
+            width_text, _, visible_text = rest.partition(":")
+            if not name:
+                continue
+            try:
+                width = int(width_text)
+            except ValueError:
+                width = 0
+            entries.append((name, width, visible_text != "0"))
+        if not entries:
+            return
+        header = self.table.horizontalHeader()
+        # Сначала ширины и видимость по логическим колонкам
+        for name, width, visible in entries:
+            for logical, column in enumerate(self.columns):
+                if column.name != name:
+                    continue
+                if width > 0:
+                    self.table.setColumnWidth(logical, width)
+                if visible:
+                    header.showSection(logical)
+                else:
+                    header.hideSection(logical)
+                break
+        # Затем порядок: расставляем визуальные позиции по сохранённой строке
+        for visual, (name, _width, _visible) in enumerate(entries):
+            logical = next(
+                (index for index, col in enumerate(self.columns) if col.name == name),
+                None,
+            )
+            if logical is None:
+                continue
+            current = header.visualIndex(logical)
+            if current != visual:
+                header.moveSection(current, visual)
+
+    def _build_header_menu(self) -> QMenu:
+        """Собирает контекстное меню заголовка: наименования колонок с галочками."""
+        header = self.table.horizontalHeader()
+        menu = QMenu(self)
+        for logical in range(len(self.columns)):
+            title = self.table_model.headerData(logical, Qt.Horizontal, Qt.DisplayRole)
+            action = menu.addAction(str(title))
+            action.setCheckable(True)
+            action.setChecked(not header.isSectionHidden(logical))
+            action.setData(logical)
+        return menu
+
+    def _header_context_menu(self, position) -> None:
+        """Показывает меню видимости колонок по правому щелчку на заголовке."""
+        header = self.table.horizontalHeader()
+        chosen = self._build_header_menu().exec_(
+            header.viewport().mapToGlobal(position)
+        )
+        if chosen is not None:
+            self._set_column_visible(chosen.data(), chosen.isChecked())
+
+    def _set_column_visible(self, logical: int, visible: bool) -> None:
+        """Скрывает или показывает колонку; последнюю видимую не скрывает."""
+        header = self.table.horizontalHeader()
+        if visible:
+            header.showSection(logical)
+            return
+        visible_count = sum(
+            1
+            for index in range(len(self.columns))
+            if not header.isSectionHidden(index)
+        )
+        if visible_count <= 1:
+            return
+        header.hideSection(logical)
 
     def sort_state(self) -> Optional[tuple]:
         """Возвращает (колонка, по убыванию) текущей сортировки; None — не задана."""

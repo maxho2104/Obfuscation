@@ -1,31 +1,48 @@
 """Виджет файлов, восстановленных последней операцией импорта.
 
-Список строится по манифесту последнего импорта (см.
-``importexport/import_service``). Поддержаны: фильтр по имени файла с
-регулярными выражениями, открытие файла по двойному щелчку средствами ОС,
-перетаскивание во внешние приложения (проводник копирует файл; перемещение
-из текущих папок размещения недопустимо и не предлагается), контекстное
-меню «Расположение файла» / «Переименовать» / «Удалить файл». Элементы
-упорядочены по алфавиту имени файла.
+Таблица строится по манифесту последнего импорта (см.
+``importexport/import_service``): манифест хранит первичные ключи записей
+``FileRecord``, остальные данные строк (филиал, тип и реквизиты документа)
+берутся из базы. Поддержаны: поиск подстрокой по всем колонкам (regex не
+нужен), открытие файла по двойному щелчку средствами ОС, перетаскивание во
+внешние приложения (проводник копирует файл; перемещение из текущих папок
+размещения недопустимо и не предлагается), контекстное меню «Расположение
+файла» / «Переименовать» / «Удалить файл». Строки упорядочены по алфавиту
+имени файла.
 """
+
+from __future__ import annotations
 
 import os
 import subprocess
+import uuid
+from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import List, Optional
 
-from PyQt5.QtCore import QFileInfo, QRegularExpression, Qt, QUrl
-from PyQt5.QtGui import QColor, QDesktopServices, QIcon
+from PyQt5.QtCore import (
+    QAbstractTableModel,
+    QFileInfo,
+    QMimeData,
+    QModelIndex,
+    QSortFilterProxyModel,
+    Qt,
+    QUrl,
+)
+from PyQt5.QtGui import QColor, QDesktopServices, QFont, QIcon
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QFileIconProvider,
-    QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListWidgetItem,
     QMenu,
     QMessageBox,
+    QSizePolicy,
+    QStackedWidget,
+    QTableView,
     QVBoxLayout,
     QWidget,
 )
@@ -34,26 +51,133 @@ from sqlalchemy.orm import Session
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.gui.attached_files_widget import (
     BROKEN_FILE_COLOR,
-    FileListWidget,
     _explorer_select_command,
 )
 from internal_correspondence.importexport.import_service import (
     read_import_manifest,
     write_import_manifest,
 )
+from internal_correspondence.orm.labels import entity_label
 from internal_correspondence.orm.models import FileRecord
 from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("imported_files_widget")
 
-# Роли элементов списка: абсолютный путь (для открытия/перетаскивания)
-# и относительный путь манифеста (для переименования/удаления)
-ROLE_PATH = Qt.UserRole + 1
-ROLE_RELATIVE = Qt.UserRole + 2
+# Колонки таблицы
+COL_FILE = 0
+COL_BRANCH = 1
+COL_TYPE = 2
+COL_OUTGOING = 3
+
+
+@dataclass
+class ImportedFileRow:
+    """Строка таблицы: ключ записи файла и вычисленные отображаемые поля."""
+
+    record_id: str  # строковый UUID записи FileRecord
+    filename: str  # имя файла с расширением
+    path: Path  # абсолютный путь в файловом хранилище
+    branch: str  # наименование филиала документа
+    doc_type: str  # метка типа документа (научный материал / телеграмма)
+    outgoing: str  # «Исходящий номер от ДД.ММ.ГГГГ»
+    missing: bool  # файл отсутствует на диске
+
+
+class ImportedFilesTableModel(QAbstractTableModel):
+    """Модель таблицы файлов последнего импорта (4 колонки)."""
+
+    def __init__(
+        self, storage_root: Path, parent: Optional[QWidget] = None
+    ) -> None:
+        super().__init__(parent)
+        self._storage_root = Path(storage_root)
+        self._rows: List[ImportedFileRow] = []
+        self._icon_provider = QFileIconProvider()
+
+    # --- интерфейс модели ---
+
+    def set_rows(self, rows: List[ImportedFileRow]) -> None:
+        """Полностью заменяет состав строк таблицы."""
+        self.beginResetModel()
+        self._rows = list(rows)
+        self.endResetModel()
+
+    def row_at(self, index: QModelIndex) -> ImportedFileRow:
+        """Возвращает строку данных по индексу модели."""
+        return self._rows[index.row()]
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        return 0 if parent.isValid() else len(self._rows)
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        return 0 if parent.isValid() else 4
+
+    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):  # noqa: N802
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return (
+                STRINGS.dashboard_imported_col_file,
+                STRINGS.dashboard_imported_col_branch,
+                STRINGS.dashboard_imported_col_type,
+                STRINGS.dashboard_imported_col_outgoing,
+            )[section]
+        return None
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        row = self._rows[index.row()]
+        if role == Qt.DisplayRole:
+            return (
+                row.filename,
+                row.branch,
+                row.doc_type,
+                row.outgoing,
+            )[index.column()]
+        if role == Qt.DecorationRole and index.column() == COL_FILE:
+            return self._icon(row.path)
+        if row.missing:
+            if role == Qt.FontRole:
+                font = QFont()
+                font.setStrikeOut(True)
+                return font
+            if role == Qt.ForegroundRole:
+                return QColor(BROKEN_FILE_COLOR)
+            if role == Qt.ToolTipRole and index.column() == COL_FILE:
+                return STRINGS.tooltip_file_missing.format(path=row.path)
+        return None
+
+    # --- перетаскивание наружу ---
+
+    def mimeTypes(self) -> List[str]:  # noqa: N802
+        return ["text/uri-list"]
+
+    def mimeData(self, indexes) -> QMimeData:  # noqa: N802
+        """Возвращает URL выбранных файлов для перетаскивания наружу."""
+        mime = QMimeData()
+        urls = []
+        seen = set()
+        for index in indexes:
+            if not index.isValid() or index.column() != COL_FILE:
+                continue
+            row = self._rows[index.row()]
+            if row.record_id in seen:
+                continue
+            seen.add(row.record_id)
+            urls.append(QUrl.fromLocalFile(str(row.path)))
+        mime.setUrls(urls)
+        return mime
+
+    # --- служебное ---
+
+    def _icon(self, path: Path) -> QIcon:
+        """Возвращает стандартный значок для файла."""
+        if path.exists():
+            return self._icon_provider.icon(QFileInfo(str(path)))
+        return self._icon_provider.icon(QFileIconProvider.File)
 
 
 class ImportedFilesWidget(QWidget):
-    """Список файлов последнего импорта с фильтром и контекстным меню."""
+    """Таблица файлов последнего импорта с поиском и контекстным меню."""
 
     def __init__(
         self,
@@ -64,8 +188,7 @@ class ImportedFilesWidget(QWidget):
         super().__init__(parent)
         self.session = session
         self.storage_root = Path(storage_root)
-        self._paths: List[str] = []
-        self._icon_provider = QFileIconProvider()
+        self._record_ids: List[str] = []
         self._setup_ui()
         self.refresh()
 
@@ -89,166 +212,198 @@ class ImportedFilesWidget(QWidget):
         self.filter_edit.textChanged.connect(self._apply_filter)
         layout.addWidget(self.filter_edit)
 
-        self.list_widget = FileListWidget()
+        self.stack = QStackedWidget()
+        layout.addWidget(self.stack, 1)
+
+        self.empty_label = QLabel(STRINGS.dashboard_imported_empty)
+        self.empty_label.setAlignment(Qt.AlignCenter)
+        self.empty_label.setWordWrap(True)
+        self.stack.addWidget(self.empty_label)
+
+        self.table_model = ImportedFilesTableModel(self.storage_root)
+        self.proxy_model = QSortFilterProxyModel(self)
+        self.proxy_model.setSourceModel(self.table_model)
+        # Поиск подстрокой (без regex) по всем колонкам
+        self.proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
+        self.proxy_model.setFilterKeyColumn(-1)
+
+        self.table = QTableView()
+        self.table.setModel(self.proxy_model)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         # Только отдача файлов наружу: приём файлов извне здесь не поддержан
-        self.list_widget.setAcceptDrops(False)
-        self.list_widget.setDragDropMode(QAbstractItemView.DragOnly)
-        self.list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.list_widget.customContextMenuRequested.connect(self._context_menu)
-        self.list_widget.itemDoubleClicked.connect(self._open_item)
-        self.list_widget.setMinimumHeight(170)
-        layout.addWidget(self.list_widget, 1)
+        self.table.setAcceptDrops(False)
+        self.table.setDragEnabled(True)
+        self.table.setDragDropMode(QAbstractItemView.DragOnly)
+        self.table.setDefaultDropAction(Qt.CopyAction)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
+        self.table.doubleClicked.connect(self._open_index)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(22)
+        self.table.setMinimumHeight(170)
+        self.table.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Preferred
+        )
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(COL_FILE, QHeaderView.Stretch)
+        for column in (COL_BRANCH, COL_TYPE, COL_OUTGOING):
+            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        self.stack.addWidget(self.table)
 
     def refresh(self) -> None:
-        """Перечитывает манифест последнего импорта и перестраивает список."""
-        self._paths = read_import_manifest(self.storage_root)
-        ordered = sorted(self._paths, key=lambda item: Path(item).name.casefold())
-        self.list_widget.clear()
-        if not ordered:
-            placeholder = QListWidgetItem(STRINGS.dashboard_imported_empty)
-            placeholder.setFlags(Qt.NoItemFlags)
-            self.list_widget.addItem(placeholder)
-            return
-        for relative in ordered:
-            path = self.storage_root / relative
-            item = QListWidgetItem(self._icon(path), Path(relative).name)
-            item.setData(ROLE_PATH, str(path))
-            item.setData(ROLE_RELATIVE, relative)
-            item.setToolTip(str(path))
-            if not path.exists():
-                font = item.font()
-                font.setStrikeOut(True)
-                item.setFont(font)
-                item.setForeground(BROKEN_FILE_COLOR)
-                item.setToolTip(
-                    STRINGS.tooltip_file_missing.format(path=path)
-                )
-            self.list_widget.addItem(item)
+        """Перечитывает манифест последнего импорта и перестраивает таблицу."""
+        self._record_ids = read_import_manifest(self.storage_root)
+        rows: List[ImportedFileRow] = []
+        for raw in self._record_ids:
+            try:
+                record_id = uuid.UUID(str(raw))
+            except (ValueError, AttributeError, TypeError):
+                # Записи манифеста старого формата (пути) не отображаются
+                continue
+            record = self.session.get(FileRecord, record_id)
+            if record is None:
+                continue
+            rows.append(self._build_row(record))
+        rows.sort(key=lambda row: row.filename.casefold())
+        self.table_model.set_rows(rows)
+        self.stack.setCurrentWidget(
+            self.table if rows else self.empty_label
+        )
         self._apply_filter(self.filter_edit.text())
+
+    # --- построение строк ---
+
+    def _build_row(self, record: FileRecord) -> ImportedFileRow:
+        """Формирует строку таблицы из записи файла и её документа."""
+        filename = f"{record.name}.{record.extension}" if record.extension else record.name
+        path = self.storage_root / record.path / filename
+        document = self._primary_document(record)
+        branch = ""
+        doc_type = ""
+        outgoing = ""
+        if document is not None:
+            if document.branch is not None:
+                branch = document.branch.name
+            doc_type = entity_label(type(document))
+            outgoing = self._format_outgoing(
+                document.outgoing_number, document.outgoing_date
+            )
+        return ImportedFileRow(
+            record_id=str(record.id),
+            filename=filename,
+            path=path,
+            branch=branch,
+            doc_type=doc_type,
+            outgoing=outgoing,
+            missing=not path.exists(),
+        )
+
+    @staticmethod
+    def _primary_document(record: FileRecord):
+        """Возвращает документ файла: последний по дате исходящего номера."""
+        documents = list(record.materials) + list(record.telegrams)
+        if not documents:
+            return None
+        return max(documents, key=lambda doc: doc.outgoing_date or date.min)
+
+    @staticmethod
+    def _format_outgoing(number: Optional[str], doc_date: Optional[date]) -> str:
+        """Форматирует «Исходящий номер от ДД.ММ.ГГГГ» из реквизитов документа."""
+        if number and doc_date:
+            return STRINGS.dashboard_imported_outgoing_full.format(
+                number=number, date=doc_date.strftime("%d.%m.%Y")
+            )
+        if number:
+            return number
+        if doc_date:
+            return doc_date.strftime("%d.%m.%Y")
+        return ""
 
     # --- фильтр ---
 
-    def _apply_filter(self, pattern: str) -> None:
-        """Показывает только файлы, имя которых подходит под regex-фильтр."""
-        pattern = pattern.strip()
-        if not pattern:
-            self.filter_edit.setStyleSheet("")
-            self.filter_edit.setToolTip("")
-            for row in range(self.list_widget.count()):
-                self.list_widget.item(row).setHidden(False)
-            return
-        regex = QRegularExpression(
-            pattern, QRegularExpression.CaseInsensitiveOption
-        )
-        if not regex.isValid():
-            # Некорректный шаблон: ничего не скрываем, подсвечиваем поле
-            self.filter_edit.setStyleSheet("border: 1px solid #c0392b;")
-            self.filter_edit.setToolTip(STRINGS.dashboard_imported_invalid_regex)
-            for row in range(self.list_widget.count()):
-                self.list_widget.item(row).setHidden(False)
-            return
-        self.filter_edit.setStyleSheet("")
-        self.filter_edit.setToolTip("")
-        for row in range(self.list_widget.count()):
-            item = self.list_widget.item(row)
-            if item.data(ROLE_RELATIVE) is None:
-                continue
-            item.setHidden(not regex.match(item.text()).hasMatch())
+    def _apply_filter(self, text: str) -> None:
+        """Показывает только строки, содержащие подстроку в любой колонке."""
+        self.proxy_model.setFilterFixedString(text.strip())
 
     # --- служебное ---
 
-    def _icon(self, path: Path) -> QIcon:
-        """Возвращает стандартный значок для файла."""
-        if path.exists():
-            return self._icon_provider.icon(QFileInfo(str(path)))
-        return self._icon_provider.icon(QFileIconProvider.File)
+    def _selected_rows(self) -> List[ImportedFileRow]:
+        """Возвращает данные выбранных строк без повторов."""
+        rows: List[ImportedFileRow] = []
+        for index in self.table.selectionModel().selectedRows():
+            source = self.proxy_model.mapToSource(index)
+            if source.isValid():
+                row = self.table_model.row_at(source)
+                if row not in rows:
+                    rows.append(row)
+        return rows
 
-    def _selected_items(self) -> List[QListWidgetItem]:
-        """Возвращает выбранные элементы с привязанным файлом."""
-        return [
-            item
-            for item in self.list_widget.selectedItems()
-            if item.data(ROLE_RELATIVE) is not None
-        ]
-
-    def _rewrite_manifest(self, paths: List[str]) -> None:
-        """Сохраняет новый состав манифеста и обновляет список."""
-        self._paths = list(paths)
-        write_import_manifest(self.storage_root, self._paths)
+    def _rewrite_manifest(self, record_ids: List[str]) -> None:
+        """Сохраняет новый состав манифеста и обновляет таблицу."""
+        self._record_ids = list(record_ids)
+        write_import_manifest(self.storage_root, self._record_ids)
         self.refresh()
-
-    def _find_record(self, relative: str) -> Optional[FileRecord]:
-        """Возвращает запись FileRecord файла хранилища (если есть)."""
-        path = Path(relative)
-        return (
-            self.session.query(FileRecord)
-            .filter_by(
-                path=str(path.parent).replace("\\", "/"),
-                name=path.stem,
-                extension=path.suffix.lstrip("."),
-            )
-            .first()
-        )
 
     # --- действия ---
 
-    def _open_item(self, item: QListWidgetItem) -> None:
+    def _open_index(self, index: QModelIndex) -> None:
         """Открывает файл стандартным обработчиком операционной системы."""
-        raw = item.data(ROLE_PATH)
-        if not raw:
+        source = self.proxy_model.mapToSource(index)
+        if not source.isValid():
             return
-        path = Path(raw)
-        if not path.exists():
+        self._open_row(self.table_model.row_at(source))
+
+    def _open_row(self, row: ImportedFileRow) -> None:
+        """Открывает файл строки средствами ОС."""
+        if not row.path.exists():
             QMessageBox.warning(
                 self,
                 STRINGS.title_attention,
-                STRINGS.tooltip_file_missing.format(path=path),
+                STRINGS.tooltip_file_missing.format(path=row.path),
             )
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(row.path)))
 
     def _context_menu(self, position) -> None:
         """Показывает контекстное меню файла."""
-        items = self._selected_items()
-        if not items:
+        rows = self._selected_rows()
+        if not rows:
             return
         menu = QMenu(self)
         reveal_action = menu.addAction(STRINGS.action_reveal)
         rename_action = menu.addAction(STRINGS.action_rename)
-        rename_action.setEnabled(len(items) == 1)
+        rename_action.setEnabled(len(rows) == 1)
         delete_action = menu.addAction(STRINGS.action_delete_file)
-        chosen = menu.exec_(self.list_widget.viewport().mapToGlobal(position))
+        chosen = menu.exec_(self.table.viewport().mapToGlobal(position))
         if chosen is reveal_action:
-            self._reveal_item(items[0])
+            self._reveal_row(rows[0])
         elif chosen is rename_action:
-            self._rename_item(items[0])
+            self._rename_row(rows[0])
         elif chosen is delete_action:
-            self._delete_items(items)
+            self._delete_rows(rows)
 
-    def _reveal_item(self, item: QListWidgetItem) -> None:
+    def _reveal_row(self, row: ImportedFileRow) -> None:
         """Открывает папку файла в проводнике ОС (файл выделен)."""
-        path = Path(item.data(ROLE_PATH) or "")
-        folder = path.parent
+        folder = row.path.parent
         if not folder.exists():
             QMessageBox.warning(
                 self,
                 STRINGS.title_attention,
-                STRINGS.tooltip_file_missing.format(path=path),
+                STRINGS.tooltip_file_missing.format(path=row.path),
             )
             return
         if os.name == "nt":
             try:
-                subprocess.Popen(_explorer_select_command(path))
+                subprocess.Popen(_explorer_select_command(row.path))
             except OSError:
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
         else:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
-    def _rename_item(self, item: QListWidgetItem) -> None:
-        """Переименовывает файл на диске, обновляя запись БД и манифест."""
-        relative = str(item.data(ROLE_RELATIVE))
-        path = Path(item.data(ROLE_PATH))
-        old_name = Path(relative).name
+    def _rename_row(self, row: ImportedFileRow) -> None:
+        """Переименовывает файл на диске и обновляет запись БД."""
+        old_name = row.filename
         new_name, ok = QInputDialog.getText(
             self,
             STRINGS.files_rename_title,
@@ -263,7 +418,7 @@ class ImportedFilesWidget(QWidget):
                 self, STRINGS.title_attention, STRINGS.files_rename_invalid
             )
             return
-        target = path.with_name(new_name)
+        target = row.path.with_name(new_name)
         if target.exists():
             QMessageBox.warning(
                 self,
@@ -272,22 +427,15 @@ class ImportedFilesWidget(QWidget):
             )
             return
         try:
-            record = self._find_record(relative)
-            if path.exists():
-                path.rename(target)
+            record = self.session.get(FileRecord, uuid.UUID(row.record_id))
+            if row.path.exists():
+                row.path.rename(target)
             if record is not None:
                 record.name = target.stem
                 record.extension = target.suffix.lstrip(".")
                 self.session.flush()
-            new_relative = str(Path(relative).with_name(new_name)).replace(
-                "\\", "/"
-            )
-            paths = [
-                new_relative if entry == relative else entry
-                for entry in self._paths
-            ]
             self.session.commit()
-            self._rewrite_manifest(paths)
+            self.refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка переименования импортированного файла")
             self.session.rollback()
@@ -298,27 +446,26 @@ class ImportedFilesWidget(QWidget):
             )
             self.refresh()
 
-    def _delete_items(self, items: List[QListWidgetItem]) -> None:
+    def _delete_rows(self, rows: List[ImportedFileRow]) -> None:
         """Удаляет выбранные файлы с диска и из манифеста."""
-        relatives = [str(item.data(ROLE_RELATIVE)) for item in items]
+        removed_ids = {row.record_id for row in rows}
         reply = QMessageBox.question(
             self,
             STRINGS.title_confirm,
-            STRINGS.imported_files_delete_confirm.format(count=len(relatives)),
+            STRINGS.imported_files_delete_confirm.format(count=len(rows)),
         )
         if reply != QMessageBox.Yes:
             return
         try:
             errors = []
-            for relative in relatives:
-                path = self.storage_root / relative
+            for row in rows:
                 try:
-                    if path.exists():
-                        path.unlink()
+                    if row.path.exists():
+                        row.path.unlink()
                 except OSError as exc:
-                    errors.append(f"{relative}: {exc}")
+                    errors.append(f"{row.filename}: {exc}")
             remaining = [
-                entry for entry in self._paths if entry not in set(relatives)
+                item for item in self._record_ids if item not in removed_ids
             ]
             self._rewrite_manifest(remaining)
             if errors:

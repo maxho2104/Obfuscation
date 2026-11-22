@@ -649,7 +649,7 @@ def test_empty_geometry_is_tolerated(window_env, qt_app: QApplication) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Док-виджет прикреплённых файлов: меню «Вид» и фиксированное положение
+# Док-виджет прикреплённых файлов: меню «Вид» и перемещаемая панель
 # ---------------------------------------------------------------------------
 
 
@@ -679,15 +679,18 @@ def test_files_dock_menu_action_toggles_visibility(window_env, qt_app: QApplicat
     window.close()
 
 
-def test_files_dock_is_fixed_on_right(window_env, qt_app: QApplication) -> None:
-    """Панель файлов закреплена справа без перемещения и отделения."""
+def test_files_dock_is_movable_and_floatable(window_env, qt_app: QApplication) -> None:
+    """Панель файлов перетаскивается за заголовок: все области и плавание."""
     settings, db, manager = window_env
     window = MainWindow(settings, db, manager)
     window.show()
     qt_app.processEvents()
 
-    assert window.files_dock.allowedAreas() == Qt.RightDockWidgetArea
-    assert window.files_dock.features() == window.files_dock.DockWidgetClosable
+    assert window.files_dock.allowedAreas() == Qt.AllDockWidgetAreas
+    features = window.files_dock.features()
+    assert features & window.files_dock.DockWidgetClosable
+    assert features & window.files_dock.DockWidgetMovable
+    assert features & window.files_dock.DockWidgetFloatable
     assert window.dockWidgetArea(window.files_dock) == Qt.RightDockWidgetArea
 
     window._save_ui_state()
@@ -788,7 +791,7 @@ def test_files_changed_signal_updates_document_row_highlight(window_env, qt_app:
 
 
 def test_files_dock_state_restored_from_settings(window_env, qt_app: QApplication) -> None:
-    """Старое положение игнорируется, а сохранённая видимость восстанавливается."""
+    """Сохранённые область, плавание и видимость восстанавливаются."""
     settings, db, manager = window_env
     settings.files_dock_area = str(int(Qt.LeftDockWidgetArea))
     settings.files_dock_floating = "true"
@@ -797,15 +800,52 @@ def test_files_dock_state_restored_from_settings(window_env, qt_app: QApplicatio
     window.show()
     qt_app.processEvents()
 
-    assert window.dockWidgetArea(window.files_dock) == Qt.RightDockWidgetArea
-    assert not window.files_dock.isFloating()
+    assert window.dockWidgetArea(window.files_dock) == Qt.LeftDockWidgetArea
+    assert window.files_dock.isFloating()
     assert window.files_dock.isHidden()
     assert not window.files_dock_action.isChecked()
     window.close()
 
 
-def test_files_dock_legacy_floating_state_is_discarded(window_env, qt_app: QApplication) -> None:
-    """Сохранённое плавающее состояние больше не отделяет панель от окна."""
+def test_files_dock_moved_position_is_saved_and_restored(
+    window_env, qt_app: QApplication
+) -> None:
+    """Панель, перетащенная пользователем в левую область, встаёт туда же."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    window.addDockWidget(Qt.LeftDockWidgetArea, window.files_dock)
+    window._save_ui_state()
+    saved = manager.load()
+    assert saved.files_dock_area == str(int(Qt.LeftDockWidgetArea))
+    window.close()
+
+    restored_settings = manager.load()
+    window2 = MainWindow(restored_settings, db, manager)
+    window2.show()
+    qt_app.processEvents()
+    assert window2.dockWidgetArea(window2.files_dock) == Qt.LeftDockWidgetArea
+    window2.close()
+
+
+def test_files_dock_invalid_area_falls_back_to_right(
+    window_env, qt_app: QApplication
+) -> None:
+    """Мусор в настройке области не ломает старт: панель встаёт справа."""
+    settings, db, manager = window_env
+    settings.files_dock_area = "12345"
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    assert window.dockWidgetArea(window.files_dock) == Qt.RightDockWidgetArea
+    window.close()
+
+
+def test_files_dock_garbage_geometry_is_tolerated(window_env, qt_app: QApplication) -> None:
+    """Мусор в сохранённой геометрии плавающего дока не ломает старт."""
     settings, db, manager = window_env
     settings.files_dock_floating = "true"
     settings.files_dock_geometry = "legacy-geometry"
@@ -813,12 +853,106 @@ def test_files_dock_legacy_floating_state_is_discarded(window_env, qt_app: QAppl
     window.show()
     qt_app.processEvents()
 
-    assert not window.files_dock.isFloating()
-    assert window.dockWidgetArea(window.files_dock) == Qt.RightDockWidgetArea
+    assert window.files_dock.isFloating()
+    window.close()
 
+
+# ---------------------------------------------------------------------------
+# Раскладка колонок таблиц документов: видимость, порядок, ширина
+# ---------------------------------------------------------------------------
+
+
+def test_header_menu_lists_all_columns_checkable(
+    window_env, qt_app: QApplication
+) -> None:
+    """Меню заголовка содержит все колонки с галочками видимости."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    tab = window.materials_tab
+    menu = tab._build_header_menu()
+    actions = menu.actions()
+
+    assert len(actions) == len(tab.columns)
+    assert all(action.isCheckable() for action in actions)
+    assert all(action.isChecked() for action in actions)
+    assert {action.data() for action in actions} == set(range(len(tab.columns)))
+    window.close()
+
+
+def test_column_visibility_toggle_and_last_guard(
+    window_env, qt_app: QApplication
+) -> None:
+    """Галочка скрывает/показывает колонку; последняя видимая не скрывается."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    tab = window.materials_tab
+    header = tab.table.horizontalHeader()
+
+    tab._set_column_visible(1, False)
+    assert header.isSectionHidden(1)
+
+    tab._set_column_visible(1, True)
+    assert not header.isSectionHidden(1)
+
+    # Последнюю видимую колонку скрыть нельзя
+    for logical in range(1, len(tab.columns)):
+        tab._set_column_visible(logical, False)
+    visible = [
+        logical for logical in range(len(tab.columns))
+        if not header.isSectionHidden(logical)
+    ]
+    assert visible == [0]
+    tab._set_column_visible(0, False)
+    assert not header.isSectionHidden(0)
+    window.close()
+
+
+def test_columns_layout_roundtrip(window_env, qt_app: QApplication) -> None:
+    """Сериализация раскладки возвращает порядок, видимость и ширины."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    tab = window.materials_tab
+    header = tab.table.horizontalHeader()
+
+    tab.table.setColumnWidth(0, 200)
+    tab._set_column_visible(2, False)
+    header.moveSection(0, 3)  # первая колонка — на четвёртое место
+
+    layout = tab.columns_layout()
+    entries = layout.split(",")
+    assert entries[3].startswith(f"{tab.columns[0].name}:200:1")
+    hidden_entry = next(entry for entry in entries if entry.endswith(":0"))
+    assert hidden_entry.startswith(f"{tab.columns[2].name}:")
+
+    # Применение к «свежей» таблице даёт ту же раскладку
+    tab.set_columns_layout(",".join(reversed(entries)))
+    restored = tab.columns_layout()
+    assert restored == ",".join(reversed(entries))
+    window.close()
+
+
+def test_main_window_saves_and_restores_columns_layout(
+    window_env, qt_app: QApplication
+) -> None:
+    """Порядок, видимость и ширины колонок переживают перезапуск окна."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    tab = window.materials_tab
+    header = tab.table.horizontalHeader()
+
+    tab.table.setColumnWidth(1, 233)
+    tab._set_column_visible(0, False)
+    header.moveSection(1, 0)  # вторая колонка — вперёди
     window._save_ui_state()
 
     saved = manager.load()
-    assert saved.files_dock_floating == "false"
-    assert saved.files_dock_geometry == ""
+    assert saved.material_columns_layout
     window.close()
+
+    restored = MainWindow(saved, db, manager)
+    tab2 = restored.materials_tab
+    header2 = tab2.table.horizontalHeader()
+    assert header2.isSectionHidden(0)
+    assert header2.visualIndex(1) == 0
+    assert tab2.table.columnWidth(1) == 233
+    restored.close()

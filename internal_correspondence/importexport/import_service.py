@@ -48,12 +48,13 @@ _SERVICE_FIELDS = {"change_id"}
 ProgressCallback = Optional[Callable[[int, int, str], None]]
 
 # Имя манифеста файлов, восстановленных последней операцией импорта
-# (хранится в корне файлового хранилища, пути — относительные, POSIX)
+# (хранится в корне файлового хранилища; элементы — строковые UUID
+# первичных ключей записей FileRecord)
 LAST_IMPORT_MANIFEST = "last_import_files.json"
 
 
 def read_import_manifest(storage_root: Path) -> List[str]:
-    """Возвращает относительные пути файлов последнего импорта; [] — нет манифеста."""
+    """Возвращает UUID записей FileRecord файлов последнего импорта; [] — нет манифеста."""
     manifest_path = storage_root / LAST_IMPORT_MANIFEST
     try:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -64,11 +65,11 @@ def read_import_manifest(storage_root: Path) -> List[str]:
     return [str(item) for item in data]
 
 
-def write_import_manifest(storage_root: Path, relative_paths: List[str]) -> None:
+def write_import_manifest(storage_root: Path, record_ids: List[str]) -> None:
     """Записывает манифест файлов последнего импорта в корень хранилища."""
     manifest_path = storage_root / LAST_IMPORT_MANIFEST
     manifest_path.write_text(
-        json.dumps(list(relative_paths), ensure_ascii=False, indent=2),
+        json.dumps(list(record_ids), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -908,8 +909,9 @@ class ImportService:
 
         Файл размещается по пути из импортированной записи ``FileRecord``,
         чтобы ссылки на вложения в БД оставались действительными.
-        Возвращает относительные (к корню хранилища) пути восстановленных
-        файлов для манифеста последнего импорта.
+        Возвращает первичные ключи (строковые UUID) записей ``FileRecord``
+        восстановленных файлов для манифеста последнего импорта; файлы без
+        записи (резервное размещение) в манифест не попадают.
         """
         restored: List[str] = []
         files_dir = extract_dir / "files"
@@ -942,10 +944,10 @@ class ImportService:
                 target_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_file, target_dir / target_name)
                 target = (target_dir / target_name).resolve()
-                try:
-                    restored.append(target.relative_to(storage_root).as_posix())
-                except ValueError:
-                    restored.append(str(target))
+                if file_record is not None:
+                    record_id = str(file_record.id)
+                    if record_id not in restored:
+                        restored.append(record_id)
                 logger.debug("Восстановлен файл %s", target_dir / target_name)
         return restored
 

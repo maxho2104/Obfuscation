@@ -79,6 +79,10 @@ from internal_correspondence.gui.dashboard_widget import DashboardWidget
 from internal_correspondence.gui.task_distribution_widget import TaskDistributionWidget
 from internal_correspondence.gui.table_model import ColumnDef
 from internal_correspondence.gui.theme import THEMES, apply_theme, current_theme
+from internal_correspondence.importexport.branch_import import (
+    InitialBranchImport,
+    run_initial_import,
+)
 from internal_correspondence.importexport.export_service import ExportService
 from internal_correspondence.importexport.import_service import ImportService
 from internal_correspondence.importexport.reference_import import (
@@ -784,6 +788,8 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self.settings.telegram_column_widths = ",".join(
             str(width) for width in self.telegram_tab.column_widths()
         )
+        self.settings.material_columns_layout = self.materials_tab.columns_layout()
+        self.settings.telegram_columns_layout = self.telegram_tab.columns_layout()
         self.settings.material_sort = _format_sort_state(
             self.materials_tab.sort_state()
         )
@@ -794,12 +800,18 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self._settings_manager.save(self.settings)
 
     def _save_files_dock_state(self) -> None:
-        """Сохраняет видимость фиксированного справа дока файлов."""
+        """Сохраняет область, плавание и видимость дока файлов."""
         dock = self.files_dock
         self.settings.files_dock_visible = "false" if dock.isHidden() else "true"
-        self.settings.files_dock_area = str(int(Qt.RightDockWidgetArea))
-        self.settings.files_dock_floating = "false"
-        self.settings.files_dock_geometry = ""
+        self.settings.files_dock_area = str(int(self.dockWidgetArea(dock)))
+        self.settings.files_dock_floating = "true" if dock.isFloating() else "false"
+        # Геометрию храним только для плавающего окна: у пристыкованной
+        # панели положение определяется областью и размерами главного окна.
+        self.settings.files_dock_geometry = (
+            dock.saveGeometry().toBase64().data().decode("ascii")
+            if dock.isFloating()
+            else ""
+        )
 
     def _restore_ui_state(self) -> None:
         """Восстанавливает геометрию окна, колонки и сортировку таблиц, док."""
@@ -808,12 +820,26 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
                 QByteArray.fromBase64(self.settings.window_geometry.encode("ascii"))
             )
         self._restore_files_dock_state()
-        material_widths = _parse_column_widths(self.settings.material_column_widths)
-        if material_widths:
-            self.materials_tab.set_column_widths(material_widths)
-        telegram_widths = _parse_column_widths(self.settings.telegram_column_widths)
-        if telegram_widths:
-            self.telegram_tab.set_column_widths(telegram_widths)
+        if self.settings.material_columns_layout:
+            self.materials_tab.set_columns_layout(
+                self.settings.material_columns_layout
+            )
+        else:
+            material_widths = _parse_column_widths(
+                self.settings.material_column_widths
+            )
+            if material_widths:
+                self.materials_tab.set_column_widths(material_widths)
+        if self.settings.telegram_columns_layout:
+            self.telegram_tab.set_columns_layout(
+                self.settings.telegram_columns_layout
+            )
+        else:
+            telegram_widths = _parse_column_widths(
+                self.settings.telegram_column_widths
+            )
+            if telegram_widths:
+                self.telegram_tab.set_column_widths(telegram_widths)
         self._restore_table_sort(self.materials_tab, self.settings.material_sort)
         self._restore_table_sort(self.telegram_tab, self.settings.telegram_sort)
         self._restore_filters()
@@ -825,12 +851,28 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
             tab.set_sort_state(state[0], state[1])
 
     def _restore_files_dock_state(self) -> None:
-        """Закрепляет док файлов справа и восстанавливает его видимость."""
+        """Восстанавливает область, плавание и видимость дока файлов."""
         dock = self.files_dock
-        # Старые настройки могли хранить левую область или плавающее окно.
-        # Теперь панель всегда является неподвижной частью главного окна справа.
-        self.addDockWidget(Qt.RightDockWidgetArea, dock)
-        dock.setFloating(False)
+        try:
+            area = Qt.DockWidgetArea(int(self.settings.files_dock_area))
+        except (TypeError, ValueError):
+            area = Qt.RightDockWidgetArea
+        if area not in (
+            Qt.LeftDockWidgetArea,
+            Qt.RightDockWidgetArea,
+            Qt.TopDockWidgetArea,
+            Qt.BottomDockWidgetArea,
+        ):
+            area = Qt.RightDockWidgetArea
+        self.addDockWidget(area, dock)
+        floating = _parse_bool(self.settings.files_dock_floating, False)
+        dock.setFloating(floating)
+        if floating and self.settings.files_dock_geometry:
+            dock.restoreGeometry(
+                QByteArray.fromBase64(
+                    self.settings.files_dock_geometry.encode("ascii")
+                )
+            )
         visible = _parse_bool(self.settings.files_dock_visible, True)
         dock.setVisible(visible)
         # visibilityChanged не приходит, пока окно не показано: синхронизируем вручную
@@ -1350,18 +1392,25 @@ def _changes_retention_days(settings: AppSettings) -> int:
         return DEFAULT_CHANGES_RETENTION_DAYS
 
 
-def _load_or_create_settings(app_dir: Path) -> AppSettings:
-    """Загружает настройки или запускает мастер первого запуска."""
+def _load_or_create_settings(
+    app_dir: Path,
+) -> Tuple[AppSettings, Optional[InitialBranchImport]]:
+    """Загружает настройки или запускает мастер первого запуска.
+
+    Returns:
+        Пара (настройки, план первоначальной загрузки филиала из архива
+        головного офиса — только если он выбран в мастере).
+    """
     settings_manager = SettingsManager(app_dir)
     if settings_manager.exists:
-        return settings_manager.load()
+        return settings_manager.load(), None
 
-    settings = run_first_run_wizard()
+    settings, initial_import = run_first_run_wizard()
     if settings is None:
         sys.exit(0)
 
     settings_manager.save(settings)
-    return settings
+    return settings, initial_import
 
 
 def run_application(argv: List[str]) -> int:
@@ -1381,7 +1430,7 @@ def run_application(argv: List[str]) -> int:
     apply_theme(app, "light")
     install_dialog_title_bars(app, _window_control_labels)
 
-    settings = _load_or_create_settings(app_dir)
+    settings, initial_import = _load_or_create_settings(app_dir)
     _ensure_storage_dirs(settings.storage_path_obj())
     apply_theme(app, settings.theme)
 
@@ -1406,6 +1455,26 @@ def run_application(argv: List[str]) -> int:
         logger.exception("Ошибка инициализации БД")
         QMessageBox.critical(None, STRINGS.title_error, STRINGS.msg_db_error.format(error=exc))
         return 1
+
+    # Первоначальная загрузка филиала из архива головного офиса (выбрана
+    # в мастере первого запуска): применяется до открытия главного окна.
+    if initial_import is not None:
+        try:
+            import_session = db_manager.get_session()
+            try:
+                run_initial_import(
+                    import_session, settings.storage_path_obj(), initial_import
+                )
+                import_session.commit()
+            finally:
+                import_session.close()
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception("Ошибка первоначальной загрузки из архива ГО")
+            QMessageBox.warning(
+                None,
+                STRINGS.title_attention,
+                STRINGS.wizard_archive_import_error.format(error=exc),
+            )
 
     # Удаление устаревших записей Change по настройке срока хранения
     try:

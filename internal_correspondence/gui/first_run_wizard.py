@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
     QFileDialog,
     QGridLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -24,6 +25,10 @@ from sqlalchemy.orm import Session
 from internal_correspondence.core.constants import Role
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.core.settings import AppSettings
+from internal_correspondence.importexport.branch_import import (
+    InitialBranchImport,
+    read_archive_branches,
+)
 from internal_correspondence.orm.models import Branch
 from internal_correspondence.utils.string_resources import STRINGS
 
@@ -221,6 +226,26 @@ class RolePage(QWizardPage):
         layout.addWidget(QLabel("Филиал (для роли 'Филиал'):"))
         layout.addWidget(self.branch_combo)
 
+        # Первоначальная загрузка из архива головного офиса: доступна
+        # только филиалу и только при пустой базе (set_archive_allowed).
+        self.archive_group = QGroupBox(STRINGS.wizard_archive_group)
+        archive_layout = QVBoxLayout(self.archive_group)
+        archive_hint = QLabel(STRINGS.wizard_archive_hint)
+        archive_hint.setWordWrap(True)
+        archive_layout.addWidget(archive_hint)
+        archive_row = QHBoxLayout()
+        self.archive_button = QPushButton(STRINGS.wizard_archive_browse)
+        self.archive_button.clicked.connect(self._browse_archive)
+        archive_row.addWidget(self.archive_button)
+        self.archive_label = QLabel(STRINGS.wizard_archive_not_selected)
+        self.archive_label.setWordWrap(True)
+        archive_row.addWidget(self.archive_label, 1)
+        archive_layout.addLayout(archive_row)
+        layout.addWidget(self.archive_group)
+        self.archive_group.setVisible(False)
+        self._archive_allowed = False
+        self._archive_path: Optional[Path] = None
+
         self.head_office_radio.toggled.connect(self._on_role_changed)
         self.branch_radio.toggled.connect(self._on_role_changed)
 
@@ -230,6 +255,56 @@ class RolePage(QWizardPage):
     def _on_role_changed(self) -> None:
         is_branch = self.branch_radio.isChecked()
         self.branch_combo.setEnabled(is_branch)
+        self.archive_group.setVisible(is_branch and self._archive_allowed)
+
+    def set_archive_allowed(self, allowed: bool) -> None:
+        """Включает выбор архива головного офиса (пустая база филиала)."""
+        self._archive_allowed = allowed
+        if not allowed:
+            self._reset_archive()
+        self.archive_group.setVisible(
+            allowed and self.branch_radio.isChecked()
+        )
+
+    def _browse_archive(self) -> None:
+        """Читает филиалы из выбранного экспортного архива в список."""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            STRINGS.wizard_archive_browse,
+            "",
+            STRINGS.wizard_archive_filter,
+        )
+        if not path:
+            return
+        try:
+            branches = read_archive_branches(Path(path))
+        except Exception as exc:  # pylint: disable=broad-except
+            QMessageBox.warning(
+                self,
+                STRINGS.title_attention,
+                STRINGS.wizard_archive_error.format(error=exc),
+            )
+            return
+        if not branches:
+            QMessageBox.warning(
+                self, STRINGS.title_attention, STRINGS.wizard_archive_no_branches
+            )
+            return
+        self._archive_path = Path(path)
+        self.archive_label.setText(Path(path).name)
+        self.branch_combo.setEditable(False)
+        self.set_branches(branches)
+
+    def _reset_archive(self) -> None:
+        """Сбрасывает выбор архива и возвращает ручной ввод филиала."""
+        self._archive_path = None
+        self.archive_label.setText(STRINGS.wizard_archive_not_selected)
+        self.branch_combo.setEditable(True)
+
+    @property
+    def archive_path(self) -> Optional[Path]:
+        """Путь выбранного экспортного архива головного офиса."""
+        return self._archive_path
 
     def set_branches(self, branches: List[Tuple[str, str]]) -> None:
         """Заполняет список доступных филиалов парами (идентификатор, наименование)."""
@@ -280,7 +355,19 @@ class FirstRunWizard(QWizard):
     def _on_page_changed(self, page_id: int) -> None:
         """Обновляет список филиалов при переходе на страницу выбора роли."""
         if page_id == self._role_page_id:
-            self.role_page.set_branches(load_branches(self.settings.db_url))
+            branches = load_branches(self.settings.db_url)
+            self.role_page.set_branches(branches)
+            self.role_page.set_archive_allowed(not branches)
+
+    def initial_import(self) -> Optional[InitialBranchImport]:
+        """Возвращает план первоначальной загрузки из архива ГО (если выбран)."""
+        if self.settings.role != Role.BRANCH.value:
+            return None
+        archive_path = self.role_page.archive_path
+        branch_id = self.role_page.branch_combo.currentData()
+        if archive_path is None or branch_id is None:
+            return None
+        return InitialBranchImport(archive_path=archive_path, branch_id=str(branch_id))
 
     def set_available_branches(self, branch_ids: List[str]) -> None:
         """Устанавливает список филиалов для выбора по их идентификаторам."""
@@ -290,12 +377,17 @@ class FirstRunWizard(QWizard):
 def run_first_run_wizard(
     parent=None,
     branch_ids: Optional[List[str]] = None,
-) -> Optional[AppSettings]:
-    """Запускает мастер первого запуска и возвращает настройки при успехе."""
+) -> Tuple[Optional[AppSettings], Optional[InitialBranchImport]]:
+    """Запускает мастер первого запуска.
+
+    Returns:
+        Пара (настройки, план первоначальной загрузки). Настройки — None,
+        если пользователь отказался от настройки.
+    """
     settings = AppSettings()
     wizard = FirstRunWizard(settings, parent)
     if branch_ids:
         wizard.set_available_branches(branch_ids)
     if wizard.exec_() == QWizard.Accepted:
-        return settings
-    return None
+        return settings, wizard.initial_import()
+    return None, None
