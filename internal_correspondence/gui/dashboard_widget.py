@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
 from datetime import date
+from pathlib import Path
 from typing import List, Optional
 
 from PyQt5.QtChart import (
@@ -14,10 +16,20 @@ from PyQt5.QtChart import (
     QStackedBarSeries,
     QValueAxis,
 )
-from PyQt5.QtCore import QMargins, QPointF, Qt, QTimer
-from PyQt5.QtGui import QBrush, QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
+from PyQt5.QtCore import QMargins, QPointF, QSize, Qt, QTimer
+from PyQt5.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QFontMetricsF,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+)
 from PyQt5.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QFrame,
     QGraphicsPathItem,
     QGraphicsRectItem,
@@ -25,6 +37,7 @@ from PyQt5.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -115,6 +128,74 @@ _EXECUTION_COLORS_DARK = {
     "ОЗ": "#7FB2FF",
     "ДЗ": "#F2B880",
 }
+
+
+class TickerLabel(QWidget):
+    """Однострочная бегущая строка без полосы прокрутки."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._text = ""
+        self._offset = 0.0
+        self._gap = 60
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.setMinimumWidth(0)
+        self._timer = QTimer(self)
+        self._timer.setInterval(35)
+        self._timer.timeout.connect(self._advance)
+        self.setFont(QFont(self.font().family(), 9))
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt-стиль
+        self._text = text.strip()
+        self._offset = 0.0
+        self.update()
+        if self._text and self.isVisible():
+            self._timer.start()
+        else:
+            self._timer.stop()
+
+    def text(self) -> str:
+        return self._text
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt-стиль
+        return QSize(240, 22)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt-стиль
+        return QSize(0, 22)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt-стиль
+        if not self._text:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        painter.setPen(self.palette().color(QPalette.WindowText))
+        metrics = QFontMetricsF(self.font())
+        text_width = metrics.horizontalAdvance(self._text)
+        cycle = text_width + self._gap
+        y = (self.height() + metrics.ascent() - metrics.descent()) / 2.0
+        x = -self._offset
+        while x < self.width():
+            painter.drawText(QPointF(x, y), self._text)
+            x += cycle
+
+    def _advance(self) -> None:
+        if not self._text:
+            self._timer.stop()
+            return
+        metrics = QFontMetricsF(self.font())
+        text_width = metrics.horizontalAdvance(self._text)
+        cycle = text_width + self._gap
+        self._offset = (self._offset + 2.0) % cycle
+        self.update()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt-стиль
+        super().showEvent(event)
+        if self._text:
+            self._timer.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt-стиль
+        self._timer.stop()
+        super().hideEvent(event)
 
 
 class KpiCard(QFrame):
@@ -221,13 +302,17 @@ class DashboardWidget(QWidget):
         session,
         role: str,
         branch_id: Optional[str] = None,
+        storage_root: Optional[Path] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self.session = session
         self.role = role
         self.branch_id = branch_id
-        self.service = DashboardService(session, role, branch_id)
+        self.storage_root = Path(storage_root) if storage_root else None
+        self.service = DashboardService(
+            session, role, branch_id, storage_root=self.storage_root
+        )
         self.data: Optional[DashboardData] = None
         self._updating = False
         self._scale = 1.0
@@ -252,6 +337,10 @@ class DashboardWidget(QWidget):
         self.refresh_button = QPushButton(STRINGS.dashboard_refresh)
         self.refresh_button.clicked.connect(self.refresh)
         controls.addWidget(self.refresh_button)
+
+        self.save_button = QPushButton(STRINGS.dashboard_save)
+        self.save_button.clicked.connect(self._save_dashboard)
+        controls.addWidget(self.save_button)
 
         controls.addWidget(QLabel(f"{STRINGS.dashboard_period}:"))
         self.period_combo = QComboBox()
@@ -302,10 +391,24 @@ class DashboardWidget(QWidget):
         date_font.setBold(True)
         self.date_label.setFont(date_font)
         date_layout.addWidget(self.date_label)
+
+        self.notifications_card = QFrame()
+        self.notifications_card.setObjectName("dashboardCard")
+        self.notifications_card.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Preferred
+        )
+        self.notifications_card.setFixedHeight(34)
+        self.date_card.setFixedHeight(34)
+        notifications_layout = QHBoxLayout(self.notifications_card)
+        notifications_layout.setContentsMargins(12, 4, 12, 4)
+        self.ticker = TickerLabel()
+        notifications_layout.addWidget(self.ticker)
+
         root.addLayout(controls)
 
         date_row = QHBoxLayout()
-        date_row.addStretch(1)
+        date_row.setSpacing(8)
+        date_row.addWidget(self.notifications_card, 1)
         date_row.addWidget(self.date_card)
         root.addLayout(date_row)
 
@@ -346,11 +449,11 @@ class DashboardWidget(QWidget):
         return view
 
     def _style_date_card(self) -> None:
-        """Оформляет дату в стиле KPI-карточек."""
+        """Оформляет дату и уведомления в стиле KPI-карточек."""
         from internal_correspondence.gui.theme import current_theme
 
         colors = current_theme().qss_colors
-        self.date_card.setStyleSheet(
+        card_style = (
             "QFrame#dashboardCard {"
             f" background: {colors['SURFACE']};"
             f" border: 1px solid {colors['BORDER']};"
@@ -358,7 +461,13 @@ class DashboardWidget(QWidget):
             "}"
             "QFrame#dashboardCard QLabel { background: transparent; }"
         )
+        for card in (self.date_card, self.notifications_card):
+            card.setStyleSheet(card_style)
         self.date_label.setStyleSheet(f"color: {colors['TEXT']};")
+        palette = self.ticker.palette()
+        palette.setColor(QPalette.WindowText, QColor(colors["TEXT"]))
+        self.ticker.setPalette(palette)
+        self.ticker.update()
 
     # ------------------------------------------------------------------
     # Фильтры
@@ -478,6 +587,139 @@ class DashboardWidget(QWidget):
             return
         self._render_kpi()
         self._render_charts()
+        self._render_notifications()
+
+    def _notifications_text(self) -> str:
+        """Формирует сообщения бегущей строки по текущим данным."""
+        if self.data is None:
+            return ""
+        data = self.data
+        if data.last_export is not None:
+            last_export = STRINGS.dashboard_notify_last_export.format(
+                date=data.last_export.strftime("%d.%m.%Y %H:%M")
+            )
+        else:
+            last_export = STRINGS.dashboard_notify_last_export_none
+        parts = [
+            STRINGS.dashboard_notify_unexported.format(count=data.changes_total),
+            last_export,
+            STRINGS.dashboard_notify_due_tasks.format(count=data.tasks_due_soon),
+            STRINGS.dashboard_notify_overdue.format(count=data.tasks_overdue),
+        ]
+        if data.materials_without_evaluation:
+            parts.append(
+                STRINGS.dashboard_notify_unevaluated.format(
+                    count=data.materials_without_evaluation
+                )
+            )
+        if data.undelivered_count:
+            parts.append(
+                STRINGS.dashboard_notify_undelivered.format(
+                    count=data.undelivered_count
+                )
+            )
+        if data.tasks_unassigned:
+            parts.append(
+                STRINGS.dashboard_notify_unassigned.format(
+                    count=data.tasks_unassigned
+                )
+            )
+        if data.import_unmatched:
+            parts.append(
+                STRINGS.dashboard_notify_import_errors.format(
+                    count=data.import_unmatched
+                )
+            )
+        if not parts:
+            return STRINGS.dashboard_notifications_empty
+        return "   •   ".join(parts)
+
+    def _render_notifications(self) -> None:
+        if self.data is None:
+            return
+        self.ticker.setText(self._notifications_text())
+
+    def _save_dashboard(self) -> None:
+        default_name = f"Дашборд_{date.today():%Y-%m-%d}.docx"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            STRINGS.dashboard_save_title,
+            str(Path.home() / default_name),
+            STRINGS.dashboard_save_filter,
+        )
+        if not path:
+            return
+        try:
+            self.save_docx(Path(path))
+        except Exception as error:  # pragma: no cover - защита интерфейса
+            QMessageBox.critical(
+                self,
+                STRINGS.dashboard_save_title,
+                STRINGS.dashboard_save_error.format(error=error),
+            )
+            return
+        QMessageBox.information(
+            self,
+            STRINGS.dashboard_save_title,
+            STRINGS.dashboard_save_done.format(path=path),
+        )
+
+    def save_docx(self, path: Path) -> Path:
+        """Сохраняет текущее состояние дашборда в DOCX."""
+        from docx import Document
+        from docx.shared import Cm
+
+        if self.data is None:
+            self.refresh()
+        document = Document()
+        document.add_heading(STRINGS.tab_dashboard, 0)
+        document.add_paragraph(
+            f"{STRINGS.dashboard_doc_period}: {self.financial_check.text()}"
+        )
+        document.add_paragraph(self.date_label.text())
+
+        document.add_heading(STRINGS.dashboard_doc_metrics, 1)
+        table = document.add_table(rows=1, cols=3)
+        table.style = "Light Grid Accent 1"
+        headers = (
+            STRINGS.dashboard_doc_metric,
+            STRINGS.dashboard_doc_value,
+            STRINGS.dashboard_doc_details,
+        )
+        for cell, text in zip(table.rows[0].cells, headers):
+            cell.text = text
+        for kpi in self.data.kpi:
+            if kpi.key == "import":
+                continue
+            row = table.add_row().cells
+            row[0].text = kpi.label
+            row[1].text = str(kpi.value)
+            details = kpi.detail
+            if kpi.attention:
+                details = f"{details} · {kpi.attention}" if details else kpi.attention
+            row[2].text = details
+
+        document.add_heading(STRINGS.dashboard_doc_notifications, 1)
+        document.add_paragraph(self._notifications_text())
+
+        document.add_heading(STRINGS.dashboard_doc_charts, 1)
+        charts = (
+            ("monthly", STRINGS.dashboard_chart_monthly, self.monthly_view),
+            ("execution", STRINGS.dashboard_chart_execution, self.execution_view),
+            ("evaluations", STRINGS.dashboard_chart_evaluations, self.evaluations_view),
+            ("ranking", self.data.ranking_title, self.ranking_view),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            for key, title, view in charts:
+                document.add_heading(title, 2)
+                image_path = Path(tmp) / f"{key}.png"
+                view.grab().save(str(image_path), "PNG")
+                document.add_picture(str(image_path), width=Cm(16.5))
+
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        document.save(str(target))
+        return target
 
     def _render_kpi(self) -> None:
         if self.data is None:

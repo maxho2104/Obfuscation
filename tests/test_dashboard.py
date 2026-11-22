@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from docx import Document
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -17,6 +18,7 @@ from PyQt5.QtWidgets import (
     QGraphicsPathItem,
     QGraphicsRectItem,
     QScrollArea,
+    QSizePolicy,
 )
 
 from internal_correspondence.core.constants import (
@@ -254,6 +256,17 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
         f"ОЗ — {STRINGS.dashboard_completed}",
         f"ДЗ — {STRINGS.dashboard_completed}",
     }
+    ticker_text = widget.ticker.text()
+    assert STRINGS.dashboard_notify_unexported.format(
+        count=widget.data.changes_total
+    ) in ticker_text
+    assert STRINGS.dashboard_notify_last_export_none in ticker_text
+    assert STRINGS.dashboard_notify_due_tasks.format(
+        count=widget.data.tasks_due_soon
+    ) in ticker_text
+    assert STRINGS.dashboard_notify_overdue.format(
+        count=widget.data.tasks_overdue
+    ) in ticker_text
     evaluation_series = widget.evaluations_view.chart().series()
     assert evaluation_series
     assert isinstance(evaluation_series[0], QStackedBarSeries)
@@ -403,4 +416,42 @@ def test_ranking_child_labels_have_outline(dashboard_data, qt_app):
     assert labels
     assert labels[0].pen().color().name() == "#000000"
     assert labels[0].brush().color().name() == "#ffffff"
+    widget.close()
+
+
+def test_notifications_expand_and_date_is_fixed(dashboard_data, qt_app):
+    widget = DashboardWidget(dashboard_data["session"], "head_office")
+    widget.financial_check.setChecked(False)
+    widget.resize(1024, 720)
+    widget.show()
+    qt_app.processEvents()
+    assert widget.ticker.text()
+    assert widget.notifications_card.height() == widget.date_card.height()
+    assert widget.date_card.sizePolicy().horizontalPolicy() == QSizePolicy.Fixed
+    assert (
+        widget.notifications_card.sizePolicy().horizontalPolicy()
+        == QSizePolicy.Expanding
+    )
+    widget.close()
+
+
+def test_save_docx_contains_text_and_chart_images(
+    dashboard_data, qt_app, tmp_path: Path
+):
+    widget = DashboardWidget(dashboard_data["session"], "head_office")
+    widget.financial_check.setChecked(False)
+    widget.resize(1280, 800)
+    widget.show()
+    qt_app.processEvents()
+
+    target = tmp_path / "dashboard.docx"
+    widget.save_docx(target)
+    document = Document(str(target))
+    texts = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    assert STRINGS.dashboard_doc_metrics in texts
+    assert STRINGS.dashboard_doc_charts in texts
+    assert STRINGS.dashboard_notify_unexported.format(
+        count=widget.data.changes_total
+    ) in texts
+    assert len(document.inline_shapes) == 4
     widget.close()

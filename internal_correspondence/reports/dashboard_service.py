@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import calendar
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import func, or_, select
@@ -17,7 +18,12 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, selectinload
 
 from internal_correspondence.core.constants import Role
-from internal_correspondence.core.domain_pack import enum_codes, enum_label, enum_weight
+from internal_correspondence.core.domain_pack import (
+    dir_name,
+    enum_codes,
+    enum_label,
+    enum_weight,
+)
 from internal_correspondence.core.enum_registry import pack_enum_display
 from internal_correspondence.orm.labels import entity_label
 from internal_correspondence.orm.models import (
@@ -166,15 +172,23 @@ class DashboardData:
     recent: List[RecentDocument]
     attention: List[Tuple[str, int]]
     kpi: List[KpiValue]
+    last_export: Optional[datetime] = None
 
 
 class DashboardService:
     """Считает показатели дашборда по данным приложения."""
 
-    def __init__(self, session: Session, role: str, branch_id: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        session: Session,
+        role: str,
+        branch_id: Optional[str] = None,
+        storage_root: Optional[Path] = None,
+    ) -> None:
         self.session = session
         self.role = Role(role)
         self.branch_id = branch_id
+        self.storage_root = Path(storage_root) if storage_root else None
         self._is_branch = self.role == Role.BRANCH
         if self._is_branch and not self.branch_id:
             raise ValueError("Для роли «филиал» не указан филиал.")
@@ -331,6 +345,7 @@ class DashboardService:
             recent=recent,
             attention=attention,
             kpi=kpi,
+            last_export=self._last_export(),
         )
 
     # ------------------------------------------------------------------
@@ -736,6 +751,23 @@ class DashboardService:
     # ------------------------------------------------------------------
     def _changes_count(self) -> int:
         return int(self.session.scalar(select(func.count(Change.id))) or 0)
+
+    def _last_export(self) -> Optional[datetime]:
+        """Время последнего ZIP-экспорта по файлам каталога «Экспорт»."""
+        if self.storage_root is None:
+            return None
+        export_dir = self.storage_root / dir_name("export")
+        try:
+            files = [item for item in export_dir.iterdir() if item.is_file()]
+        except OSError:
+            return None
+        if not files:
+            return None
+        try:
+            latest = max(item.stat().st_mtime for item in files)
+        except OSError:
+            return None
+        return datetime.fromtimestamp(latest)
 
     def _latest_import(self) -> Optional[Tuple[str, int, int]]:
         try:
