@@ -6,7 +6,7 @@ import uuid
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric, Uuid
 from sqlalchemy.orm import Session
@@ -22,6 +22,7 @@ from internal_correspondence.orm.models import (
     Department,
     Employee,
     FileRecord,
+    MissingRequest,
     TerritorialUnit,
     WorkingGroup,
 )
@@ -43,6 +44,34 @@ logger = get_logger("import_service")
 # Служебные поля, которые не импортируются из JSON
 _SERVICE_FIELDS = {"change_id"}
 
+# Обработчик прогресса: (готово, всего, имя сущности текущей записи)
+ProgressCallback = Optional[Callable[[int, int, str], None]]
+
+# Имя манифеста файлов, восстановленных последней операцией импорта
+# (хранится в корне файлового хранилища, пути — относительные, POSIX)
+LAST_IMPORT_MANIFEST = "last_import_files.json"
+
+
+def read_import_manifest(storage_root: Path) -> List[str]:
+    """Возвращает относительные пути файлов последнего импорта; [] — нет манифеста."""
+    manifest_path = storage_root / LAST_IMPORT_MANIFEST
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item) for item in data]
+
+
+def write_import_manifest(storage_root: Path, relative_paths: List[str]) -> None:
+    """Записывает манифест файлов последнего импорта в корень хранилища."""
+    manifest_path = storage_root / LAST_IMPORT_MANIFEST
+    manifest_path.write_text(
+        json.dumps(list(relative_paths), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
 
 class ImportService:
     """Разбирает экспортный ZIP-архив и применяет изменения к локальной БД."""
@@ -53,26 +82,39 @@ class ImportService:
         storage_root: Path,
         role: str,
         branch_id: Optional[str] = None,
+        progress_cb: ProgressCallback = None,
     ) -> None:
         self.session = session
         self.storage_root = storage_root
         self.role = role
         self.branch_id = branch_id
+        self.progress_cb = progress_cb
         self.conflicts: List[Dict[str, Any]] = []
+        self._exclude: Set[Tuple[str, str]] = set()
         self._payload: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._status: Dict[Tuple[str, str], str] = {}
         self._instances: Dict[Tuple[str, str], Base] = {}
         self._model_classes_cache: Optional[Dict[str, type]] = None
         self._branch_scope: Optional[Set[Tuple[str, str]]] = None
 
-    def import_archive(self, archive_path: Path) -> Dict[str, Any]:
+    def import_archive(
+        self,
+        archive_path: Path,
+        exclude: Optional[Set[Tuple[str, str]]] = None,
+    ) -> Dict[str, Any]:
         """Импортирует данные из ZIP-архива.
+
+        Args:
+            archive_path: Путь к экспортному ZIP-архиву.
+            exclude: Множество пар (имя сущности, ключ), которые не нужно
+                применять (отклонённые на этапе анализа).
 
         Returns:
             Словарь со статистикой импорта и списком конфликтов.
         """
         self.conflicts.clear()
-        extract_dir = self.storage_root / "tmp_import" / uuid.uuid4().hex
+        self._exclude = set(exclude or ())
+        extract_dir = self._prepare_extract_dir()
         try:
             with zipfile.ZipFile(archive_path, "r") as zf:
                 zf.extractall(extract_dir)
@@ -90,8 +132,9 @@ class ImportService:
             warnings = self._check_pack_compatibility(extract_dir)
 
             stats = self._apply_payload(export_data)
-            self._extract_files(extract_dir)
+            imported_files = self._extract_files(extract_dir)
             self.session.commit()
+            write_import_manifest(self.storage_root, imported_files)
 
             return {
                 "imported": stats["imported"],
@@ -99,9 +142,243 @@ class ImportService:
                 "skipped": stats["skipped"],
                 "conflicts": self.conflicts,
                 "warnings": warnings,
+                "files": imported_files,
             }
         finally:
-            shutil.rmtree(extract_dir, ignore_errors=True)
+            self._exclude = set()
+            self._cleanup_extract_dir(extract_dir)
+
+    # --- временная директория распаковки ---
+
+    def _prepare_extract_dir(self) -> Path:
+        """Создаёт чистую временную директорию распаковки архива.
+
+        Перед созданием удаляет остатки прошлых запусков (в т.ч.
+        прерванных): в хранилище не должно копиться мусорное дерево.
+        """
+        tmp_root = self.storage_root / "tmp_import"
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        extract_dir = tmp_root / uuid.uuid4().hex
+        extract_dir.mkdir(parents=True)
+        return extract_dir
+
+    @staticmethod
+    def _cleanup_extract_dir(extract_dir: Path) -> None:
+        """Удаляет временную директорию распаковки и пустой корень tmp_import."""
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        try:
+            extract_dir.parent.rmdir()  # только если пуст (чужие распаковки не трогаем)
+        except OSError:
+            pass
+
+    # --- анализ архива перед применением ---
+
+    def analyze_archive(self, archive_path: Path) -> Dict[str, Any]:
+        """Анализирует архив без применения изменений.
+
+        Returns:
+            Словарь с ключами ``entries`` (список записей с признаком
+            применимости) и ``warnings`` (несовместимость пакета и пр.).
+            Статус записи: ``ok`` — применяется сразу; ``warning`` — не
+            применяется, но требует внимания (удаление отсутствующей
+            записи); ``error`` — не применяется (не найден ключ изменяемой
+            записи, при создании пропущено обязательное поле, неизвестная
+            сущность, не найдены зависимости).
+        """
+        extract_dir = self._prepare_extract_dir()
+        try:
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                zf.extractall(extract_dir)
+
+            json_path = extract_dir / "export.json"
+            if not json_path.exists():
+                raise ImportError("В архиве отсутствует export.json")
+
+            with open(json_path, "r", encoding="utf-8") as f:
+                export_data = json.load(f)
+
+            if not isinstance(export_data, dict):
+                raise ImportError("Некорректный формат export.json")
+
+            warnings = self._check_pack_compatibility(extract_dir)
+
+            payload: Dict[str, Dict[str, Dict[str, Any]]] = {}
+            for entity_name, entries in export_data.items():
+                if not isinstance(entries, dict):
+                    continue
+                if resolve_entity_class(entity_name) is None:
+                    for pk_key, data in entries.items():
+                        payload.setdefault(entity_name, {})[str(pk_key)] = (
+                            data if isinstance(data, dict) else {}
+                        )
+                    continue
+                payload[entity_name] = {
+                    str(pk): data
+                    for pk, data in entries.items()
+                    if isinstance(data, dict)
+                }
+
+            entries = []
+            for entity_name, records in payload.items():
+                for pk_key, fields in records.items():
+                    entries.append(
+                        self._analyze_entry(entity_name, pk_key, fields, payload)
+                    )
+            return {"entries": entries, "warnings": warnings}
+        finally:
+            self._cleanup_extract_dir(extract_dir)
+
+    def _analyze_entry(
+        self,
+        entity_name: str,
+        pk_key: str,
+        fields: Dict[str, Any],
+        payload: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> Dict[str, Any]:
+        """Определяет применимость одной записи экспортного JSON."""
+        from internal_correspondence.orm.labels import entity_label
+
+        entity_class = resolve_entity_class(entity_name)
+        entry: Dict[str, Any] = {
+            "entity_name": entity_name,
+            "entity_label": entity_label(entity_class) if entity_class else entity_name,
+            "pk": pk_key,
+            "operation": "delete" if fields.get("deleted") else None,
+            "status": "ok",
+            "reason": "",
+        }
+        if entity_class is None:
+            entry["status"] = "error"
+            entry["reason"] = "неизвестная сущность"
+            return entry
+
+        try:
+            pk_value = parse_primary_key(pk_key, entity_class)
+        except (TypeError, ValueError):
+            entry["status"] = "error"
+            entry["reason"] = "некорректный первичный ключ"
+            return entry
+
+        instance = self.session.get(entity_class, pk_value)
+        if fields.get("deleted"):
+            entry["operation"] = "delete"
+            if instance is None:
+                entry["status"] = "warning"
+                entry["reason"] = "запись для удаления не найдена — удалять нечего"
+            return entry
+
+        entry["operation"] = "update" if instance is not None else "create"
+
+        # Обязательные поля проверяются только при создании: существующая
+        # запись обязательные поля уже содержит (иначе бы не существовала),
+        # для изменения достаточно наличия записи по первичному ключу.
+        if instance is None:
+            missing_required = self._missing_required_fields(entity_class, fields)
+            if missing_required:
+                entry["status"] = "error"
+                entry["reason"] = "пропущены обязательные поля: " + ", ".join(
+                    missing_required
+                )
+                return entry
+
+        missing_dep = self._missing_dependencies(entity_class, fields, payload)
+        if missing_dep:
+            entry["status"] = "error"
+            entry["reason"] = "не найдены зависимости: " + ", ".join(missing_dep)
+        return entry
+
+    def _missing_required_fields(
+        self, entity_class: type, fields: Dict[str, Any]
+    ) -> List[str]:
+        """Возвращает обязательные поля (по метаданным модели), отсутствующие в записи."""
+        missing = []
+        pk_keys = {column.key for column in entity_class.__mapper__.primary_key}
+        for column in entity_class.__mapper__.columns:
+            if column.key in pk_keys or column.key in _SERVICE_FIELDS:
+                continue
+            if not column.info.get("required"):
+                continue
+            if column.key not in fields and column.default is None:
+                missing.append(column.key)
+        return missing
+
+    def _missing_dependencies(
+        self,
+        entity_class: type,
+        fields: Dict[str, Any],
+        payload: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> List[str]:
+        """Проверяет наличие в БД или в пакете зависимостей записи (FK и N-N)."""
+        missing: List[str] = []
+        fk_targets = self._foreign_key_targets(entity_class)
+        for field_name, value in fields.items():
+            if value is None:
+                continue
+            target_class = fk_targets.get(field_name)
+            if target_class is not None:
+                if not self._dependency_available(target_class, str(value), payload):
+                    missing.append(f"{field_name} -> {target_class.__name__}")
+                continue
+            relationship = self._relationship_specs(entity_class).get(field_name)
+            if relationship is not None and isinstance(value, (list, tuple)):
+                for item in value:
+                    pk_value = item.get("id") if isinstance(item, dict) else item
+                    if not self._dependency_available(
+                        relationship, self._pk_key(pk_value), payload
+                    ):
+                        missing.append(f"{field_name} -> {relationship.__name__}")
+        return missing
+
+    def _dependency_available(
+        self,
+        target_class: type,
+        target_pk_key: str,
+        payload: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> bool:
+        """Проверяет зависимость: есть в БД или прислана в этом же пакете (не на удаление)."""
+        try:
+            pk_value = parse_primary_key(str(target_pk_key), target_class)
+        except (TypeError, ValueError):
+            return False
+        if self.session.get(target_class, pk_value) is not None:
+            return True
+        target_fields = payload.get(target_class.__name__, {}).get(str(target_pk_key))
+        return target_fields is not None and not target_fields.get("deleted")
+
+    # --- запросы контрагенту (missing) ---
+
+    def record_missing_requests(self, entries: Iterable[Dict[str, Any]]) -> int:
+        """Сохраняет запросы о неизвестных контрагенту сущностях.
+
+        Args:
+            entries: Записи анализа (см. ``analyze_archive``), по которым
+                нужен запрос: сущность, не найденная в локальной базе.
+                Филиал проставляет себя; головной офис оставляет
+                ``branch_id`` пустым.
+
+        Returns:
+            Число добавленных записей.
+        """
+        added = 0
+        for entry in entries:
+            if entry.get("status") != "error":
+                continue
+            if "не найден" not in (entry.get("reason") or ""):
+                continue
+            self.session.add(
+                MissingRequest(
+                    branch_id=(
+                        self.branch_id if self.role == Role.BRANCH.value else None
+                    ),
+                    entity_name=entry["entity_name"],
+                    entity_pk=entry["pk"],
+                )
+            )
+            added += 1
+        if added:
+            self.session.flush()
+            logger.info("Записано запросов контрагенту: %s", added)
+        return added
 
     @staticmethod
     def _check_pack_compatibility(extract_dir: Path) -> List[str]:
@@ -159,19 +436,33 @@ class ImportService:
         stats = {"imported": 0, "deleted": 0, "skipped": 0}
         deletions: List[Tuple[str, str]] = []
 
+        planned: List[Tuple[str, str, Dict[str, Any]]] = []
         for entity_name, entries in self._payload.items():
             for pk_key, fields in entries.items():
-                if fields.get("deleted"):
-                    deletions.append((entity_name, pk_key))
-                    continue
-                status = self._apply_entry(entity_name, pk_key, fields, frozenset())
-                stats[status] += 1
+                planned.append((entity_name, pk_key, fields))
+
+        total = len(planned)
+        for index, (entity_name, pk_key, fields) in enumerate(planned, start=1):
+            self._progress(index, total, entity_name)
+            if (entity_name, pk_key) in self._exclude:
+                stats["skipped"] += 1
+                continue
+            if fields.get("deleted"):
+                deletions.append((entity_name, pk_key))
+                continue
+            status = self._apply_entry(entity_name, pk_key, fields, frozenset())
+            stats[status] += 1
 
         for entity_name, pk_key in deletions:
             status = self._delete_entry(entity_name, pk_key)
             stats[status] += 1
 
         return stats
+
+    def _progress(self, current: int, total: int, entity_name: str) -> None:
+        """Сообщает о ходе применения записей (если задан обработчик прогресса)."""
+        if self.progress_cb is not None:
+            self.progress_cb(current, total, entity_name)
 
     def _apply_entry(
         self,
@@ -445,9 +736,23 @@ class ImportService:
             resolved: List[Base] = []
             for value in values:
                 pk_value = value.get("id") if isinstance(value, dict) else value
-                resolved.append(
-                    self._ensure_dependency(target_class, self._pk_key(pk_value), stack)
-                )
+                try:
+                    resolved.append(
+                        self._ensure_dependency(
+                            target_class, self._pk_key(pk_value), stack
+                        )
+                    )
+                except ValueError:
+                    # Недоступный член связи N-N пропускается: оценка может
+                    # покрывать документы нескольких филиалов — в архиве
+                    # каждого филиала она приходит со всеми документами,
+                    # но локально доступен только свой (см. branch_scope).
+                    logger.warning(
+                        "Пропущен недоступный член связи %s.%s: %s",
+                        instance.__class__.__name__,
+                        name,
+                        pk_value,
+                    )
             setattr(instance, name, resolved)
 
     def _relationship_specs(self, entity_class: type) -> Dict[str, type]:
@@ -508,10 +813,13 @@ class ImportService:
             # принадлежность сущности филиалу-владельцу.
             return changed_fields
 
-        # Роль филиала: не редактирует входящие номера и оценки материалов/телеграмм.
+        # Роль филиала: ограничений на приём нет — филиал принимает от
+        # головного офиса и входящие номера, и оценки документов. Механизм
+        # ограничений сохранён на случай появления полей, которые филиал
+        # не должен принимать из дельт головного офиса.
         restricted = {
-            "ScientificMaterial": {"incoming_number", "incoming_date"},
-            "Telegram": {"incoming_number", "incoming_date"},
+            "ScientificMaterial": set(),
+            "Telegram": set(),
             "Evaluation": set(),
         }
         restricted_fields = restricted.get(entity_name, set())
@@ -595,15 +903,18 @@ class ImportService:
             return "_".join(str(item) for item in value)
         return str(value)
 
-    def _extract_files(self, extract_dir: Path) -> None:
+    def _extract_files(self, extract_dir: Path) -> List[str]:
         """Восстанавливает прикреплённые файлы в файловом хранилище.
 
         Файл размещается по пути из импортированной записи ``FileRecord``,
         чтобы ссылки на вложения в БД оставались действительными.
+        Возвращает относительные (к корню хранилища) пути восстановленных
+        файлов для манифеста последнего импорта.
         """
+        restored: List[str] = []
         files_dir = extract_dir / "files"
         if not files_dir.exists():
-            return
+            return restored
         storage_root = self.storage_root.resolve()
         for file_dir in files_dir.iterdir():
             if not file_dir.is_dir():
@@ -630,7 +941,13 @@ class ImportService:
 
                 target_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_file, target_dir / target_name)
+                target = (target_dir / target_name).resolve()
+                try:
+                    restored.append(target.relative_to(storage_root).as_posix())
+                except ValueError:
+                    restored.append(str(target))
                 logger.debug("Восстановлен файл %s", target_dir / target_name)
+        return restored
 
 
 class ImportError(Exception):

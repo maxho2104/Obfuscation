@@ -17,6 +17,7 @@ from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.gui.oshm_dialog import OSHMDialog
 from internal_correspondence.gui.employee_picker import EmployeePickerDialog
 from internal_correspondence.orm.models import (
+    AddedTask,
     Branch,
     Department,
     Employee,
@@ -26,6 +27,10 @@ from internal_correspondence.orm.models import (
     WorkingGroup,
 )
 from internal_correspondence.services.change_tracking import register_change_tracking
+from internal_correspondence.services.reference_service import (
+    DepartmentService,
+    EmployeeService,
+)
 from internal_correspondence.utils.string_resources import STRINGS
 
 
@@ -85,7 +90,16 @@ def oshm_data(db_manager: DatabaseManager) -> dict:
     )
     session.add_all([task1, task2])
     session.flush()
-    emp1.tasks.append(task1)
+    # Назначение через механизм распределения задач (added_tasks)
+    session.add(
+        AddedTask(task_id=task1.id, node_type="employee", node_id=str(emp1.id))
+    )
+    # Задача в пуле филиала (для назначения отделам/сотрудникам)
+    session.add(AddedTask(task_id=task2.id, node_type="branch", node_id="F1"))
+    # И назначена отделу А (видна в панели отдела)
+    session.add(
+        AddedTask(task_id=task2.id, node_type="department", node_id=str(dept_a.id))
+    )
     session.commit()
     return {
         "dept_a": dept_a, "dept_b": dept_b, "workgroup": workgroup,
@@ -341,6 +355,67 @@ def test_active_first_order(qt_app, db_manager, oshm_data) -> None:
     dialog.deleteLater()
 
 
+def test_tree_refreshes_after_adding_employee(
+    qt_app, db_manager, oshm_data
+) -> None:
+    """После добавления сотрудника выбранный отдел остаётся раскрытым."""
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    dept_item = _find_node(dialog, dialog.tree_structure, ("department", str(oshm_data["dept_a"].id)))
+    dept_item.setExpanded(True)
+    dept_item.setSelected(True)
+    dialog._activate_tree(dialog.tree_structure)
+    before = dept_item.childCount()
+
+    dialog._apply(
+        lambda: EmployeeService(dialog.session).create(
+            {
+                "last_name": "Новиков",
+                "first_name": "Николай",
+                "department_id": oshm_data["dept_a"].id,
+                "active": True,
+            }
+        ),
+        "Ошибка добавления сотрудника",
+    )
+
+    dept_item = _find_node(dialog, dialog.tree_structure, ("department", str(oshm_data["dept_a"].id)))
+    names = [dept_item.child(i).text(0) for i in range(dept_item.childCount())]
+    assert dept_item.isExpanded()
+    assert dept_item.childCount() == before + 1
+    assert any(name.startswith("Новиков") for name in names)
+    dialog.deleteLater()
+
+
+def test_tree_refreshes_after_adding_department(
+    qt_app, db_manager, oshm_data
+) -> None:
+    """После добавления отдела выбранный филиал остаётся раскрытым."""
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    branch_item = dialog.tree_structure.topLevelItem(0)
+    branch_item.setExpanded(True)
+    branch_item.setSelected(True)
+    dialog._activate_tree(dialog.tree_structure)
+    before = branch_item.childCount()
+
+    dialog._apply(
+        lambda: DepartmentService(dialog.session).create(
+            {"name": "Новый отдел", "branch_id": "F1", "active": True}
+        ),
+        "Ошибка добавления отдела",
+    )
+
+    branch_item = dialog.tree_structure.topLevelItem(0)
+    names = [branch_item.child(i).text(0) for i in range(branch_item.childCount())]
+    assert branch_item.isExpanded()
+    assert branch_item.childCount() == before + 1
+    assert "Новый отдел" in names
+    dialog.deleteLater()
+
+
 def test_toggle_selected(qt_app, db_manager, oshm_data) -> None:
     dialog = OSHMDialog(
         db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
@@ -466,12 +541,13 @@ def test_details_panel_employee(qt_app, db_manager, oshm_data) -> None:
     assert not panel.tasks_group.isHidden()
     assert panel.tasks_table.rowCount() == 1
     assert panel.tasks_table.item(0, 0).text() == "T1"
+    assert panel.tasks_table.item(0, 2).text() == "ОЗ"
     assert panel.edit_btn.isEnabled()
     dialog.deleteLater()
 
 
-def test_details_panel_department_without_tasks(qt_app, db_manager, oshm_data) -> None:
-    """У отдела нет таблицы задач; «Изменить» доступно и головному офису."""
+def test_details_panel_department_with_tasks(qt_app, db_manager, oshm_data) -> None:
+    """У отдела есть таблица задач; «Изменить» доступно и головному офису."""
     dialog = OSHMDialog(
         db_manager.get_session(), branch_id=None, role=Role.HEAD_OFFICE.value
     )
@@ -482,7 +558,7 @@ def test_details_panel_department_without_tasks(qt_app, db_manager, oshm_data) -
     panel = dialog.details_panel
     assert not panel.isHidden()
     assert panel.title_label.text() == "Отдел А"
-    assert panel.tasks_group.isHidden()
+    assert not panel.tasks_group.isHidden()
     assert panel.edit_btn.isEnabled()
     dialog.deleteLater()
 
@@ -536,8 +612,60 @@ def test_details_panel_remove_task(qt_app, db_manager, oshm_data) -> None:
     panel._remove_tasks()
 
     session = db_manager.get_session()
-    assert session.get(Employee, emp1.id).tasks == []
+    assert (
+        session.query(AddedTask)
+        .filter(AddedTask.node_type == "employee", AddedTask.node_id == str(emp1.id))
+        .count()
+        == 0
+    )
     assert panel.tasks_table.rowCount() == 0
+    dialog.deleteLater()
+
+
+def test_details_panel_tasks_for_structure_nodes(qt_app, db_manager, oshm_data) -> None:
+    """Таблица задач есть у отдела и рабочей группы; отдел видит задачи
+    из пула филиала, сотрудник — только задачи своего отдела."""
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    dept_a = oshm_data["dept_a"]
+    workgroup = oshm_data["workgroup"]
+
+    # Отдел: видит задачу из пула филиала (T2)
+    item = _find_node(dialog, dialog.tree_structure, ("department", str(dept_a.id)))
+    dialog._show_details(item, dialog.tree_structure)
+    panel = dialog.details_panel
+    assert not panel.tasks_group.isHidden()
+    dept_tasks = [panel.tasks_table.item(r, 0).text() for r in range(panel.tasks_table.rowCount())]
+    assert dept_tasks == ["T2"]
+
+    # Рабочая группа: таблица задач показана, задач отдела нет — пусто
+    item = _find_node(dialog, dialog.tree_workgroups, ("workgroup", str(workgroup.id)))
+    dialog._show_details(item, dialog.tree_workgroups)
+    assert not panel.tasks_group.isHidden()
+    assert panel.tasks_table.rowCount() == 0
+
+    # Сотрудник: видит только свою задачу (T1), назначенную лично
+    emp1 = oshm_data["emp1"]
+    item = _find_node(dialog, dialog.tree_structure, ("employee", str(emp1.id)))
+    dialog._show_details(item, dialog.tree_structure)
+    emp_tasks = [panel.tasks_table.item(r, 0).text() for r in range(panel.tasks_table.rowCount())]
+    assert emp_tasks == ["T1"]
+    dialog.deleteLater()
+
+
+def test_task_picker_allowed_ids(qt_app, db_manager, oshm_data) -> None:
+    """Диалог выбора задач ограничивает список задачами старшего элемента."""
+    from internal_correspondence.gui.oshm_details_panel import TaskPickerDialog
+
+    session = db_manager.get_session()
+    dialog = TaskPickerDialog(session, allowed_ids={"T2"})
+    visible_ids = {t.id for t in dialog._tasks}
+    assert visible_ids == {"T2"}
+    dialog.deleteLater()
+
+    dialog = TaskPickerDialog(session, allowed_ids=set())
+    assert dialog._tasks == []
     dialog.deleteLater()
 
 

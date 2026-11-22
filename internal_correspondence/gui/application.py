@@ -3,13 +3,14 @@
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from PyQt5.QtCore import QByteArray, Qt
+from PyQt5.QtCore import QByteArray, Qt, QThread
 from PyQt5.QtWidgets import (
     QAction,
     QActionGroup,
     QApplication,
+    QDialog,
     QFileDialog,
     QMainWindow,
     QMenu,
@@ -41,6 +42,13 @@ from internal_correspondence.core.settings import AppSettings, SettingsManager
 from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
 from internal_correspondence.gui.document_list_widget import DocumentListWidget
 from internal_correspondence.gui.evaluation_import_dialog import EvaluationImportDialog
+from internal_correspondence.gui.evaluation_lists_dialog import EvaluationListsDialog
+from internal_correspondence.gui.exchange_dialogs import (
+    ExportBranchesDialog,
+    ExportWorker,
+    ImportPreviewDialog,
+    ImportWorker,
+)
 from internal_correspondence.gui.filter_model import (
     deserialize_filters,
     serialize_filters,
@@ -62,6 +70,7 @@ from internal_correspondence.gui.reference_editor import ReferenceEditorDialog
 from internal_correspondence.gui.report_dialog import ReportDialog
 from internal_correspondence.gui.settings_dialog import SettingsDialog
 from internal_correspondence.gui.statistics_widget import StatisticsWidget
+from internal_correspondence.gui.dashboard_widget import DashboardWidget
 from internal_correspondence.gui.task_distribution_widget import TaskDistributionWidget
 from internal_correspondence.gui.table_model import ColumnDef
 from internal_correspondence.gui.theme import THEMES, apply_theme, current_theme
@@ -77,12 +86,15 @@ from internal_correspondence.orm.models import (
     Branch,
     Consumer,
     Country,
+    Department,
+    Employee,
     Leader,
     ScientificMaterial,
     ScientificTask,
     Source,
     Telegram,
     TerritorialUnit,
+    WorkingGroup,
 )
 from internal_correspondence.reports.report_service import ReportDataService
 from internal_correspondence.reports.word_report import render_report
@@ -141,9 +153,36 @@ def _parse_bool(raw: str, default: bool) -> bool:
     return default
 
 
+def _format_sort_state(state: Optional[Tuple[str, bool]]) -> str:
+    """Сериализует состояние сортировки: «колонка» или «колонка:desc»."""
+    if state is None:
+        return ""
+    column, descending = state
+    return f"{column}:desc" if descending else column
+
+
+def _parse_sort_state(raw: str) -> Optional[Tuple[str, bool]]:
+    """Разбирает сохранённое состояние сортировки; None — не задано или пусто."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    descending = raw.endswith(":desc")
+    column = raw[: -len(":desc")] if descending else raw
+    if not column:
+        return None
+    return (column, descending)
+
+
 def _format_employees(employees) -> str:
-    """Форматирует список причастных сотрудников для ячейки таблицы."""
-    return ", ".join(employee.display_name() for employee in employees or [])
+    """Форматирует список причастных сотрудников для ячейки таблицы.
+
+    Значения перечисляются в алфавитном порядке отображаемых имён.
+    """
+    names = sorted(
+        (employee.display_name() for employee in employees or []),
+        key=str.casefold,
+    )
+    return ", ".join(names)
 
 
 def _format_material_type(value) -> str:
@@ -172,20 +211,39 @@ def _format_source_type(value) -> str:
 
 
 def _format_departments(departments) -> str:
-    """Форматирует список участвовавших отделов для ячейки таблицы."""
-    return ", ".join(
-        department.short_name or department.name for department in departments or []
+    """Форматирует список участвовавших отделов для ячейки таблицы.
+
+    Значения перечисляются в алфавитном порядке отображаемых названий.
+    """
+    names = sorted(
+        (department.short_name or department.name for department in departments or []),
+        key=str.casefold,
     )
+    return ", ".join(names)
 
 
 def _format_workgroups(workgroups) -> str:
-    """Форматирует список участвовавших рабочих групп для ячейки таблицы."""
-    return ", ".join(workgroup.name for workgroup in workgroups or [])
+    """Форматирует список участвовавших рабочих групп для ячейки таблицы.
+
+    Значения перечисляются в алфавитном порядке названий.
+    """
+    names = sorted(
+        (workgroup.name for workgroup in workgroups or []),
+        key=str.casefold,
+    )
+    return ", ".join(names)
 
 
 def _format_countries(countries) -> str:
-    """Форматирует список стран происхождения данных для ячейки таблицы."""
-    return ", ".join(country.name for country in countries or [])
+    """Форматирует список стран происхождения данных для ячейки таблицы.
+
+    Значения перечисляются в алфавитном порядке названий.
+    """
+    names = sorted(
+        (country.name for country in countries or []),
+        key=str.casefold,
+    )
+    return ", ".join(names)
 
 
 def _format_addresses(addresses) -> str:
@@ -212,24 +270,55 @@ def material_columns(role: Optional[str] = None) -> List[ColumnDef]:
         ColumnDef("outgoing_date", width=110),
         ColumnDef("type", width=80, formatter=_format_material_type),
         ColumnDef("name", width=250),
-        ColumnDef("countries", width=150, formatter=_format_countries),
+        ColumnDef(
+            "countries",
+            width=150,
+            formatter=_format_countries,
+            filter_target=Country,
+        ),
         ColumnDef("consumer.short_name", width=120),
     ]
     if _is_head_office(role):
         columns.append(ColumnDef("branch.short_name", width=100))
         columns.append(
-            ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups)
+            ColumnDef(
+                "participating_workgroups",
+                width=200,
+                formatter=_format_workgroups,
+                filter_target=WorkingGroup,
+            )
         )
     else:
         columns.extend(
             [
-                ColumnDef("participating_departments", width=180, formatter=_format_departments),
-                ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
-                ColumnDef("participating_employees", width=220, formatter=_format_employees),
+                ColumnDef(
+                    "participating_departments",
+                    width=180,
+                    formatter=_format_departments,
+                    filter_target=Department,
+                ),
+                ColumnDef(
+                    "participating_workgroups",
+                    width=200,
+                    formatter=_format_workgroups,
+                    filter_target=WorkingGroup,
+                ),
+                ColumnDef(
+                    "participating_employees",
+                    width=220,
+                    formatter=_format_employees,
+                    filter_target=Employee,
+                ),
             ]
         )
     columns.extend(
         [
+            ColumnDef(
+                "tasks_display",
+                width=140,
+                filter_target=ScientificTask,
+                filter_attr="tasks",
+            ),
             ColumnDef("incoming_number", width=100),
             ColumnDef("incoming_date", width=110),
             ColumnDef("evaluation_display", width=90),
@@ -245,8 +334,19 @@ def telegram_columns(role: Optional[str] = None) -> List[ColumnDef]:
         ColumnDef("outgoing_date", width=110),
         ColumnDef("type", width=80, formatter=_format_telegram_type),
         ColumnDef("name", width=280),
-        ColumnDef("countries", width=150, formatter=_format_countries),
-        ColumnDef("report_addresses", width=160, formatter=_format_addresses),
+        ColumnDef(
+            "countries",
+            width=150,
+            formatter=_format_countries,
+            filter_target=Country,
+        ),
+        ColumnDef(
+            "report_addresses",
+            width=160,
+            formatter=_format_addresses,
+            filter_target=Leader,
+            filter_attr="report_addresses",
+        ),
         ColumnDef("report_type", width=100, formatter=_format_report_type),
     ]
     if _is_head_office(role):
@@ -254,13 +354,34 @@ def telegram_columns(role: Optional[str] = None) -> List[ColumnDef]:
     else:
         columns.extend(
             [
-                ColumnDef("participating_departments", width=180, formatter=_format_departments),
-                ColumnDef("participating_workgroups", width=200, formatter=_format_workgroups),
-                ColumnDef("participating_employees", width=220, formatter=_format_employees),
+                ColumnDef(
+                    "participating_departments",
+                    width=180,
+                    formatter=_format_departments,
+                    filter_target=Department,
+                ),
+                ColumnDef(
+                    "participating_workgroups",
+                    width=200,
+                    formatter=_format_workgroups,
+                    filter_target=WorkingGroup,
+                ),
+                ColumnDef(
+                    "participating_employees",
+                    width=220,
+                    formatter=_format_employees,
+                    filter_target=Employee,
+                ),
             ]
         )
     columns.extend(
         [
+            ColumnDef(
+                "tasks_display",
+                width=140,
+                filter_target=ScientificTask,
+                filter_attr="tasks",
+            ),
             ColumnDef("incoming_number", width=100),
             ColumnDef("incoming_date", width=110),
             ColumnDef("evaluation_display", width=90),
@@ -321,7 +442,7 @@ LEADER_COLUMNS = [
 ]
 
 SOURCE_COLUMNS = [
-    ColumnDef("id", width=100),
+    ColumnDef("index", width=100),
     ColumnDef("type", width=100, formatter=_format_source_type),
     ColumnDef("comment", width=300),
 ]
@@ -398,7 +519,14 @@ class MainWindow(QMainWindow):
             self.settings.role,
             self.settings.branch_id,
         )
+        self.dashboard_tab = DashboardWidget(
+            self.db_manager.get_session(),
+            self.settings.role,
+            self.settings.branch_id,
+            self.settings.storage_path_obj(),
+        )
 
+        self.tabs.addTab(self.dashboard_tab, STRINGS.tab_dashboard)
         self.tabs.addTab(self.materials_tab, entity_label(ScientificMaterial, plural=True))
         self.tabs.addTab(self.telegram_tab, entity_label(Telegram, plural=True))
         self.tabs.addTab(self.tasks_tab, STRINGS.tab_tasks)
@@ -434,11 +562,12 @@ class MainWindow(QMainWindow):
     def _on_files_changed(self, document_id) -> None:
         """Обновляет подсветку строки после операций док-виджета с файлами.
 
-        Записи Change создаются в сессии док-виджета, поэтому табличная
-        модель перечитывает служебное состояние записи явно.
+        Записи Change создаются в сессии док-виджета, поэтому табличные
+        модели перечитывают служебное состояние записи явно. Обновляем обе
+        вкладки документов: док может быть привязан к записи, даже если
+        активна другая вкладка (например, «Дашборд»).
         """
-        tab = self.tabs.currentWidget()
-        if isinstance(tab, DocumentListWidget):
+        for tab in (self.materials_tab, self.telegram_tab):
             tab.reload_document_state(document_id)
 
     def _sync_files_dock(self) -> None:
@@ -536,6 +665,10 @@ class MainWindow(QMainWindow):
         import_evaluations_action.setEnabled(is_head_office)
         import_evaluations_action.triggered.connect(self._import_evaluations)
         data_menu.addAction(import_evaluations_action)
+        evaluation_lists_action = QAction(STRINGS.menu_evaluation_lists, self)
+        evaluation_lists_action.setObjectName("evaluationListsAction")
+        evaluation_lists_action.triggered.connect(self._open_evaluation_lists)
+        data_menu.addAction(evaluation_lists_action)
         data_menu.addSeparator()
 
         generate_report_action = QAction(STRINGS.action_generate_report, self)
@@ -615,12 +748,12 @@ class MainWindow(QMainWindow):
             )
 
     def closeEvent(self, event) -> None:
-        """Сохраняет геометрию окна, ширины колонок и состояние дока файлов."""
+        """Сохраняет геометрию окна, колонки и сортировку таблиц, док файлов."""
         self._save_ui_state()
         super().closeEvent(event)
 
     def _save_ui_state(self) -> None:
-        """Сохраняет геометрию окна, ширины колонок и состояние дока в настройки."""
+        """Сохраняет геометрию окна, колонки и сортировку таблиц, док в настройки."""
         self.settings.window_geometry = (
             self.saveGeometry().toBase64().data().decode("ascii")
         )
@@ -629,6 +762,12 @@ class MainWindow(QMainWindow):
         )
         self.settings.telegram_column_widths = ",".join(
             str(width) for width in self.telegram_tab.column_widths()
+        )
+        self.settings.material_sort = _format_sort_state(
+            self.materials_tab.sort_state()
+        )
+        self.settings.telegram_sort = _format_sort_state(
+            self.telegram_tab.sort_state()
         )
         self._save_files_dock_state()
         self._settings_manager.save(self.settings)
@@ -642,7 +781,7 @@ class MainWindow(QMainWindow):
         self.settings.files_dock_geometry = ""
 
     def _restore_ui_state(self) -> None:
-        """Восстанавливает геометрию окна, колонки и состояние дока из настроек."""
+        """Восстанавливает геометрию окна, колонки и сортировку таблиц, док."""
         if self.settings.window_geometry:
             self.restoreGeometry(
                 QByteArray.fromBase64(self.settings.window_geometry.encode("ascii"))
@@ -654,7 +793,15 @@ class MainWindow(QMainWindow):
         telegram_widths = _parse_column_widths(self.settings.telegram_column_widths)
         if telegram_widths:
             self.telegram_tab.set_column_widths(telegram_widths)
+        self._restore_table_sort(self.materials_tab, self.settings.material_sort)
+        self._restore_table_sort(self.telegram_tab, self.settings.telegram_sort)
         self._restore_filters()
+
+    def _restore_table_sort(self, tab, raw: str) -> None:
+        """Применяет сохранённую сортировку таблицы; чужие колонки игнорируются."""
+        state = _parse_sort_state(raw)
+        if state is not None:
+            tab.set_sort_state(state[0], state[1])
 
     def _restore_files_dock_state(self) -> None:
         """Закрепляет док файлов справа и восстанавливает его видимость."""
@@ -689,34 +836,134 @@ class MainWindow(QMainWindow):
         self.telegram_tab.refresh()
         self.tasks_tab.apply_theme()
         self.statistics_tab.apply_theme()
+        self.dashboard_tab.apply_theme()
 
     def _export(self) -> None:
-        """Формирует экспортный ZIP-архив."""
-        session = self.db_manager.get_session()
-        try:
-            service = ExportService(
-                session,
-                self.settings.storage_path_obj(),
-                retention_days=_changes_retention_days(self.settings),
+        """Формирует экспортные ZIP-архивы (в отдельном потоке)."""
+        storage_root = self.settings.storage_path_obj()
+        retention_days = _changes_retention_days(self.settings)
+
+        branch_ids: Optional[List[str]] = None
+        if self.settings.role == Role.HEAD_OFFICE.value:
+            session = self.db_manager.get_session()
+            try:
+                service = ExportService(
+                    session,
+                    storage_root,
+                    retention_days=retention_days,
+                    role=self.settings.role,
+                    branch_id=self.settings.branch_id,
+                )
+                pending = service.pending_branches()
+            finally:
+                session.close()
+            if not pending:
+                QMessageBox.information(
+                    self, STRINGS.title_export, STRINGS.msg_export_no_changes
+                )
+                return
+            dialog = ExportBranchesDialog(pending, self)
+            if dialog.exec_() != QDialog.Accepted:
+                return
+            branch_ids = dialog.selected_branch_ids()
+            if not branch_ids:
+                return
+
+        self._run_export_worker(storage_root, retention_days, branch_ids)
+
+    def _run_export_worker(
+        self,
+        storage_root: Path,
+        retention_days: int,
+        branch_ids: Optional[List[str]],
+    ) -> None:
+        """Запускает формирование архивов в потоке с прогресс-диалогом."""
+        thread = QThread(self)
+        worker = ExportWorker(
+            self.db_manager,
+            storage_root,
+            retention_days,
+            self.settings.role,
+            self.settings.branch_id,
+            branch_ids,
+        )
+        worker.moveToThread(thread)
+
+        progress = QProgressDialog(
+            STRINGS.progress_export_caption,
+            STRINGS.button_cancel,
+            0,
+            100,
+            self,
+        )
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        worker.progressed.connect(
+            lambda current, total, message: self._on_export_progress(
+                progress, current, total, message
             )
-            output = service.export()
-            session.commit()
-            self.materials_tab.refresh()
-            self.telegram_tab.refresh()
-            QMessageBox.information(
-                self, STRINGS.title_export, STRINGS.msg_export_done.format(output=output)
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("Ошибка экспорта")
-            session.rollback()
-            QMessageBox.critical(
-                self, STRINGS.title_error, STRINGS.msg_export_error.format(error=exc)
-            )
-        finally:
-            session.close()
+        )
+        worker.succeeded.connect(
+            lambda outputs: self._on_export_finished(thread, worker, progress, outputs)
+        )
+        worker.failed.connect(
+            lambda error: self._on_export_failed(thread, worker, progress, error)
+        )
+        thread.started.connect(worker.run)
+        # Пока поток жив, держим ссылки на объекты в атрибутах окна.
+        self._export_thread = thread
+        self._export_worker = worker
+        thread.start()
+
+    @staticmethod
+    def _on_export_progress(
+        progress: QProgressDialog, current: int, total: int, message: str
+    ) -> None:
+        """Обновляет прогресс-диалог экспорта."""
+        progress.setMaximum(max(total, 1))
+        progress.setLabelText(message)
+        progress.setValue(current)
+
+    def _on_export_finished(
+        self,
+        thread: QThread,
+        worker: ExportWorker,
+        progress: QProgressDialog,
+        outputs: List[str],
+    ) -> None:
+        """Завершает экспорт: освобождает поток, показывает результат."""
+        thread.quit()
+        thread.wait()
+        progress.close()
+        self.materials_tab.refresh()
+        self.telegram_tab.refresh()
+        self.dashboard_tab.refresh()
+        QMessageBox.information(
+            self,
+            STRINGS.title_export,
+            STRINGS.msg_export_files_done.format(files="\n".join(outputs)),
+        )
+
+    def _on_export_failed(
+        self,
+        thread: QThread,
+        worker: ExportWorker,
+        progress: QProgressDialog,
+        error: str,
+    ) -> None:
+        """Показывает ошибку экспорта; изменения остаются неэкспортированными."""
+        thread.quit()
+        thread.wait()
+        progress.close()
+        logger.exception("Ошибка экспорта")
+        QMessageBox.critical(
+            self, STRINGS.title_error, STRINGS.msg_export_error.format(error=error)
+        )
 
     def _import(self) -> None:
-        """Импортирует ZIP-архив."""
+        """Импортирует ZIP-архив: анализ, подтверждение, применение (в потоке)."""
         path, _ = QFileDialog.getOpenFileName(
             self, STRINGS.dialog_select_export_file, "", "ZIP (*.zip)"
         )
@@ -730,29 +977,132 @@ class MainWindow(QMainWindow):
                 self.settings.role,
                 self.settings.branch_id,
             )
-            result = service.import_archive(Path(path))
-            message = STRINGS.msg_import_result.format(
-                imported=result["imported"],
-                deleted=result["deleted"],
-                skipped=result["skipped"],
-                conflicts=len(result["conflicts"]),
-            )
-            warnings = result.get("warnings") or []
-            if warnings:
-                message += f"\n\n{STRINGS.msg_import_warnings}\n" + "\n".join(warnings)
-            QMessageBox.information(self, STRINGS.title_import, message)
-            self.materials_tab.refresh()
-            self.telegram_tab.refresh()
-            self.tasks_tab.refresh_all()
-            self.statistics_tab.refresh()
+            analysis = service.analyze_archive(Path(path))
         except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("Ошибка импорта")
-            session.rollback()
+            logger.exception("Ошибка анализа импортируемого архива")
             QMessageBox.critical(
                 self, STRINGS.title_error, STRINGS.msg_import_error.format(error=exc)
             )
+            return
         finally:
             session.close()
+
+        entries = analysis["entries"]
+        preview = ImportPreviewDialog(entries, self)
+        if preview.exec_() != QDialog.Accepted:
+            QMessageBox.information(
+                self, STRINGS.title_import, STRINGS.msg_import_canceled
+            )
+            return
+        exclude = preview.excluded_keys(entries)
+        rejected = [entry for entry in entries if entry["status"] == "error"]
+        self._import_analysis_warnings = list(analysis.get("warnings") or [])
+        self._run_import_worker(Path(path), exclude, rejected)
+
+    def _run_import_worker(
+        self,
+        archive_path: Path,
+        exclude: Set[Tuple[str, str]],
+        rejected: List[Dict[str, Any]],
+    ) -> None:
+        """Запускает применение импорта в потоке с прогресс-диалогом."""
+        thread = QThread(self)
+        worker = ImportWorker(
+            self.db_manager,
+            self.settings.storage_path_obj(),
+            self.settings.role,
+            self.settings.branch_id,
+            archive_path,
+            exclude,
+            rejected,
+        )
+        worker.moveToThread(thread)
+
+        progress = QProgressDialog(
+            STRINGS.progress_import_caption,
+            STRINGS.button_cancel,
+            0,
+            100,
+            self,
+        )
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        worker.progressed.connect(
+            lambda current, total, message: self._on_import_progress(
+                progress, current, total, message
+            )
+        )
+        worker.succeeded.connect(
+            lambda payload: self._on_import_finished(thread, worker, progress, payload)
+        )
+        worker.failed.connect(
+            lambda error: self._on_import_failed(thread, worker, progress, error)
+        )
+        thread.started.connect(worker.run)
+        # Пока поток жив, держим ссылки на объекты в атрибутах окна.
+        self._import_thread = thread
+        self._import_worker = worker
+        thread.start()
+
+    @staticmethod
+    def _on_import_progress(
+        progress: QProgressDialog, current: int, total: int, message: str
+    ) -> None:
+        """Обновляет прогресс-диалог импорта."""
+        progress.setMaximum(max(total, 1))
+        progress.setLabelText(message)
+        progress.setValue(current)
+
+    def _on_import_finished(
+        self,
+        thread: QThread,
+        worker: ImportWorker,
+        progress: QProgressDialog,
+        payload: Dict[str, Any],
+    ) -> None:
+        """Завершает импорт: освобождает поток, показывает результат."""
+        thread.quit()
+        thread.wait()
+        progress.close()
+        result = payload["result"]
+        recorded = payload["recorded"]
+        message = STRINGS.msg_import_result.format(
+            imported=result["imported"],
+            deleted=result["deleted"],
+            skipped=result["skipped"],
+            conflicts=len(result["conflicts"]),
+        )
+        warnings = list(getattr(self, "_import_analysis_warnings", [])) + list(
+            result.get("warnings") or []
+        )
+        if warnings:
+            message += f"\n\n{STRINGS.msg_import_warnings}\n" + "\n".join(warnings)
+        if recorded:
+            message += "\n" + STRINGS.msg_missing_recorded.format(count=recorded)
+        QMessageBox.information(self, STRINGS.title_import, message)
+        self.materials_tab.refresh()
+        self.telegram_tab.refresh()
+        self.tasks_tab.refresh_all()
+        self.statistics_tab.refresh()
+        self.dashboard_tab.refresh()
+
+    def _on_import_failed(
+        self,
+        thread: QThread,
+        worker: ImportWorker,
+        progress: QProgressDialog,
+        error: str,
+    ) -> None:
+        """Показывает ошибку импорта; транзакция откачена в воркере."""
+        thread.quit()
+        thread.wait()
+        progress.close()
+        logger.exception("Ошибка импорта")
+        QMessageBox.critical(
+            self, STRINGS.title_error, STRINGS.msg_import_error.format(error=error)
+        )
 
     def _import_primary_data(self) -> None:
         """Импортирует первичные справочные данные из XLSX."""
@@ -778,6 +1128,7 @@ class MainWindow(QMainWindow):
         try:
             results = importer(session, path)
             session.commit()
+            self.dashboard_tab.refresh()
             QMessageBox.information(
                 self,
                 STRINGS.title_import,
@@ -819,6 +1170,12 @@ class MainWindow(QMainWindow):
         self.materials_tab.refresh()
         self.telegram_tab.refresh()
         self.statistics_tab.refresh()
+        self.dashboard_tab.refresh()
+
+    def _open_evaluation_lists(self) -> None:
+        """Открывает просмотр журналов импорта оценок (только чтение)."""
+        dialog = EvaluationListsDialog(self.db_manager.engine, self)
+        dialog.exec_()
 
     def _generate_report(self) -> None:
         """Открывает диалог и формирует аналитический отчёт в DOCX."""
@@ -942,6 +1299,7 @@ class MainWindow(QMainWindow):
             self.db_manager.get_session(),
             branch_id=branch_id or None,
             role=self.settings.role,
+            storage_root=self.settings.storage_path_obj(),
             parent=self,
         )
         # Кнопка «Статистика» на панели сведений: диалог закрывается,

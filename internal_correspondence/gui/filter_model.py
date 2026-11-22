@@ -1,13 +1,22 @@
 """Модель фильтрации записей таблиц."""
 
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Set, Tuple
 
-from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric, Uuid
 from sqlalchemy import inspect as sa_inspect
+
+from internal_correspondence.core.enum_registry import (
+    pack_enum_choices,
+    pack_enum_display,
+    pack_key_for_enum_class,
+)
+from internal_correspondence.orm.base import IntEnumType
+from internal_correspondence.utils.string_resources import STRINGS
 
 TEXT_OPERATORS: List[Tuple[str, str]] = [
     ("contains", "содержит"),
@@ -29,35 +38,86 @@ BOOL_OPERATORS: List[Tuple[str, str]] = [
     ("ne", "≠"),
 ]
 
-OPERATOR_LABELS = dict(TEXT_OPERATORS + COMPARISON_OPERATORS + BOOL_OPERATORS)
+# Унарные проверки пустоты — только для nullable колонок
+NULL_OPERATORS: List[Tuple[str, str]] = [
+    ("empty", STRINGS.filter_op_empty),
+    ("not_empty", STRINGS.filter_op_not_empty),
+]
+
+# Мультивыбор значений пакетного перечисления
+ENUM_OPERATORS: List[Tuple[str, str]] = [("in", STRINGS.filter_op_in)]
+
+# Мультивыбор связанных записей (поля «многие ко многим»)
+M2M_OPERATORS: List[Tuple[str, str]] = [("in", STRINGS.filter_op_m2m_in)]
+
+# Колонки таблиц документов, отображающие связи N→N (прямые или вычисляемые);
+# фильтруются мультивыбором связанных записей, а не текстовыми условиями
+M2M_COLUMN_NAMES = {
+    "countries",
+    "tasks",
+    "tasks_display",
+    "employees",
+    "report_addresses",
+    "participating_employees",
+    "participating_departments",
+    "participating_workgroups",
+}
+
+OPERATOR_LABELS = dict(
+    TEXT_OPERATORS + COMPARISON_OPERATORS + BOOL_OPERATORS + NULL_OPERATORS + ENUM_OPERATORS
+)
 
 
-def operators_for(value_type: str) -> List[Tuple[str, str]]:
-    """Возвращает список допустимых условий для типа значения."""
+def operators_for(value_type: str, nullable: bool = False) -> List[Tuple[str, str]]:
+    """Возвращает список допустимых условий для типа значения.
+
+    Для nullable колонок дополнительно доступны проверки на пустоту.
+    """
     if value_type == "text":
-        return list(TEXT_OPERATORS)
-    if value_type == "bool":
-        return list(BOOL_OPERATORS)
-    return list(COMPARISON_OPERATORS)
+        operators = list(TEXT_OPERATORS)
+    elif value_type == "bool":
+        operators = list(BOOL_OPERATORS)
+    elif value_type == "enum":
+        operators = list(ENUM_OPERATORS)
+    elif value_type == "m2m":
+        operators = list(M2M_OPERATORS)
+    else:
+        operators = list(COMPARISON_OPERATORS)
+    if nullable:
+        operators += NULL_OPERATORS
+    return operators
 
 
-def resolve_value_type(model_class: type, column_name: str) -> str:
-    """Определяет тип значения колонки ORM-модели, включая вложенные связи."""
+def _resolve_column(model_class: type, column_name: str):
+    """Возвращает колонку ORM-модели по имени (включая вложенные связи)."""
     mapper = sa_inspect(model_class)
     parts = column_name.split(".")
     for part in parts[:-1]:
         attribute = mapper.attrs.get(part)
         target_mapper = getattr(attribute, "mapper", None)
         if target_mapper is None:
-            return "text"
+            return None
         mapper = target_mapper
-
     try:
-        column = mapper.columns[parts[-1]]
+        return mapper.columns[parts[-1]]
     except KeyError:
-        return "text"
+        return None
 
+
+def resolve_value_type(model_class: type, column_name: str) -> str:
+    """Определяет тип значения колонки ORM-модели, включая вложенные связи.
+
+    Колонки-связи N→N (прямые и вычисляемые участники) распознаются
+    по имени и фильтруются мультивыбором связанных записей.
+    """
+    if column_name in M2M_COLUMN_NAMES:
+        return "m2m"
+    column = _resolve_column(model_class, column_name)
+    if column is None:
+        return "text"
     column_type = column.type
+    if isinstance(column_type, IntEnumType):
+        return "enum"
     if isinstance(column_type, Boolean):
         return "bool"
     if isinstance(column_type, DateTime):
@@ -71,8 +131,82 @@ def resolve_value_type(model_class: type, column_name: str) -> str:
     return "text"
 
 
-def format_filter_value(value: str, value_type: str) -> str:
+def resolve_nullable(model_class: type, column_name: str) -> bool:
+    """Проверяет, допускает ли колонка пустое значение (nullable)."""
+    column = _resolve_column(model_class, column_name)
+    return bool(column is not None and column.nullable)
+
+
+def resolve_pack_enum(model_class: type, column_name: str) -> Optional[str]:
+    """Возвращает ключ пакетного перечисления для колонки-IntEnum; иначе None."""
+    column = _resolve_column(model_class, column_name)
+    if column is None or not isinstance(column.type, IntEnumType):
+        return None
+    return pack_key_for_enum_class(column.type._enum_class.__name__)
+
+
+def parse_id_list(value: str) -> List[str]:
+    """Разбирает список идентификаторов связанных записей из строки условия."""
+    return [part.strip() for part in (value or "").split(",") if part.strip()]
+
+
+def coerce_filter_ids(model_class: type, raw_ids: List[str]) -> List[Any]:
+    """Приводит строковые идентификаторы к типу первичного ключа сущности.
+
+    Для UUID-ключей недопустимые значения отбрасываются; строковые ключи
+    (справочники) передаются как есть.
+    """
+    pk = sa_inspect(model_class).primary_key[0]
+    if isinstance(pk.type, Uuid):
+        result = []
+        for raw in raw_ids:
+            try:
+                result.append(uuid.UUID(raw))
+            except (ValueError, AttributeError, TypeError):
+                continue
+        return result
+    return list(raw_ids)
+
+
+def m2m_actual_keys(actual: Any) -> Set[str]:
+    """Возвращает строковые ключи связанных записей значения N→N.
+
+    Ключ извлекается из атрибута ``id`` (обычные связи) или ``leader_id``
+    (адресация доклада); неподходящие элементы пропускаются.
+    """
+    if actual is None:
+        return set()
+    if isinstance(actual, str):
+        # Строковое представление (коды через запятую, как в tasks_display)
+        return set(parse_id_list(actual))
+    keys = set()
+    for item in actual:
+        key = getattr(item, "id", None)
+        if key is None:
+            key = getattr(item, "leader_id", None)
+        if key is not None:
+            keys.add(str(key))
+    return keys
+
+
+def format_filter_value(
+    value: str, value_type: str, pack_enum: Optional[str] = None
+) -> str:
     """Форматирует значение фильтра для отображения пользователю."""
+    if value_type == "enum" and pack_enum:
+        choices = dict(pack_enum_choices(pack_enum))
+        parts = []
+        for raw in value.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                code = int(raw)
+            except ValueError:
+                parts.append(raw)
+                continue
+            parts.append(choices.get(code) or pack_enum_display(pack_enum, code))
+        return ", ".join(parts)
     if value_type == "bool":
         return "Да" if value.lower() in ("true", "1", "да") else "Нет"
     if value_type == "date":
@@ -127,6 +261,20 @@ def _compare(actual: Any, expected: Any, operator: str) -> bool:
     return False
 
 
+def _parse_code_set(value: str) -> Set[int]:
+    """Разбирает список целочисленных кодов перечисления из строки условия."""
+    codes: Set[int] = set()
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            codes.add(int(part))
+        except ValueError:
+            continue
+    return codes
+
+
 @dataclass(frozen=True)
 class FilterCondition:
     """Условие фильтрации по одной колонке."""
@@ -135,16 +283,57 @@ class FilterCondition:
     operator: str
     value: str
 
-    def describe(self, header: str, value_type: str) -> str:
-        """Возвращает читаемое описание условия."""
-        label = OPERATOR_LABELS.get(self.operator, self.operator)
-        formatted = format_filter_value(self.value, value_type)
-        if value_type == "text":
+    def describe(
+        self,
+        header: str,
+        value_type: str,
+        pack_enum: Optional[str] = None,
+        value_label: Optional[str] = None,
+    ) -> str:
+        """Возвращает читаемое описание условия.
+
+        ``value_label`` — готовое отображение значения (имена связанных
+        записей для полей N→N); без него значение форматируется из строки.
+        """
+        if value_type == "m2m":
+            label = M2M_OPERATORS[0][1]
+        else:
+            label = OPERATOR_LABELS.get(self.operator, self.operator)
+        if self.operator in ("empty", "not_empty"):
+            return f"{header} {label}"
+        formatted = (
+            value_label
+            if value_label is not None
+            else format_filter_value(self.value, value_type, pack_enum)
+        )
+        if value_type in ("text", "enum", "m2m"):
             return f"{header} {label} «{formatted}»"
         return f"{header} {label} {formatted}"
 
     def matches(self, actual: Any, value_type: str) -> bool:
         """Проверяет, удовлетворяет ли значение условию."""
+        if self.operator in ("empty", "not_empty"):
+            is_empty = actual is None or actual == ""
+            return is_empty if self.operator == "empty" else not is_empty
+
+        if value_type == "m2m":
+            if self.operator != "in":
+                return True
+            expected = set(parse_id_list(self.value))
+            if not expected:
+                return False
+            return bool(m2m_actual_keys(actual) & expected)
+
+        if value_type == "enum":
+            if self.operator != "in":
+                return True
+            if actual is None:
+                return False
+            try:
+                return int(actual) in _parse_code_set(self.value)
+            except (TypeError, ValueError):
+                return False
+
         if value_type == "text":
             text = "" if actual is None else str(actual).lower()
             needle = self.value.lower()
@@ -210,7 +399,12 @@ class FilterCondition:
         if not isinstance(value, (str, int, float)):
             return None
         value_type = resolve_value_type(model_class, column_name)
-        valid_operators = {item for item, _label in operators_for(value_type)}
+        valid_operators = {
+            item
+            for item, _label in operators_for(
+                value_type, resolve_nullable(model_class, column_name)
+            )
+        }
         if operator not in valid_operators:
             return None
         return FilterCondition(column_name, operator, str(value))

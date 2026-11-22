@@ -359,6 +359,19 @@ def serialize_change(change: Change) -> Dict[str, Any]:
     }
 
 
+def mark_fields_changed(session: Session, instance: Base, fields: Iterable[str]) -> None:
+    """Фиксирует изменение полей/связей сущности вручную.
+
+    Используется, когда изменение происходит со стороны, не попадающей
+    в автоматический учёт (например, документ помечается изменённым при
+    смене оценки: владельцем ассоциативной таблицы «оценки-документы»
+    является оценка). Логика учёта та же, что у штатного before_flush.
+    """
+    changed = set(fields) - _SERVICE_FIELDS
+    if changed:
+        _mark_updated(session, instance, changed)
+
+
 def clear_change(session: Session, instance: Base) -> None:
     """Сбрасывает change_id у объекта и удаляет связанную запись Change."""
     change_id = getattr(instance, "change_id", None)

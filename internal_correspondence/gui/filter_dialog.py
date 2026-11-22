@@ -1,9 +1,10 @@
 """Диалоги настройки фильтрации записей таблиц."""
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from PyQt5.QtCore import QDate, QDateTime, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QDateEdit,
     QDateTimeEdit,
@@ -15,6 +16,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -23,10 +26,18 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import Session
 
+from internal_correspondence.core.enum_registry import pack_enum_choices
+from internal_correspondence.gui.edit_elements import ItemsPickerDialog
 from internal_correspondence.gui.filter_model import (
     FilterCondition,
+    coerce_filter_ids,
     operators_for,
+    parse_id_list,
+    resolve_nullable,
+    resolve_pack_enum,
     resolve_value_type,
 )
 from internal_correspondence.gui.table_model import ColumnDef
@@ -40,24 +51,76 @@ _VALUE_PAGES = {
     "number": 3,
     "bool": 4,
     "integer": 5,
+    "enum": 6,
+    "m2m": 7,
 }
 
 
+def _column_value_type(model_class: type, columns: List[ColumnDef], column_name: str) -> str:
+    """Определяет тип значения колонки с учётом её описания (N→N)."""
+    for column in columns:
+        if column.name == column_name:
+            if column.filter_target is not None:
+                return "m2m"
+            break
+    return resolve_value_type(model_class, column_name)
+
+
+def _column_filter_target(columns: List[ColumnDef], column_name: str) -> Optional[type]:
+    """Возвращает класс связанной сущности для колонки-фильтра N→N."""
+    for column in columns:
+        if column.name == column_name:
+            return column.filter_target
+    return None
+
+
+def resolve_m2m_labels(
+    session: Session, target: type, raw_value: str
+) -> List[str]:
+    """Возвращает отображаемые имена связанных записей по идентификаторам.
+
+    Не найденные идентификаторы пропускаются.
+    """
+    raw_ids = parse_id_list(raw_value)
+    if session is None or target is None or not raw_ids:
+        return raw_ids
+    pk = sa_inspect(target).primary_key[0]
+    instances = (
+        session.query(target)
+        .filter(getattr(target, pk.name).in_(coerce_filter_ids(target, raw_ids)))
+        .all()
+    )
+    by_id = {str(getattr(instance, pk.name)): instance for instance in instances}
+    return [
+        ItemsPickerDialog._item_text(by_id[raw])  # pylint: disable=protected-access
+        for raw in raw_ids
+        if raw in by_id
+    ]
+
+
 class AddFilterDialog(QDialog):
-    """Диалог создания или изменения одного условия фильтрации."""
+    """Диалог создания или изменения одного условия фильтрации.
+
+    Для полей «многие ко многим» значение задаётся списком с кнопками
+    «+»/«−» (по аналогии с виджетами редактирования): «+» открывает
+    диалог мультивыбора связанных записей, «−» удаляет выделенные.
+    """
 
     def __init__(
         self,
         model_class: type,
         columns: List[ColumnDef],
         condition: Optional[FilterCondition] = None,
+        session: Optional[Session] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self.model_class = model_class
         self.columns = columns
         self._condition = condition
+        self._session = session
         self._value_type = "text"
+        self._m2m_items: List[Any] = []
         self.setWindowTitle(
             STRINGS.dialog_edit_filter_title
             if condition is not None
@@ -100,6 +163,27 @@ class AddFilterDialog(QDialog):
         self.bool_combo = QComboBox()
         self.bool_combo.addItem("Да", "true")
         self.bool_combo.addItem("Нет", "false")
+        self.enum_list = QListWidget()
+        self.enum_list.setMaximumHeight(150)
+
+        self.m2m_widget = QWidget()
+        m2m_layout = QHBoxLayout(self.m2m_widget)
+        m2m_layout.setContentsMargins(0, 0, 0, 0)
+        self.m2m_list = QListWidget()
+        self.m2m_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.m2m_list.setMaximumHeight(150)
+        m2m_layout.addWidget(self.m2m_list, 1)
+        m2m_buttons = QVBoxLayout()
+        self.m2m_add_btn = QPushButton("+")
+        self.m2m_add_btn.setToolTip(STRINGS.tooltip_add_items)
+        self.m2m_add_btn.clicked.connect(self._m2m_add_items)
+        self.m2m_remove_btn = QPushButton("−")
+        self.m2m_remove_btn.setToolTip(STRINGS.tooltip_remove_items)
+        self.m2m_remove_btn.clicked.connect(self._m2m_remove_items)
+        m2m_buttons.addWidget(self.m2m_add_btn)
+        m2m_buttons.addWidget(self.m2m_remove_btn)
+        m2m_buttons.addStretch(1)
+        m2m_layout.addLayout(m2m_buttons)
 
         for widget in (
             self.text_edit,
@@ -108,6 +192,8 @@ class AddFilterDialog(QDialog):
             self.number_edit,
             self.bool_combo,
             self.int_edit,
+            self.enum_list,
+            self.m2m_widget,
         ):
             self.value_stack.addWidget(widget)
         layout.addRow(STRINGS.label_value, self.value_stack)
@@ -118,14 +204,92 @@ class AddFilterDialog(QDialog):
         layout.addRow(self.buttons)
 
         self.column_combo.currentIndexChanged.connect(self._on_column_changed)
+        self.operator_combo.currentIndexChanged.connect(self._on_operator_changed)
 
     def _on_column_changed(self) -> None:
         column_name = self.column_combo.currentData()
-        self._value_type = resolve_value_type(self.model_class, column_name)
+        self._value_type = _column_value_type(self.model_class, self.columns, column_name)
+        nullable = resolve_nullable(self.model_class, column_name)
         self.operator_combo.clear()
-        for operator, label in operators_for(self._value_type):
+        for operator, label in operators_for(self._value_type, nullable):
             self.operator_combo.addItem(label, operator)
+        if self._value_type == "enum":
+            self._reload_enum_choices(resolve_pack_enum(self.model_class, column_name))
         self.value_stack.setCurrentIndex(_VALUE_PAGES.get(self._value_type, 0))
+        self._on_operator_changed()
+
+    def _reload_enum_choices(self, pack_enum: Optional[str]) -> None:
+        """Наполняет чек-лист вариантами пакетного перечисления."""
+        self.enum_list.clear()
+        if pack_enum is None:
+            return
+        for value, text in pack_enum_choices(pack_enum):
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, value)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.enum_list.addItem(item)
+
+    # --- значение поля «многие ко многим» ---
+
+    def _m2m_target(self) -> Optional[type]:
+        """Возвращает класс связанной сущности текущей колонки."""
+        return _column_filter_target(self.columns, self.column_combo.currentData())
+
+    def _m2m_refresh(self) -> None:
+        """Перестраивает список выбранных связанных записей (по алфавиту)."""
+        self.m2m_list.clear()
+        for instance in ItemsPickerDialog._ordered_instances(self._m2m_items):  # pylint: disable=protected-access
+            item = QListWidgetItem(
+                ItemsPickerDialog._item_text(instance)  # pylint: disable=protected-access
+            )
+            pk = sa_inspect(type(instance)).primary_key[0]
+            item.setData(Qt.UserRole, str(getattr(instance, pk.name)))
+            self.m2m_list.addItem(item)
+
+    def _m2m_add_items(self) -> None:
+        """Открывает диалог мультивыбора связанных записей («+»)."""
+        target = self._m2m_target()
+        if self._session is None or target is None:
+            return
+        pk = sa_inspect(target).primary_key[0]
+        excluded = {
+            getattr(instance, pk.name) for instance in self._m2m_items
+        }
+        dialog = ItemsPickerDialog(
+            self._session,
+            target,
+            excluded_ids=excluded,
+            parent=self,
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        known = {getattr(instance, pk.name) for instance in self._m2m_items}
+        for instance in dialog.selected_items():
+            if getattr(instance, pk.name) not in known:
+                self._m2m_items.append(instance)
+                known.add(getattr(instance, pk.name))
+        self._m2m_refresh()
+
+    def _m2m_remove_items(self) -> None:
+        """Удаляет выделенные в списке записи («−»)."""
+        selected_ids = {
+            item.data(Qt.UserRole) for item in self.m2m_list.selectedItems()
+        }
+        if not selected_ids:
+            return
+        self._m2m_items = [
+            instance
+            for instance in self._m2m_items
+            if str(getattr(instance, sa_inspect(type(instance)).primary_key[0].name))
+            not in selected_ids
+        ]
+        self._m2m_refresh()
+
+    def _on_operator_changed(self) -> None:
+        """У унарных условий (пусто/не пусто) значение не требуется."""
+        operator = self.operator_combo.currentData()
+        self.value_stack.setEnabled(operator not in ("empty", "not_empty"))
 
     def _load_condition(self, condition: FilterCondition) -> None:
         """Заполняет редакторы существующим условием (режим изменения)."""
@@ -135,7 +299,18 @@ class AddFilterDialog(QDialog):
         operator_index = self.operator_combo.findData(condition.operator)
         if operator_index >= 0:
             self.operator_combo.setCurrentIndex(operator_index)
-        if self._value_type == "date":
+        if condition.operator in ("empty", "not_empty"):
+            return
+        if self._value_type == "enum":
+            codes = {part.strip() for part in condition.value.split(",")}
+            for row in range(self.enum_list.count()):
+                item = self.enum_list.item(row)
+                checked = str(item.data(Qt.UserRole)) in codes
+                item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        elif self._value_type == "m2m":
+            self._m2m_items = self._resolve_m2m_instances(condition.value)
+            self._m2m_refresh()
+        elif self._value_type == "date":
             self.date_edit.setDate(
                 QDate.fromString(condition.value, "yyyy-MM-dd")
             )
@@ -160,7 +335,38 @@ class AddFilterDialog(QDialog):
         else:
             self.text_edit.setText(condition.value)
 
+    def _resolve_m2m_instances(self, raw_value: str) -> List[Any]:
+        """Возвращает связанные записи по идентификаторам условия.
+
+        Без сессии или класса связанной сущности возвращает пустой список:
+        значение сохранится, но редактор покажет пустой список.
+        """
+        target = self._m2m_target()
+        raw_ids = parse_id_list(raw_value)
+        if self._session is None or target is None or not raw_ids:
+            return []
+        pk = sa_inspect(target).primary_key[0]
+        instances = (
+            self._session.query(target)
+            .filter(getattr(target, pk.name).in_(coerce_filter_ids(target, raw_ids)))
+            .all()
+        )
+        by_id = {str(getattr(instance, pk.name)): instance for instance in instances}
+        return [by_id[raw] for raw in raw_ids if raw in by_id]
+
     def _current_value(self) -> str:
+        if self._value_type == "enum":
+            codes = []
+            for row in range(self.enum_list.count()):
+                item = self.enum_list.item(row)
+                if item.checkState() == Qt.Checked:
+                    codes.append(str(item.data(Qt.UserRole)))
+            return ",".join(codes)
+        if self._value_type == "m2m":
+            return ",".join(
+                str(getattr(instance, sa_inspect(type(instance)).primary_key[0].name))
+                for instance in self._m2m_items
+            )
         if self._value_type == "date":
             return self.date_edit.date().toString("yyyy-MM-dd")
         if self._value_type == "datetime":
@@ -175,12 +381,14 @@ class AddFilterDialog(QDialog):
 
     def condition(self) -> Optional[FilterCondition]:
         """Возвращает созданное (изменённое) условие; None, если пусто."""
-        value = self._current_value()
-        if self._value_type == "text" and not value:
-            return None
+        operator = self.operator_combo.currentData()
+        value = "" if operator in ("empty", "not_empty") else self._current_value()
+        if operator not in ("empty", "not_empty"):
+            if self._value_type in ("text", "enum", "m2m") and not value:
+                return None
         return FilterCondition(
             column_name=self.column_combo.currentData(),
-            operator=self.operator_combo.currentData(),
+            operator=operator,
             value=value,
         )
 
@@ -205,11 +413,13 @@ class FilterDialog(QDialog):
         model_class: type,
         columns: List[ColumnDef],
         filters: List[FilterCondition],
+        session: Optional[Session] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self.model_class = model_class
         self.columns = columns
+        self.session = session
         self._columns_by_name = {column.name: column for column in columns}
         self._filters = list(filters)
         self.setWindowTitle(STRINGS.button_filter)
@@ -263,7 +473,12 @@ class FilterDialog(QDialog):
 
     def _build_row(self, condition: FilterCondition) -> QFrame:
         column = self._columns_by_name.get(condition.column_name)
-        header = column.header if column else condition.column_name
+        if column is not None:
+            header = column.header or field_short_label(
+                self.model_class, condition.column_name
+            )
+        else:
+            header = condition.column_name
         value_type = resolve_value_type(self.model_class, condition.column_name)
 
         row = QFrame()
@@ -274,7 +489,19 @@ class FilterDialog(QDialog):
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(6, 4, 6, 4)
 
-        label = QLabel(condition.describe(header, value_type))
+        pack_enum = resolve_pack_enum(self.model_class, condition.column_name)
+        value_label = None
+        if value_type == "m2m":
+            value_label = ", ".join(
+                resolve_m2m_labels(
+                    self.session,
+                    _column_filter_target(self.columns, condition.column_name),
+                    condition.value,
+                )
+            )
+        label = QLabel(
+            condition.describe(header, value_type, pack_enum, value_label=value_label)
+        )
         label.setWordWrap(True)
         row_layout.addWidget(label, 1, Qt.AlignVCenter)
 
@@ -289,7 +516,9 @@ class FilterDialog(QDialog):
         return row
 
     def _add_filter(self) -> None:
-        dialog = AddFilterDialog(self.model_class, self.columns, parent=self)
+        dialog = AddFilterDialog(
+            self.model_class, self.columns, session=self.session, parent=self
+        )
         if dialog.exec_() != QDialog.Accepted:
             return
         condition = dialog.condition()
@@ -302,7 +531,11 @@ class FilterDialog(QDialog):
     def _edit_filter(self, condition: FilterCondition) -> None:
         """Открывает диалог изменения существующего условия."""
         dialog = AddFilterDialog(
-            self.model_class, self.columns, condition=condition, parent=self
+            self.model_class,
+            self.columns,
+            condition=condition,
+            session=self.session,
+            parent=self,
         )
         if dialog.exec_() != QDialog.Accepted:
             return

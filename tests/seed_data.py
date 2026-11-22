@@ -14,6 +14,7 @@ ORM-моделей: уникальности исходящих номеров �
 import argparse
 import random
 import sys
+import uuid
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -295,7 +296,8 @@ def _create_sources(fake: Faker, count: int) -> List[Source]:
     for index in range(1, count + 1):
         sources.append(
             Source(
-                id=f"SRC-{index:03d}",
+                id=uuid.uuid4(),
+                index=f"SRC-{index:03d}",
                 type=random.choice(source_types),
                 comment=fake.sentence(nb_words=8)[:200],
             )

@@ -48,7 +48,10 @@ from PyQt5.QtWidgets import (
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
-from internal_correspondence.core.enum_registry import pack_enum_choices
+from internal_correspondence.core.enum_registry import (
+    pack_enum_choices,
+    pack_key_for_enum_class,
+)
 from internal_correspondence.orm.base import IntEnumType
 from internal_correspondence.orm.labels import (
     entity_label,
@@ -455,7 +458,10 @@ class FkComboEditElement(EditElement):
 
 
 class ItemsPickerDialog(QDialog):
-    """Диалог выбора записей связанной сущности (мультивыбор и фильтрация)."""
+    """Диалог выбора записей связанной сущности (мультивыбор и фильтрация).
+
+    Список отображается в алфавитном порядке отображаемых значений.
+    """
 
     def __init__(
         self,
@@ -499,7 +505,7 @@ class ItemsPickerDialog(QDialog):
             pk = sa_inspect(model_class).primary_key[0].name
             query = query.filter(getattr(model_class, pk).notin_(list(excluded_ids)))
         self.list_widget.clear()
-        for instance in query.all():
+        for instance in self._ordered_instances(query.all()):
             text = self._item_text(instance)
             item = QListWidgetItem(text)
             item.setData(Qt.UserRole, getattr(instance, "id"))
@@ -518,6 +524,11 @@ class ItemsPickerDialog(QDialog):
                 text = f"{text} (неактивен)"
             return text
         return display_name(instance)
+
+    @classmethod
+    def _ordered_instances(cls, instances: Sequence) -> List[Any]:
+        """Возвращает записи в алфавитном порядке отображаемых значений."""
+        return sorted(instances, key=lambda instance: cls._item_text(instance).casefold())
 
     def _apply_filter(self, text: str) -> None:
         needle = text.strip().lower()
@@ -540,7 +551,8 @@ class ManyToManyEditElement(EditElement):
 
     По нажатию «+» открывается диалог с записями, которые ещё можно
     добавить (без уже добавленных, с мультивыбором и фильтрацией);
-    по нажатию «−» выбранные в списке записи удаляются.
+    по нажатию «−» выбранные в списке записи удаляются. Список выбранных
+    записей отображается в алфавитном порядке отображаемых значений.
     """
 
     def __init__(
@@ -550,11 +562,21 @@ class ManyToManyEditElement(EditElement):
         parent=None,
         label=None,
         query_factory: Optional[Callable[[Session], Any]] = None,
+        required: bool = False,
     ) -> None:
         self.session = session
         self.query_factory = query_factory
         self._items: List[Any] = []
+        self._required = required
         super().__init__(attribute, parent=parent, label=label)
+
+    def is_required(self) -> bool:
+        """Обязательность: явный флаг или метаданные модели."""
+        return self._required or super().is_required()
+
+    def is_empty(self) -> bool:
+        """Связь не заполнена, если не выбран ни один элемент."""
+        return not self._items
 
     def _build_editor(self) -> QWidget:
         container = QWidget()
@@ -596,7 +618,7 @@ class ManyToManyEditElement(EditElement):
 
     def _refresh_list(self) -> None:
         self.list_widget.clear()
-        for instance in self._items:
+        for instance in ItemsPickerDialog._ordered_instances(self._items):
             item = QListWidgetItem(ItemsPickerDialog._item_text(instance))
             item.setData(Qt.UserRole, getattr(instance, "id"))
             self.list_widget.addItem(item)
@@ -900,17 +922,6 @@ class NumberDateEditElement(EditElement):
         self.number_edit.setFocus()
 
 
-# Карта пакетных перечислений: имя IntEnum-класса → ключ перечисления пакета
-_ENUM_PACK_KEYS: Dict[str, str] = {
-    "MaterialType": "material_type",
-    "TelegramType": "telegram_type",
-    "TelegramReportType": "telegram_report_type",
-    "ScientificTaskType": "scientific_task_type",
-    "SourceType": "source_type",
-    "EvaluationValue": "evaluation_value",
-}
-
-
 def create_element(
     attribute,
     session: Optional[Session] = None,
@@ -926,7 +937,7 @@ def create_element(
     if hasattr(prop, "columns"):
         column = prop.columns[0]
         if isinstance(column.type, IntEnumType):
-            pack_key = _ENUM_PACK_KEYS.get(column.type._enum_class.__name__)
+            pack_key = pack_key_for_enum_class(column.type._enum_class.__name__)
             if pack_key:
                 return EnumEditElement(attribute, pack_key, parent=parent, label=label)
         if column.foreign_keys:

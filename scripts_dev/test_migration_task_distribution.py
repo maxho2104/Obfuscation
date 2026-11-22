@@ -1,9 +1,11 @@
-"""Проверка миграции назначений задач на временной SQLite-базе.
+"""Проверка миграций назначений задач на временной SQLite-базе.
 
 Сценарий: поднимаем схему до ревизии b1d2e3f4a5c6 (последняя ревизия
 перед added_tasks), вставляем справочники, задачу и историческую связь
-«задача — сотрудник», накатываем head, проверяем новую таблицу и
-сохранение task_employees, затем откатываемся и проверяем обратное.
+«задача — сотрудник», накатываем head: added_tasks создаётся,
+task_employees удаляется последней миграцией (f4c6a8d0e2b1).
+Затем откатываемся: added_tasks удаляется, task_employees пересоздаётся
+пустой (данные исторической связи не восстанавливаются), повторный upgrade.
 """
 
 import sqlite3
@@ -71,7 +73,7 @@ def main() -> None:
             )
         }
         assert "added_tasks" in tables, tables
-        assert "task_employees" in tables, tables
+        assert "task_employees" not in tables, tables
         conn.execute(
             "INSERT INTO added_tasks "
             "(id, task_id, node_type, node_id, change_id) "
@@ -83,12 +85,8 @@ def main() -> None:
             "SELECT task_id, node_type, node_id FROM added_tasks WHERE id = ?",
             (assignment_id,),
         ).fetchone()
-        legacy = conn.execute(
-            "SELECT task_id, employee_id FROM task_employees"
-        ).fetchone()
     assert row == ("T1", "region", "77"), row
-    assert legacy == ("T1", employee_id), legacy
-    print("upgrade OK: added_tasks создана, task_employees сохранена")
+    print("upgrade OK: added_tasks создана, task_employees удалена")
 
     command.downgrade(config, PREV_REVISION)
 
@@ -104,8 +102,11 @@ def main() -> None:
         columns = {
             row[1] for row in conn.execute("PRAGMA table_info(task_employees)")
         }
+        # Downgrade пересоздаёт таблицу пустой: исторические данные не вернутся
+        legacy_count = conn.execute("SELECT COUNT(*) FROM task_employees").fetchone()[0]
     assert columns == {"task_id", "employee_id"}, columns
-    print("downgrade OK: added_tasks удалена, task_employees сохранена")
+    assert legacy_count == 0, legacy_count
+    print("downgrade OK: added_tasks удалена, task_employees пересоздана пустой")
 
     command.upgrade(config, "head")
     print("Повторный upgrade OK")

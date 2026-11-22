@@ -50,6 +50,22 @@ def test_parse_column_widths() -> None:
     assert _parse_column_widths("abc,10,-5") == [10]
 
 
+# ---------------------------------------------------------------------------
+# Сохранение и восстановление сортировки таблиц документов
+# ---------------------------------------------------------------------------
+
+
+def test_parse_sort_state() -> None:
+    """Разбор сохранённой сортировки: «колонка» / «колонка:desc» / пусто."""
+    from internal_correspondence.gui.application import _parse_sort_state
+
+    assert _parse_sort_state("name") == ("name", False)
+    assert _parse_sort_state("outgoing_date:desc") == ("outgoing_date", True)
+    assert _parse_sort_state("") is None
+    assert _parse_sort_state("   ") is None
+    assert _parse_sort_state(":desc") is None
+
+
 def test_data_menu_contains_generate_report_action(
     window_env,
     qt_app: QApplication,
@@ -60,6 +76,27 @@ def test_data_menu_contains_generate_report_action(
     action = window.findChild(QAction, "generateReportAction")
     assert action is not None
     assert action.text() == STRINGS.action_generate_report
+    window.close()
+
+
+def test_data_menu_contains_evaluation_lists_action(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """Пункт «Оценочные листы» идёт сразу после импорта оценок."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    action = window.findChild(QAction, "evaluationListsAction")
+    assert action is not None
+    assert action.text() == STRINGS.menu_evaluation_lists
+    data_menu = next(
+        item.menu()
+        for item in window.menuBar().actions()
+        if item.text() == STRINGS.menu_data
+    )
+    texts = [item.text() for item in data_menu.actions()]
+    index = texts.index(STRINGS.menu_evaluation_lists)
+    assert texts[index - 1] == STRINGS.menu_import_evaluations
     window.close()
 
 
@@ -204,6 +241,42 @@ def test_main_window_saves_ui_state(window_env, qt_app: QApplication) -> None:
     assert saved.telegram_column_widths.split(",")[1] == "210"
 
     # Повторное сохранение при закрытии не должно падать
+    window.close()
+
+
+def test_main_window_saves_table_sort(window_env, qt_app: QApplication) -> None:
+    """Сортировка обеих таблиц документов сохраняется при закрытии окна."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    assert window.materials_tab.set_sort_state("name", descending=True)
+    assert window.telegram_tab.set_sort_state("outgoing_date", descending=False)
+    window._save_ui_state()
+
+    saved = manager.load()
+    assert saved.material_sort == "name:desc"
+    assert saved.telegram_sort == "outgoing_date"
+    assert window.materials_tab.sort_state() == ("name", True)
+    assert window.telegram_tab.sort_state() == ("outgoing_date", False)
+    window.close()
+
+
+def test_main_window_restores_table_sort(window_env, qt_app: QApplication) -> None:
+    """При создании окно применяет сохранённую сортировку таблиц."""
+    settings, db, manager = window_env
+    settings.material_sort = "name:desc"
+    settings.telegram_sort = "outgoing_date"
+    window = MainWindow(settings, db, manager)
+    assert window.materials_tab.sort_state() == ("name", True)
+    assert window.telegram_tab.sort_state() == ("outgoing_date", False)
+    window.close()
+
+
+def test_main_window_ignores_unknown_sort_column(window_env, qt_app: QApplication) -> None:
+    """Сохранённая колонка, отсутствующая в текущей роли, не ломает старт."""
+    settings, db, manager = window_env
+    settings.material_sort = "no_such_column:desc"
+    window = MainWindow(settings, db, manager)
+    assert window.materials_tab.sort_state() is None
     window.close()
 
 

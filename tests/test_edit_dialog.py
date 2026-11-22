@@ -26,6 +26,7 @@ from internal_correspondence.gui.entity_edit_dialog import EntityEditDialog
 from internal_correspondence.orm.labels import field_unique
 from internal_correspondence.orm.models import (
     Branch,
+    Country,
     Leader,
     ReportAddress,
     ScientificMaterial,
@@ -252,6 +253,53 @@ def test_format_report_addresses() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Алфавитный порядок многие-ко-многим
+# ---------------------------------------------------------------------------
+
+
+def test_many_to_many_list_sorted_alphabetically(qapp, db_manager) -> None:
+    """Список выбранных значений N→N отображается в алфавитном порядке."""
+    from internal_correspondence.gui.edit_elements import ManyToManyEditElement
+
+    with db_manager.get_session() as session:
+        element = ManyToManyEditElement(ScientificMaterial.countries, session)
+        element.set_value(
+            [
+                Country(id="C2", name="Япония"),
+                Country(id="C1", name="Австралия"),
+                Country(id="C3", name="Болгария"),
+            ]
+        )
+        texts = [
+            element.list_widget.item(row).text()
+            for row in range(element.list_widget.count())
+        ]
+        assert texts == ["Австралия", "Болгария", "Япония"]
+
+
+def test_items_picker_sorted_alphabetically(qapp, db_manager) -> None:
+    """Диалог выбора значений («+») показывает записи в алфавитном порядке."""
+    from internal_correspondence.gui.edit_elements import ItemsPickerDialog
+
+    with db_manager.get_session() as session:
+        session.add_all(
+            [
+                Country(id="C2", name="Япония"),
+                Country(id="C1", name="Австралия"),
+                Country(id="C3", name="Болгария"),
+            ]
+        )
+        session.commit()
+        dialog = ItemsPickerDialog(session, Country)
+        texts = [
+            dialog.list_widget.item(row).text()
+            for row in range(dialog.list_widget.count())
+        ]
+        dialog.deleteLater()
+        assert texts == ["Австралия", "Болгария", "Япония"]
+
+
+# ---------------------------------------------------------------------------
 # Базовый диалог справочника
 # ---------------------------------------------------------------------------
 
@@ -424,3 +472,52 @@ def test_extra_fields_toggle(qapp, base_data) -> None:
         assert incoming.isHidden()
         dialog.more_button.click()
         assert not incoming.isHidden()
+
+
+# ---------------------------------------------------------------------------
+# Обязательные связи N-N: страны и сотрудники (роль «филиал»)
+# ---------------------------------------------------------------------------
+
+
+def test_countries_and_employees_required_for_branch(qapp, base_data) -> None:
+    """Диалог филиала требует заполнения стран и сотрудников документа."""
+    from internal_correspondence.orm.models import Country, Department, Employee
+
+    with base_data.get_session() as session:
+        session.add(Country(id="RUS", name="Россия"))
+        department = Department(name="Отдел", branch_id="F1")
+        department.employees.append(
+            Employee(last_name="Иванов", first_name="Иван")
+        )
+        session.add(department)
+        session.commit()
+
+        dialog = MaterialEditDialog(
+            session, branch_id="F1", role=Role.BRANCH.value
+        )
+        countries = dialog.element("countries")
+        employees = dialog.element("employees")
+        assert countries.is_required()
+        assert employees.is_required()
+
+        # Незаполненные обязательные связи дают сообщение-предупреждение.
+        assert countries.validate() is not None
+        assert employees.validate() is not None
+
+        # После заполнения проверка проходит.
+        countries.set_value(session.query(Country).all())
+        employees.set_value(session.query(Employee).all())
+        assert countries.validate() is None
+        assert employees.validate() is None
+        dialog.close()
+
+
+def test_countries_optional_for_head_office(qapp, base_data) -> None:
+    """Головной офис правит реквизиты: обязательности списков нет."""
+    with base_data.get_session() as session:
+        dialog = MaterialEditDialog(
+            session, branch_id="F1", role=Role.HEAD_OFFICE.value
+        )
+        countries = dialog.element("countries")
+        assert countries is None or not countries.is_required()
+        dialog.close()

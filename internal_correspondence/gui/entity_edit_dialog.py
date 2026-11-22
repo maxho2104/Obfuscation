@@ -375,11 +375,26 @@ class EntityEditDialog(QDialog):
             if not isinstance(constraint, UniqueConstraint):
                 continue
             column_names = [column.name for column in constraint.columns]
-            if any(name not in data or data[name] is None for name in column_names):
+            # Колонки вне полей диалога (например branch_id при роли
+            # филиала — фиксированный филиал) берутся из редактируемой
+            # записи или из фиксированного значения.
+            values: Dict[str, Any] = {}
+            missing = False
+            for name in column_names:
+                value = data.get(name)
+                if value is None and self.entity is not None:
+                    value = getattr(self.entity, name, None)
+                if value is None and name == "branch_id" and self.fixed_branch_id:
+                    value = self.fixed_branch_id
+                if value is None:
+                    missing = True
+                    break
+                values[name] = value
+            if missing:
                 continue
             query = self.session.query(self.model_class)
             for name in column_names:
-                query = query.filter(getattr(self.model_class, name) == data[name])
+                query = query.filter(getattr(self.model_class, name) == values[name])
             found = query.first()
             if found is None:
                 continue
@@ -390,7 +405,16 @@ class EntityEditDialog(QDialog):
             labels = ", ".join(
                 field_label(self.model_class, name) for name in column_names
             )
-            first_element = self.element(column_names[0])
+            # Фокус — на первой колонке с редактором в диалоге (branch_id
+            # фиксирован и редактора не имеет).
+            first_element = next(
+                (
+                    self.element(name)
+                    for name in column_names
+                    if self.element(name) is not None
+                ),
+                None,
+            )
             return (
                 STRINGS.msg_duplicate_fields.format(fields=labels),
                 first_element,

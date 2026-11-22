@@ -81,7 +81,7 @@ material_source_association = Table(
     "material_sources",
     Base.metadata,
     Column("material_id", PGUUID(as_uuid=True), ForeignKey("scientific_materials.id", ondelete="CASCADE"), primary_key=True),
-    Column("source_id", String(50), ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True),
+    Column("source_id", PGUUID(as_uuid=True), ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Связь "Научный материал - Файл" (N-N)
@@ -121,7 +121,7 @@ telegram_source_association = Table(
     "telegram_sources",
     Base.metadata,
     Column("telegram_id", PGUUID(as_uuid=True), ForeignKey("telegrams.id", ondelete="CASCADE"), primary_key=True),
-    Column("source_id", String(50), ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True),
+    Column("source_id", PGUUID(as_uuid=True), ForeignKey("sources.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Связь "Телеграмма - Файл" (N-N)
@@ -130,16 +130,6 @@ telegram_file_association = Table(
     Base.metadata,
     Column("telegram_id", PGUUID(as_uuid=True), ForeignKey("telegrams.id", ondelete="CASCADE"), primary_key=True),
     Column("file_id", PGUUID(as_uuid=True), ForeignKey("file_records.id", ondelete="CASCADE"), primary_key=True),
-)
-
-# Связь "Научная задача - Сотрудник" (N-N).
-# Сохранена для совместимости с панелью ОШС и статистикой по исполнителям;
-# распределение задач по иерархии ведётся через AddedTask.
-task_employee_association = Table(
-    "task_employees",
-    Base.metadata,
-    Column("task_id", String(50), ForeignKey("scientific_tasks.id", ondelete="CASCADE"), primary_key=True),
-    Column("employee_id", PGUUID(as_uuid=True), ForeignKey("employees.id", ondelete="CASCADE"), primary_key=True),
 )
 
 # Связь "Научный материал - Научная задача" (N-N)
@@ -237,6 +227,47 @@ class Change(Base):
             f"<Change {self.entity_name} pk={self.entity_pk} "
             f"op={self.operation_type} fields={self.changed_fields}>"
         )
+
+
+class MissingRequest(Base):
+    """Запрос контрагенту о сущности с неизвестным первичным ключом.
+
+    Накапливается при импорте дельт: контрагент прислал изменение сущности,
+    первичный ключ которой в локальной базе не найден. При следующем экспорте
+    перечень запросов выгружается в ``missing.json`` и таблица очищается.
+    Не участвует в delta-tracking: передаётся отдельным файлом в составе ZIP.
+    """
+    __entity_label__ = "Запрос контрагенту"
+    __entity_label_plural__ = "Запросы контрагенту"
+    __field_labels__ = {"id": "Идентификатор"}
+
+
+    __tablename__ = "missing_requests"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        autoincrement=True,
+        info={"label": "Идентификатор"},
+    )
+    branch_id: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        nullable=True,
+        info={"label": "Филиал"},
+    )
+    entity_name: Mapped[str] = mapped_column(
+        String(100), nullable=False, index=True, info={"label": "Сущность"}
+    )
+    entity_pk: Mapped[str] = mapped_column(
+        String(255), nullable=False, index=True, info={"label": "Ключ сущности"}
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        info={"label": "Дата обращения"},
+    )
 
 
 class ChangeTrackedMixin:
@@ -387,11 +418,18 @@ class Source(Base, ChangeTrackedMixin):
     """Источник данных, положенных в основу научного материала."""
     __entity_label__ = "Источник"
     __entity_label_plural__ = "Источники"
+    __field_labels__ = {"id": "Идентификатор"}
 
 
     __tablename__ = "sources"
 
-    id: Mapped[str] = mapped_column(String(50), primary_key=True, info={"label": "Индекс"})
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    index: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        unique=True,
+        info={"label": "Индекс"},
+    )
     type: Mapped[SourceType] = mapped_column(
         IntEnumType(SourceType), nullable=False, info={"label": "Тип"}
     )
@@ -679,11 +717,6 @@ class Employee(Base, ChangeTrackedMixin):
         self.workgroup_memberships.append(membership)
         return membership
 
-    tasks: Mapped[List["ScientificTask"]] = relationship(
-        "ScientificTask",
-        secondary=task_employee_association,
-        back_populates="employees",
-    )
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
         secondary=material_employee_association,
@@ -743,11 +776,6 @@ class ScientificTask(Base, ChangeTrackedMixin):
         "AddedTask",
         back_populates="task",
         cascade="all, delete-orphan",
-    )
-    employees: Mapped[List["Employee"]] = relationship(
-        "Employee",
-        secondary=task_employee_association,
-        back_populates="tasks",
     )
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
@@ -924,18 +952,27 @@ class ParticipantMixin:
             workgroups[workgroup.id] = workgroup
         return sorted(workgroups.values(), key=lambda workgroup: workgroup.name)
 
+    @property
+    def tasks_display(self) -> str:
+        """Коды научных задач документа через запятую (для таблиц)."""
+        return ", ".join(sorted(task.id for task in self.tasks))
+
 
 class EvaluationMixin:
     """Вычисляемая оценка документа для отображения в списках."""
 
     @property
     def latest_evaluation(self) -> Optional["Evaluation"]:
-        """Возвращает последнюю оценку документа по дате выставления."""
+        """Возвращает последнюю оценку документа.
+
+        Сравнение по дате выставления; при равенстве дат — оценка
+        с большим значением (как целого числа перечисления).
+        """
         if not self.evaluations:
             return None
         return max(
             self.evaluations,
-            key=lambda evaluation: (evaluation.date, str(evaluation.id)),
+            key=lambda evaluation: (evaluation.date, int(evaluation.value)),
         )
 
     @property
@@ -978,7 +1015,7 @@ class ScientificMaterial(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationM
     __entity_label_plural__ = "Научные материалы"
     __entity_label_prepositional__ = "научном материале"
     __entity_label_prepositional_plural__ = "научных материалах"
-    __field_labels__ = {"id": "Идентификатор", "participating_employees": "Сотрудники", "participating_departments": "Отделы", "participating_workgroups": "Рабочие группы", "evaluation_display": "Оценка"}
+    __field_labels__ = {"id": "Идентификатор", "participating_employees": "Сотрудники", "participating_departments": "Отделы", "participating_workgroups": "Рабочие группы", "evaluation_display": "Оценка", "tasks_display": "Задачи"}
 
 
     __tablename__ = "scientific_materials"
@@ -1064,7 +1101,13 @@ class ScientificMaterial(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationM
 
 
     __table_args__ = (
-        UniqueConstraint("outgoing_number", "outgoing_date", name="uix_material_outgoing"),
+        # Уникальность исходящего номера — в разрезе филиала и даты:
+        # в центральной базе головного офиса хранятся документы всех
+        # филиалов, нумерация которых ведётся независимо.
+        UniqueConstraint(
+            "branch_id", "outgoing_number", "outgoing_date",
+            name="uix_material_outgoing",
+        ),
     )
 
 
@@ -1078,7 +1121,7 @@ class Telegram(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationMixin):
     __entity_label_plural__ = "Телеграммы"
     __entity_label_prepositional__ = "телеграмме"
     __entity_label_prepositional_plural__ = "телеграммах"
-    __field_labels__ = {"id": "Идентификатор", "participating_employees": "Сотрудники", "participating_departments": "Отделы", "participating_workgroups": "Рабочие группы", "evaluation_display": "Оценка"}
+    __field_labels__ = {"id": "Идентификатор", "participating_employees": "Сотрудники", "participating_departments": "Отделы", "participating_workgroups": "Рабочие группы", "evaluation_display": "Оценка", "tasks_display": "Задачи"}
 
 
     __tablename__ = "telegrams"
@@ -1160,7 +1203,12 @@ class Telegram(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationMixin):
 
 
     __table_args__ = (
-        UniqueConstraint("outgoing_number", "outgoing_date", name="uix_telegram_outgoing"),
+        # См. ScientificMaterial: уникальность исходящего номера — в
+        # разрезе филиала и даты.
+        UniqueConstraint(
+            "branch_id", "outgoing_number", "outgoing_date",
+            name="uix_telegram_outgoing",
+        ),
     )
 
 
