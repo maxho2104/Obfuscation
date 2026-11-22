@@ -589,6 +589,8 @@ class AppStrings:
     dashboard_period: str = "Период"
     dashboard_year: str = "Год"
     dashboard_financial: str = "Фин. год (окт–сен)"
+    dashboard_financial_button: str = "Фин. год (окт {start}-сен {end})"
+    dashboard_calendar_button: str = "Календ. год (янв-дек {year})"
     dashboard_branch: str = "Филиал"
     dashboard_all_branches: str = "Все филиалы"
     dashboard_refresh: str = "Обновить"

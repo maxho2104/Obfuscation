@@ -2253,3 +2253,11 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 - `tests/test_dashboard.py`: тесты `task_execution`, сегментов диаграммы, даты одной строкой; 12 passed.
 - `README.md`, `docs/dashboard.md` обновлены.
 - Проверка: полный `pytest tests -q` — 443 passed, 1 warning zipfile.
+
+### Дополнение (2026-11-22) — дашборд: надпись финансового/календарного года
+- Кнопка переключения теперь показывает выбранный диапазон: «Фин. год (окт 2026-сен 2027)» для финансового года и «Календ. год (янв-дек 2026)» для календарного; текст обновляется при смене года и переключателя.
+- Удалена отдельная строка с описанием выбранного периода; карточка даты перенесена на отдельную строку под фильтрами, справа.
+- `utils/string_resources.py`: `dashboard_financial_button`, `dashboard_calendar_button`; секция strings пакета — 544 ключа.
+- `tests/test_dashboard.py`: проверки обеих надписей и переключения; 12 passed.
+- `README.md`, `docs/dashboard.md` обновлены.
+- Проверка: полный `pytest tests -q` — 443 passed, 1 warning zipfile.

@@ -288,7 +288,7 @@ class DashboardWidget(QWidget):
         self.date_card = QFrame()
         self.date_card.setObjectName("dashboardCard")
         self.date_card.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-        self.date_card.setMinimumWidth(260)
+        self.date_card.setMinimumWidth(270)
         date_layout = QHBoxLayout(self.date_card)
         date_layout.setContentsMargins(12, 4, 12, 4)
         self.date_label = QLabel(
@@ -304,6 +304,11 @@ class DashboardWidget(QWidget):
         date_layout.addWidget(self.date_label)
         root.addLayout(controls)
 
+        date_row = QHBoxLayout()
+        date_row.addStretch(1)
+        date_row.addWidget(self.date_card)
+        root.addLayout(date_row)
+
         self.period_combo.currentIndexChanged.connect(self._period_type_changed)
         self.year_combo.currentIndexChanged.connect(self._filters_changed)
         self.index_combo.currentIndexChanged.connect(self._filters_changed)
@@ -311,17 +316,6 @@ class DashboardWidget(QWidget):
         self.branch_combo.currentIndexChanged.connect(self._filters_changed)
         self._style_financial_button()
         self._style_date_card()
-
-        self.period_label = QLabel("")
-        period_font = QFont(self.period_label.font())
-        period_font.setBold(True)
-        self.period_label.setFont(period_font)
-
-        summary = QHBoxLayout()
-        summary.setSpacing(8)
-        summary.addWidget(self.period_label, 1)
-        summary.addWidget(self.date_card)
-        root.addLayout(summary)
 
         self.kpi_layout = QHBoxLayout()
         self.kpi_layout.setSpacing(8)
@@ -392,12 +386,25 @@ class DashboardWidget(QWidget):
                 )
         finally:
             self._updating = False
+        self._update_financial_button()
         self._period_type_changed()
 
     def _financial_toggled(self, _checked: bool) -> None:
         """Обновляет подсветку кнопки финансового года и данные."""
+        self._update_financial_button()
         self._style_financial_button()
         self._filters_changed()
+
+    def _update_financial_button(self) -> None:
+        """Показывает в кнопке выбранный финансовый или календарный год."""
+        year = int(self.year_combo.currentData() or date.today().year)
+        if self.financial_check.isChecked():
+            text = STRINGS.dashboard_financial_button.format(
+                start=year, end=year + 1
+            )
+        else:
+            text = STRINGS.dashboard_calendar_button.format(year=year)
+        self.financial_check.setText(text)
 
     def _style_financial_button(self) -> None:
         """Подсвечивает кнопку, когда выбран финансовый год."""
@@ -442,6 +449,7 @@ class DashboardWidget(QWidget):
 
     def _filters_changed(self) -> None:
         if not self._updating:
+            self._update_financial_button()
             self.refresh()
 
     def _current_filter(self) -> DashboardFilter:
@@ -468,7 +476,6 @@ class DashboardWidget(QWidget):
         except Exception as error:  # pragma: no cover - защита интерфейса
             self.status_label.setText(str(error))
             return
-        self.period_label.setText(self.data.period_label)
         self._render_kpi()
         self._render_charts()
 
@@ -984,10 +991,6 @@ class DashboardWidget(QWidget):
             widget = self.kpi_layout.itemAt(index).widget()
             if isinstance(widget, KpiCard):
                 widget.set_scale(scale)
-        period_font = QFont(self.period_label.font())
-        period_font.setPointSize(max(8, round(11 * scale)))
-        period_font.setBold(True)
-        self.period_label.setFont(period_font)
         if self.data is not None:
             self._render_charts()
 
@@ -996,11 +999,8 @@ class DashboardWidget(QWidget):
     # ------------------------------------------------------------------
     def apply_theme(self) -> None:
         """Перерисовывает карточки и диаграммы после смены темы."""
-        from internal_correspondence.gui.theme import current_theme
-
-        colors = current_theme().qss_colors
         if hasattr(self, "date_label"):
-            self.date_label.setStyleSheet(f"color: {colors['TEXT_MUTED']};")
+            self._style_date_card()
         if hasattr(self, "financial_check"):
             self._style_financial_button()
         for index in range(self.kpi_layout.count()):

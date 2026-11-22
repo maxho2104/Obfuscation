@@ -1257,6 +1257,8 @@
     "dashboard_period": "Период",
     "dashboard_year": "Год",
     "dashboard_financial": "Фин. год (окт–сен)",
+    "dashboard_financial_button": "Фин. год (окт {start}-сен {end})",
+    "dashboard_calendar_button": "Календ. год (янв-дек {year})",
     "dashboard_branch": "Филиал",
     "dashboard_all_branches": "Все филиалы",
     "dashboard_refresh": "Обновить",

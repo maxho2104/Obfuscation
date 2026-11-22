@@ -193,6 +193,11 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     widget = DashboardWidget(dashboard_data["session"], "head_office")
     assert widget.kpi_layout.count() == 5
     assert widget.financial_check.isChecked()
+    assert widget.financial_check.text() == "Фин. год (окт 2026-сен 2027)"
+    widget.financial_check.setChecked(False)
+    assert widget.financial_check.text() == "Календ. год (янв-дек 2026)"
+    widget.financial_check.setChecked(True)
+    assert widget.financial_check.text() == "Фин. год (окт 2026-сен 2027)"
     assert widget.date_label.text()
     assert "\n" not in widget.date_label.text()
     assert widget.date_label.font().pointSize() >= 14
