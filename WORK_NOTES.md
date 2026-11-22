@@ -2284,3 +2284,19 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
   изображениями; 14 passed.
 - Проверка: полный `pytest tests -q` — 445 passed, 1 warning zipfile.
 - Отложено: отдельного просмотрщика сохранённых отчётов нет.
+
+### 2026-11-22 — Задачи: сохранение распределения филиала
+- В филиале вместо кнопки «Выгрузить задачи по регионам...» показывается
+  «Сохранить распределение задач»; головной офис по-прежнему видит выгрузку по регионам.
+- Добавлена выгрузка XLSX: № п/п, код задачи, наименование, даты начала и завершения,
+  отдел, сотрудники. Одна строка — задача × отдел; задачи без распределения
+  сохраняются с пустыми отделом и сотрудниками; учитываются только отделы
+  выбранного филиала.
+- `importexport/task_export.py`: `branch_tasks`, `write_branch_distribution`,
+  `default_distribution_filename`, `DISTRIBUTION_HEADERS`.
+- `gui/task_distribution_widget.py`: кнопка `save_distribution_button`, метод
+  `_save_distribution`, диалог сохранения, имя по умолчанию.
+- `utils/string_resources.py`: ключи `task_save_*`; секция strings — 573 ключа.
+- `tests/test_task_widget.py`: экспорт распределения по отделам/сотрудникам и
+  видимость кнопок для ролей; 9 passed.
+- Проверка: `pytest tests/test_task_widget.py -q` — 9 passed.

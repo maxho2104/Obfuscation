@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from internal_correspondence.core.constants import Role, ScientificTaskType
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.orm.models import (
+    AddedTask,
     Branch,
     Department,
     Employee,
@@ -323,3 +324,96 @@ def test_tree_multi_selection_assigns_to_all_and_right_shows_first(
             assert widget.right_model.task_at(0).id == task.id
         finally:
             widget.deleteLater()
+
+def test_branch_distribution_export(qt_app, db_manager: DatabaseManager, tmp_path: Path) -> None:
+    from openpyxl import load_workbook
+
+    from internal_correspondence.importexport.task_export import (
+        DISTRIBUTION_HEADERS,
+        write_branch_distribution,
+    )
+    from internal_correspondence.services.task_distribution_service import (
+        FinancialPeriod,
+    )
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        branch = session.query(Branch).one()
+        first = session.query(Department).one()
+        second = Department(name="Отдел 2", branch_id=branch.id)
+        session.add(second)
+        session.flush()
+        employee1 = session.query(Employee).one()
+        employee2 = Employee(
+            last_name="Петров", first_name="Пётр", department_id=second.id
+        )
+        session.add(employee2)
+        session.flush()
+        task = session.query(ScientificTask).one()
+        extra = ScientificTask(
+            id="T2",
+            name="Задача 2",
+            type=ScientificTaskType.ADDITIONAL.value,
+            start_date=date(2026, 2, 1),
+            end_date=date(2026, 3, 1),
+        )
+        session.add(extra)
+        session.flush()
+        session.add_all(
+            [
+                AddedTask(task_id=task.id, node_type="branch", node_id=branch.id),
+                AddedTask(
+                    task_id=task.id, node_type="department", node_id=str(first.id)
+                ),
+                AddedTask(
+                    task_id=task.id, node_type="department", node_id=str(second.id)
+                ),
+                AddedTask(
+                    task_id=task.id, node_type="employee", node_id=str(employee1.id)
+                ),
+                AddedTask(
+                    task_id=task.id, node_type="employee", node_id=str(employee2.id)
+                ),
+            ]
+        )
+        session.commit()
+
+        path = tmp_path / "distribution.xlsx"
+        count = write_branch_distribution(
+            session, branch.id, FinancialPeriod(2026), path
+        )
+        assert count == 2
+
+        sheet = load_workbook(path).active
+        assert [cell.value for cell in sheet[1]] == DISTRIBUTION_HEADERS
+        assert sheet.cell(2, 2).value == "T1"
+        assert sheet.cell(2, 6).value == "Отдел 1"
+        assert sheet.cell(2, 7).value == "Иванов И."
+        assert sheet.cell(3, 6).value == "Отдел 2"
+        assert sheet.cell(3, 7).value == "Петров П."
+
+
+def test_branch_has_save_button_instead_of_export(
+    qt_app, db_manager: DatabaseManager
+) -> None:
+    from internal_correspondence.gui.task_distribution_widget import (
+        TaskDistributionWidget,
+    )
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        branch_widget = TaskDistributionWidget(session, Role.BRANCH.value, "BR1")
+        branch_widget.show()
+        try:
+            assert not branch_widget.save_distribution_button.isHidden()
+            assert branch_widget.export_button.isHidden()
+        finally:
+            branch_widget.deleteLater()
+
+        office_widget = TaskDistributionWidget(session, Role.HEAD_OFFICE.value)
+        office_widget.show()
+        try:
+            assert office_widget.save_distribution_button.isHidden()
+            assert not office_widget.export_button.isHidden()
+        finally:
+            office_widget.deleteLater()

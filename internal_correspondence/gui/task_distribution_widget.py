@@ -32,8 +32,11 @@ from internal_correspondence.core.constants import Role
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.importexport.task_export import (
     TaskExportError,
+    branch_tasks,
+    default_distribution_filename,
     default_region_filename,
     export_regions,
+    write_branch_distribution,
     write_region_file,
 )
 from internal_correspondence.importexport.task_import import import_scientific_tasks
@@ -304,6 +307,12 @@ class TaskDistributionWidget(QWidget):
         self.export_button.clicked.connect(self._export_tasks)
         self.export_button.setVisible(self.is_head_office)
         bottom.addWidget(self.export_button)
+
+        self.save_distribution_button = QToolButton()
+        self.save_distribution_button.setText(STRINGS.task_save_distribution)
+        self.save_distribution_button.clicked.connect(self._save_distribution)
+        self.save_distribution_button.setVisible(not self.is_head_office)
+        bottom.addWidget(self.save_distribution_button)
 
         layout = QVBoxLayout(self)
         layout.addLayout(top)
@@ -942,10 +951,53 @@ class TaskDistributionWidget(QWidget):
             STRINGS.task_export_done.format(count=1, directory=str(Path(path).parent)),
         )
 
+    def _save_distribution(self) -> None:
+        """Сохраняет распределение задач филиала в Excel."""
+        period = self.current_period
+        if period is None or not self.branch_id:
+            QMessageBox.warning(
+                self, STRINGS.title_error, STRINGS.task_save_empty
+            )
+            return
+        if not branch_tasks(self.session, self.branch_id, period):
+            QMessageBox.warning(
+                self, STRINGS.title_error, STRINGS.task_save_empty
+            )
+            return
+
+        default_path = Path.home() / default_distribution_filename(
+            self.branch_id, period
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            STRINGS.task_save_distribution_title,
+            str(default_path),
+            STRINGS.task_save_filter,
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+        try:
+            rows = write_branch_distribution(
+                self.session, self.branch_id, period, Path(path)
+            )
+        except (TaskExportError, Exception) as error:  # noqa: B014
+            QMessageBox.warning(
+                self,
+                STRINGS.title_error,
+                STRINGS.task_save_error.format(error=error),
+            )
+            return
+        QMessageBox.information(
+            self,
+            STRINGS.task_save_distribution_title,
+            STRINGS.task_save_done.format(path=path, rows=rows),
+        )
+
     # ------------------------------------------------------------------
     # Тема
     # ------------------------------------------------------------------
-
     def apply_theme(self) -> None:
         """Перерисовывает таблицы после смены темы."""
         self.middle_model.refresh_theme()
