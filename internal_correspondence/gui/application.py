@@ -40,6 +40,11 @@ from internal_correspondence.core.domain_pack import (
 from internal_correspondence.core.logging_config import configure_logging, get_logger
 from internal_correspondence.core.settings import AppSettings, SettingsManager
 from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
+from internal_correspondence.gui.custom_title_bar import (
+    FramelessWindowMixin,
+    WindowControlLabels,
+    install_dialog_title_bars,
+)
 from internal_correspondence.gui.document_list_widget import DocumentListWidget
 from internal_correspondence.gui.evaluation_import_dialog import EvaluationImportDialog
 from internal_correspondence.gui.evaluation_lists_dialog import EvaluationListsDialog
@@ -117,6 +122,16 @@ from internal_correspondence.text_import import ImporterConfig
 from internal_correspondence.utils.string_resources import STRINGS, reload_strings
 
 logger = get_logger("application")
+
+
+def _window_control_labels() -> WindowControlLabels:
+    """Возвращает актуальные подписи кнопок управления окнами."""
+    return WindowControlLabels(
+        minimize=STRINGS.window_minimize,
+        maximize=STRINGS.window_maximize,
+        restore=STRINGS.window_restore,
+        close=STRINGS.window_close,
+    )
 
 
 def _create_report_progress_dialog(parent: QWidget) -> QProgressDialog:
@@ -461,7 +476,7 @@ def _ensure_app_dirs(app_dir: Path) -> None:
     (app_dir / BACKUPS_DIR).mkdir(parents=True, exist_ok=True)
 
 
-class MainWindow(QMainWindow):
+class MainWindow(FramelessWindowMixin, QMainWindow):
     """Главное окно приложения."""
 
     def __init__(
@@ -711,6 +726,12 @@ class MainWindow(QMainWindow):
         self.files_dock.visibilityChanged.connect(self.files_dock_action.setChecked)
         view_menu.addAction(self.files_dock_action)
 
+        self.setup_custom_title_bar(
+            menubar,
+            STRINGS.app_title,
+            _window_control_labels(),
+        )
+
     def _add_reference_action(
         self,
         menu: QMenu,
@@ -830,6 +851,7 @@ class MainWindow(QMainWindow):
             return
         self.settings.theme = theme_key
         apply_theme(QApplication.instance(), theme_key)
+        self.window_controls.refresh_icons()
         self._settings_manager.save(self.settings)
         # Перекрашиваем строки таблиц и графики
         self.materials_tab.refresh()
@@ -1344,6 +1366,7 @@ def _load_or_create_settings(app_dir: Path) -> AppSettings:
 
 def run_application(argv: List[str]) -> int:
     """Инициализирует и запускает приложение."""
+    QApplication.setAttribute(Qt.AA_DontUseNativeDialogs, False)
     app = QApplication(argv)
     app.setStyle("Fusion")
 
@@ -1356,6 +1379,7 @@ def run_application(argv: List[str]) -> int:
     # Светлая тема оформляет в том числе мастер первого запуска; после чтения
     # настроек ниже она заменяется сохранённой темой пользователя.
     apply_theme(app, "light")
+    install_dialog_title_bars(app, _window_control_labels)
 
     settings = _load_or_create_settings(app_dir)
     _ensure_storage_dirs(settings.storage_path_obj())

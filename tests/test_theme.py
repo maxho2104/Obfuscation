@@ -70,6 +70,32 @@ def test_both_themes_load_external_stylesheet(qt_app: QApplication) -> None:
     assert light_stylesheet != dark_stylesheet
 
 
+def test_custom_title_bar_is_styled_by_both_themes() -> None:
+    """Шапка и её кнопки оформлены общим QSS обеих тем."""
+    for theme in THEMES.values():
+        stylesheet = theme.stylesheet
+        assert "QMenuBar#mainMenuBar" in stylesheet
+        assert "QLabel#windowTitle" in stylesheet
+        assert "QWidget#dialogTitleBar" in stylesheet
+        assert "QLabel#dialogWindowTitle" in stylesheet
+        assert "QToolButton#windowMinimizeButton" in stylesheet
+        assert "QToolButton#windowMaximizeButton" in stylesheet
+        assert "QToolButton#windowCloseButton" in stylesheet
+        assert theme.qss_colors["TITLE_TEXT"] in stylesheet
+
+    assert THEMES["light"].qss_colors["TITLE_TEXT"] == "#9A6B00"
+    assert THEMES["dark"].qss_colors["TITLE_TEXT"] == "#D8B45A"
+
+
+def test_all_combo_boxes_use_themed_down_arrow() -> None:
+    """Общая стрелка раскрытия применяется ко всем выпадающим спискам."""
+    for theme in THEMES.values():
+        stylesheet = theme.stylesheet
+        assert "QComboBox::down-arrow" in stylesheet
+        assert "QComboBox[role=\"statistics\"]::down-arrow" not in stylesheet
+        assert theme.qss_colors["COMBO_ARROW"] in stylesheet
+
+
 def test_dark_theme_styles_scroll_area_corner() -> None:
     """Тёмная тема красит уголок пересечения полос прокрутки таблицы.
 
