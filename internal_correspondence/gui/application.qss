@@ -155,15 +155,19 @@ QComboBox::drop-down, QDateEdit::drop-down, QDateTimeEdit::drop-down {
     border-left: 1px solid {{BORDER}};
 }
 
-QComboBox[role="statistics"] {
+QComboBox {
     padding-right: 38px;
 }
 
-QComboBox[role="statistics"]::drop-down {
+QComboBox:focus {
+    padding-right: 37px;
+}
+
+QComboBox::drop-down {
     width: 32px;
 }
 
-QComboBox[role="statistics"]::down-arrow {
+QComboBox::down-arrow {
     image: url({{COMBO_ARROW}});
     width: 12px;
     height: 8px;
@@ -338,6 +342,75 @@ QMenuBar::item {
 QMenuBar::item:selected, QMenuBar::item:pressed {
     background-color: {{ACCENT_SOFT}};
     color: {{ACCENT}};
+}
+
+QMenuBar#mainMenuBar {
+    background-color: {{SURFACE}};
+    color: {{TEXT}};
+    border: 0;
+    border-bottom: 1px solid {{BORDER}};
+    padding: 0;
+}
+
+QMenuBar#mainMenuBar::item {
+    padding: 13px 11px 12px 11px;
+}
+
+QLabel#windowTitle {
+    background-color: transparent;
+    color: {{TITLE_TEXT}};
+    padding-left: 16px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QWidget#dialogTitleBar {
+    background-color: {{SURFACE}};
+    border: 0;
+    border-bottom: 1px solid {{BORDER}};
+}
+
+QLabel#dialogWindowTitle {
+    background-color: transparent;
+    color: {{TITLE_TEXT}};
+    padding: 0;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+QWidget#windowControls {
+    background-color: transparent;
+}
+
+QToolButton#windowMinimizeButton,
+QToolButton#windowMaximizeButton,
+QToolButton#windowCloseButton {
+    background-color: transparent;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+}
+
+QToolButton#windowMinimizeButton:hover,
+QToolButton#windowMaximizeButton:hover {
+    background-color: {{SURFACE_HOVER}};
+}
+
+QToolButton#windowMinimizeButton:pressed,
+QToolButton#windowMaximizeButton:pressed {
+    background-color: {{ACCENT_SOFT}};
+}
+
+QToolButton#windowCloseButton:hover,
+QToolButton#windowCloseButton:pressed {
+    background-color: {{DANGER_SOFT}};
+}
+
+QToolButton#windowMinimizeButton:focus,
+QToolButton#windowMaximizeButton:focus,
+QToolButton#windowCloseButton:focus {
+    border: 0;
+    padding: 0;
 }
 
 QMenu {

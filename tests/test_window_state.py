@@ -7,8 +7,21 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
 
 import pytest
-from PyQt5.QtCore import QByteArray, Qt
-from PyQt5.QtWidgets import QAction, QApplication, QProgressDialog, QPushButton
+from PyQt5.QtCore import QByteArray, QEvent, QPoint, QPointF, Qt
+from PyQt5.QtGui import QMouseEvent
+from PyQt5.QtTest import QTest
+from PyQt5.QtWidgets import (
+    QAction,
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QLabel,
+    QMessageBox,
+    QProgressDialog,
+    QPushButton,
+    QVBoxLayout,
+    QWizard,
+)
 
 from internal_correspondence.core.constants import ReportType
 from internal_correspondence.core.database import DatabaseManager
@@ -18,6 +31,12 @@ from internal_correspondence.gui.application import (
     MainWindow,
     _create_report_progress_dialog,
     _parse_column_widths,
+    _window_control_labels,
+)
+from internal_correspondence.gui.custom_title_bar import (
+    DialogTitleBarInstaller,
+    _QtResizeHandler,
+    install_dialog_title_bars,
 )
 from internal_correspondence.utils.string_resources import STRINGS
 
@@ -25,7 +44,9 @@ from internal_correspondence.utils.string_resources import STRINGS
 @pytest.fixture(scope="module")
 def qt_app() -> QApplication:
     """Единственный QApplication для тестов окон."""
-    return QApplication.instance() or QApplication([])
+    app = QApplication.instance() or QApplication([])
+    install_dialog_title_bars(app, _window_control_labels)
+    return app
 
 
 @pytest.fixture()
@@ -98,6 +119,315 @@ def test_data_menu_contains_evaluation_lists_action(
     index = texts.index(STRINGS.menu_evaluation_lists)
     assert texts[index - 1] == STRINGS.menu_import_evaluations
     window.close()
+
+
+def test_main_window_uses_custom_title_bar(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """Главное окно безрамочное и содержит рабочие кнопки в шапке."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+
+    assert window.windowFlags() & Qt.FramelessWindowHint
+    assert window.menuBar().objectName() == "mainMenuBar"
+    assert window.menuBar().height() == 46
+    assert window.window_title.text() == STRINGS.app_title
+    assert window.window_title.objectName() == "windowTitle"
+    assert window.menuBar() in window._window_drag_handler._targets
+    assert window.window_title in window._window_drag_handler._targets
+    assert window._qt_resize_handler is not None
+    rect = window.frameGeometry()
+    assert window._resize_hit_test(rect.topLeft()) == window.HTTOPLEFT
+    assert (
+        window._resize_hit_test(QPoint(rect.right(), rect.center().y()))
+        == window.HTRIGHT
+    )
+
+    controls = window.window_controls
+    assert controls.minimize_button.toolTip() == STRINGS.window_minimize
+    assert controls.maximize_button.toolTip() == STRINGS.window_maximize
+    assert controls.close_button.toolTip() == STRINGS.window_close
+    assert all(not button.icon().isNull() for button in controls.buttons)
+    assert [button.size().width() for button in controls.buttons] == [46, 46, 46]
+    assert [button.size().height() for button in controls.buttons] == [44, 44, 44]
+    window.close()
+
+
+def test_main_title_bar_double_click_toggles_maximize(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """Двойной щелчок по свободной области шапки разворачивает окно."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    QTest.mouseDClick(window.window_title, Qt.LeftButton)
+    qt_app.processEvents()
+    assert window.isMaximized()
+
+    QTest.mouseDClick(window.window_title, Qt.LeftButton)
+    qt_app.processEvents()
+    assert not window.isMaximized()
+    window.close()
+
+
+def test_main_title_bar_drag_moves_window(
+    window_env,
+    qt_app: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Перетаскивание свободной области шапки перемещает главное окно."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+    handler = window._window_drag_handler
+    monkeypatch.setattr(handler, "_try_system_move", lambda: False)
+
+    local_start = window.window_title.rect().center()
+    global_start = window.window_title.mapToGlobal(local_start)
+    initial_position = window.pos()
+    delta = QPoint(45, 30)
+    qt_app.sendEvent(
+        window.window_title,
+        QMouseEvent(
+            QEvent.MouseButtonPress,
+            QPointF(local_start),
+            QPointF(global_start),
+            Qt.LeftButton,
+            Qt.LeftButton,
+            Qt.NoModifier,
+        ),
+    )
+    qt_app.sendEvent(
+        window.window_title,
+        QMouseEvent(
+            QEvent.MouseMove,
+            QPointF(local_start + delta),
+            QPointF(global_start + delta),
+            Qt.NoButton,
+            Qt.LeftButton,
+            Qt.NoModifier,
+        ),
+    )
+    qt_app.sendEvent(
+        window.window_title,
+        QMouseEvent(
+            QEvent.MouseButtonRelease,
+            QPointF(local_start + delta),
+            QPointF(global_start + delta),
+            Qt.LeftButton,
+            Qt.NoButton,
+            Qt.NoModifier,
+        ),
+    )
+
+    assert window.pos() == initial_position + delta
+    window.close()
+
+
+def test_main_window_shows_resize_cursor_at_right_edge(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """На правой границе главного окна появляется горизонтальная стрелка."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    edge_position = QPoint(window.width() - 4, window.height() // 2)
+    edge_global = window.mapToGlobal(edge_position)
+    qt_app.sendEvent(
+        window,
+        QMouseEvent(
+            QEvent.MouseMove,
+            QPointF(edge_position),
+            QPointF(edge_global),
+            Qt.NoButton,
+            Qt.NoButton,
+            Qt.NoModifier,
+        ),
+    )
+    assert window.cursor().shape() == Qt.SizeHorCursor
+
+    center = window.rect().center()
+    qt_app.sendEvent(
+        window,
+        QMouseEvent(
+            QEvent.MouseMove,
+            QPointF(center),
+            QPointF(window.mapToGlobal(center)),
+            Qt.NoButton,
+            Qt.NoButton,
+            Qt.NoModifier,
+        ),
+    )
+    assert window.cursor().shape() == Qt.ArrowCursor
+    window.close()
+
+
+def test_resize_handler_uses_standard_edge_cursors() -> None:
+    """На прямых границах и углах отображаются стандартные стрелки resize."""
+    dialog = QDialog()
+    dialog.setGeometry(100, 100, 400, 300)
+    handler = _QtResizeHandler(dialog, border=8)
+    rect = dialog.frameGeometry()
+
+    top_left = handler._resize_edges(rect.topLeft())
+    top_right = handler._resize_edges(rect.topRight())
+    left = handler._resize_edges(QPoint(rect.left(), rect.center().y()))
+    bottom = handler._resize_edges(QPoint(rect.center().x(), rect.bottom()))
+
+    assert top_left == Qt.LeftEdge | Qt.TopEdge
+    assert top_right == Qt.RightEdge | Qt.TopEdge
+    assert handler._cursor_shape(top_left) == Qt.SizeFDiagCursor
+    assert handler._cursor_shape(top_right) == Qt.SizeBDiagCursor
+    assert handler._cursor_shape(left) == Qt.SizeHorCursor
+    assert handler._cursor_shape(bottom) == Qt.SizeVerCursor
+
+    handler._update_cursor(dialog, top_left)
+    assert dialog.cursor().shape() == Qt.SizeFDiagCursor
+    handler._restore_cursor()
+    assert dialog.cursor().shape() == Qt.ArrowCursor
+    dialog.close()
+
+
+def test_resize_handler_has_manual_geometry_fallback() -> None:
+    """Размер меняется вручную, если системный resize недоступен."""
+    dialog = QDialog()
+    dialog.setMinimumSize(250, 180)
+    dialog.setGeometry(100, 100, 400, 300)
+    handler = _QtResizeHandler(dialog, border=8)
+    handler._manual_edges = Qt.RightEdge | Qt.BottomEdge
+    handler._drag_start_position = QPoint(500, 400)
+    handler._drag_start_geometry = dialog.geometry()
+
+    handler._resize_manually(QPoint(560, 440))
+
+    assert dialog.width() == 460
+    assert dialog.height() == 340
+    dialog.close()
+
+
+def test_custom_title_bar_updates_maximize_action(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """Разворачивание меняет состояние окна и подсказку кнопки."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    window.toggle_maximize()
+    qt_app.processEvents()
+    assert window.isMaximized()
+    assert window.window_controls.maximize_button.toolTip() == STRINGS.window_restore
+
+    window.toggle_maximize()
+    qt_app.processEvents()
+    assert not window.isMaximized()
+    assert window.window_controls.maximize_button.toolTip() == STRINGS.window_maximize
+    window.close()
+
+
+def test_regular_dialog_receives_custom_title_bar(
+    qt_app: QApplication,
+) -> None:
+    """Обычный диалог получает общую кастомную шапку."""
+    dialog = QDialog()
+    dialog.setWindowTitle("Проверка шапки")
+    if dialog.layout() is None:
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Содержимое"))
+
+    dialog.show()
+    qt_app.processEvents()
+
+    controller = getattr(dialog, "_custom_title_bar_controller", None)
+    assert controller is not None
+    assert dialog.windowFlags() & Qt.FramelessWindowHint
+    assert controller.title_bar.objectName() == "dialogTitleBar"
+    assert controller.title_bar.title_label.text() == "Проверка шапки"
+    assert controller.title_bar.width() == dialog.width()
+    assert all(
+        not button.icon().isNull()
+        for button in controller.window_controls.buttons
+    )
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    "dialog_class",
+    [QWizard, QMessageBox],
+)
+def test_system_dialogs_are_enabled_outside_offscreen(
+    dialog_class,
+    qt_app: QApplication,
+) -> None:
+    """Системные диалоги оформляются в обычном GUI и безопасно пропускаются offscreen."""
+    dialog = dialog_class()
+    assert DialogTitleBarInstaller._should_install(dialog, "windows")
+    assert not DialogTitleBarInstaller._should_install(dialog, "offscreen")
+    dialog.close()
+
+
+@pytest.mark.parametrize("dialog_class", [QProgressDialog, QFileDialog])
+def test_progress_and_file_dialogs_keep_system_title_bar(
+    dialog_class,
+    qt_app: QApplication,
+) -> None:
+    """Прогресс и выбор файлов никогда не получают кастомную шапку."""
+    dialog = dialog_class()
+    assert not DialogTitleBarInstaller._should_install(dialog, "windows")
+    assert not DialogTitleBarInstaller._should_install(dialog, "offscreen")
+
+    dialog.show()
+    qt_app.processEvents()
+    assert getattr(dialog, "_custom_title_bar_controller", None) is None
+    assert not dialog.windowFlags() & Qt.FramelessWindowHint
+    dialog.close()
+
+
+def test_dialog_title_bar_preserves_content_space_and_state(
+    qt_app: QApplication,
+) -> None:
+    """Шапка не перекрывает содержимое и синхронизирует разворачивание."""
+    dialog = QDialog()
+    dialog.setWindowTitle("Исходный заголовок")
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(QLabel("Содержимое"))
+    original_margins = dialog.getContentsMargins()
+    dialog.resize(420, 260)
+    original_height = dialog.height()
+
+    dialog.show()
+    qt_app.processEvents()
+    controller = dialog._custom_title_bar_controller
+
+    margins = dialog.getContentsMargins()
+    assert margins[1] == original_margins[1] + controller.title_bar.HEIGHT
+    assert dialog.height() >= original_height + controller.title_bar.HEIGHT
+
+    dialog.setWindowTitle("Новый заголовок")
+    qt_app.processEvents()
+    assert controller.title_bar.title_label.text() == "Новый заголовок"
+
+    controller.window_controls.maximize_button.click()
+    qt_app.processEvents()
+    assert dialog.isMaximized()
+    assert (
+        controller.window_controls.maximize_button.toolTip()
+        == STRINGS.window_restore
+    )
+    controller.window_controls.maximize_button.click()
+    qt_app.processEvents()
+    assert not dialog.isMaximized()
+    dialog.close()
 
 
 def test_document_action_button_styles_apply_to_both_tabs(

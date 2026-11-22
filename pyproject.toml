@@ -41,7 +41,7 @@ where = ["."]
 include = ["internal_correspondence*"]
 
 [tool.setuptools.package-data]
-"internal_correspondence.gui" = ["*.qss", "icons/*.svg"]
+"internal_correspondence.gui" = ["*.qss", "icons/*.svg", "icons/*.png"]
 "internal_correspondence.reports" = ["templates/*.docx"]
 
 [tool.pytest.ini_options]
