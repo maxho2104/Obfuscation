@@ -68,6 +68,14 @@ class AppSettings:
     files_dock_floating: str = "false"
     files_dock_geometry: str = ""
 
+    # Панель файлов последнего импорта: те же поля. Видимость хранит выбор
+    # оператора; фактический показ дополнительно ограничен вкладкой «Дашборд»
+    # и ролью головного офиса (см. gui/application.py)
+    imported_files_dock_visible: str = "true"
+    imported_files_dock_area: str = ""
+    imported_files_dock_floating: str = "false"
+    imported_files_dock_geometry: str = ""
+
     # Срок хранения записей Change (в днях); <= 0 — бессрочно
     changes_retention_days: int = DEFAULT_CHANGES_RETENTION_DAYS
 

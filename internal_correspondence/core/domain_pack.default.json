@@ -815,6 +815,7 @@
     "menu_view": "Вид",
     "menu_theme": "Оформление",
     "menu_attached_files": "Прикреплённые файлы",
+    "menu_imported_files": "Файлы последнего импорта",
     "action_export": "Экспорт...",
     "action_import": "Импорт...",
     "action_import_primary": "Загрузка первичных данных...",

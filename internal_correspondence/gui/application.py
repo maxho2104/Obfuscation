@@ -60,6 +60,7 @@ from internal_correspondence.gui.filter_model import (
 )
 from internal_correspondence.gui.first_run_wizard import run_first_run_wizard
 from internal_correspondence.gui.i18n import install_translations
+from internal_correspondence.gui.imported_files_widget import ImportedFilesWidget
 from internal_correspondence.gui.oshm_dialog import OSHMDialog
 from internal_correspondence.gui.reference_dialogs import (
     AcademicTitleDialog,
@@ -564,14 +565,92 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         )
         self.addDockWidget(Qt.RightDockWidgetArea, self.files_dock)
         self.files_dock.filesChanged.connect(self._on_files_changed)
-        self.tabs.currentChanged.connect(lambda _index: self._sync_files_dock())
         self.materials_tab.currentDocumentChanged.connect(
             lambda document: self._files_document_changed(self.materials_tab, document)
         )
         self.telegram_tab.currentDocumentChanged.connect(
             lambda document: self._files_document_changed(self.telegram_tab, document)
         )
+
+        # Док-виджет файлов последнего импорта ведёт манифест импорта и имеет
+        # смысл только в головном офисе: в филиале импорт пакетов не выполняется
+        self.imported_files_dock: Optional[ImportedFilesWidget] = None
+        if self.settings.role == Role.HEAD_OFFICE.value:
+            self.imported_files_dock = ImportedFilesWidget(
+                self.db_manager.get_session(),
+                self.settings.storage_path_obj(),
+                self,
+            )
+            # Правая область — как у панели прикреплённых файлов: панели
+            # показываются на разных вкладках и не делят место одновременно
+            self.addDockWidget(Qt.RightDockWidgetArea, self.imported_files_dock)
+
+        # Выбор оператора (галочки меню «Вид») хранится отдельно от
+        # фактической видимости: панель показывается только на своей вкладке
+        self._files_dock_preference = True
+        self._imported_files_dock_preference = True
+        self._syncing_docks = False
+
+        self.tabs.currentChanged.connect(lambda _index: self._on_tab_changed())
+        self._on_tab_changed()
+
+    def _on_tab_changed(self) -> None:
+        """Синхронизирует доки с активной вкладкой."""
         self._sync_files_dock()
+        self._update_docks_visibility()
+
+    def _apply_dock_visibility(self, dock, visible: bool) -> None:
+        """Показывает или скрывает док, не считая это выбором оператора."""
+        self._syncing_docks = True
+        try:
+            dock.setVisible(visible)
+        finally:
+            self._syncing_docks = False
+
+    def _is_document_tab(self) -> bool:
+        """Проверяет, активна ли вкладка со списком документов."""
+        return isinstance(self.tabs.currentWidget(), DocumentListWidget)
+
+    def _update_docks_visibility(self) -> None:
+        """Применяет правила показа доков для активной вкладки и роли.
+
+        Прикреплённые файлы видны на вкладках документов на любом уровне,
+        файлы последнего импорта — только на дашборде головного офиса. Выбор
+        оператора учитывается в пределах разрешённых вкладок, поэтому смена
+        вкладки не сбрасывает галочку меню.
+        """
+        self._apply_dock_visibility(
+            self.files_dock,
+            self._is_document_tab() and self._files_dock_preference,
+        )
+        if self.imported_files_dock is None:
+            return
+        show_imported = (
+            self.tabs.currentWidget() is self.dashboard_tab
+            and self._imported_files_dock_preference
+        )
+        self._apply_dock_visibility(self.imported_files_dock, show_imported)
+        if show_imported:
+            self.imported_files_dock.refresh()
+    def _refresh_imported_files_dock(self) -> None:
+        """Перечитывает манифест последнего импорта для открытой панели."""
+        if self.imported_files_dock is not None:
+            self.imported_files_dock.refresh()
+
+    def _files_dock_visibility_changed(self, visible: bool) -> None:
+        """Запоминает выбор оператора: панель закрыта или открыта вручную."""
+        if self._syncing_docks:
+            return
+        self._files_dock_preference = visible
+        self.files_dock_action.setChecked(visible)
+
+    def _imported_files_dock_visibility_changed(self, visible: bool) -> None:
+        """Запоминает выбор оператора для панели файлов последнего импорта."""
+        if self._syncing_docks or self.imported_files_dock is None:
+            return
+        self._imported_files_dock_preference = visible
+        if self.imported_files_dock_action is not None:
+            self.imported_files_dock_action.setChecked(visible)
 
     def _files_document_changed(self, tab, document) -> None:
         """Привязывает док файлов к записи, если её вкладка активна."""
@@ -721,20 +800,46 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
             theme_group.addAction(action)
             theme_menu.addAction(action)
 
-        # Показ/скрытие дока прикреплённых файлов (восстановление — в _restore_ui_state)
+        # Показ/скрытие доков (восстановление — в _restore_ui_state)
         view_menu.addSeparator()
         self.files_dock_action = QAction(STRINGS.menu_attached_files, self)
+        self.files_dock_action.setObjectName("filesDockAction")
         self.files_dock_action.setCheckable(True)
-        self.files_dock_action.setChecked(not self.files_dock.isHidden())
-        self.files_dock_action.toggled.connect(self.files_dock.setVisible)
-        self.files_dock.visibilityChanged.connect(self.files_dock_action.setChecked)
+        self.files_dock_action.setChecked(self._files_dock_preference)
+        self.files_dock_action.toggled.connect(self._files_dock_action_toggled)
+        self.files_dock.visibilityChanged.connect(
+            self._files_dock_visibility_changed
+        )
         view_menu.addAction(self.files_dock_action)
+
+        self.imported_files_dock_action: Optional[QAction] = None
+        if self.imported_files_dock is not None:
+            action = QAction(STRINGS.menu_imported_files, self)
+            action.setObjectName("importedFilesDockAction")
+            action.setCheckable(True)
+            action.setChecked(self._imported_files_dock_preference)
+            action.toggled.connect(self._imported_files_action_toggled)
+            self.imported_files_dock.visibilityChanged.connect(
+                self._imported_files_dock_visibility_changed
+            )
+            view_menu.addAction(action)
+            self.imported_files_dock_action = action
 
         self.setup_custom_title_bar(
             menubar,
             STRINGS.app_title,
             _window_control_labels(),
         )
+
+    def _files_dock_action_toggled(self, checked: bool) -> None:
+        """Включает или отключает док прикреплённых файлов из меню."""
+        self._files_dock_preference = checked
+        self._update_docks_visibility()
+
+    def _imported_files_action_toggled(self, checked: bool) -> None:
+        """Включает или отключает док файлов последнего импорта из меню."""
+        self._imported_files_dock_preference = checked
+        self._update_docks_visibility()
 
     def _add_reference_action(
         self,
@@ -800,21 +905,45 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self._settings_manager.save(self.settings)
 
     def _save_files_dock_state(self) -> None:
-        """Сохраняет область, плавание и видимость дока файлов."""
-        dock = self.files_dock
-        self.settings.files_dock_visible = "false" if dock.isHidden() else "true"
-        self.settings.files_dock_area = str(int(self.dockWidgetArea(dock)))
-        self.settings.files_dock_floating = "true" if dock.isFloating() else "false"
+        """Сохраняет настройки обоих доков: видимость, область и плавание."""
+        self._save_dock_state(
+            self.files_dock,
+            self._files_dock_preference,
+            "files_dock",
+        )
+        if self.imported_files_dock is not None:
+            self._save_dock_state(
+                self.imported_files_dock,
+                self._imported_files_dock_preference,
+                "imported_files_dock",
+            )
+
+    def _save_dock_state(self, dock, visible: bool, prefix: str) -> None:
+        """Записывает состояние одного дока в поля настроек с префиксом.
+
+        Сохраняется выбор оператора, а не фактическая видимость: панель может
+        быть скрыта правилами активной вкладки, и это не должно выглядеть как
+        отказ от панели при следующем запуске.
+        """
+        setattr(self.settings, f"{prefix}_visible", "true" if visible else "false")
+        setattr(self.settings, f"{prefix}_area", str(int(self.dockWidgetArea(dock))))
+        setattr(
+            self.settings,
+            f"{prefix}_floating",
+            "true" if dock.isFloating() else "false",
+        )
         # Геометрию храним только для плавающего окна: у пристыкованной
         # панели положение определяется областью и размерами главного окна.
-        self.settings.files_dock_geometry = (
+        setattr(
+            self.settings,
+            f"{prefix}_geometry",
             dock.saveGeometry().toBase64().data().decode("ascii")
             if dock.isFloating()
-            else ""
+            else "",
         )
 
     def _restore_ui_state(self) -> None:
-        """Восстанавливает геометрию окна, колонки и сортировку таблиц, док."""
+        """Восстанавливает геометрию окна, колонки и сортировку таблиц, доки."""
         if self.settings.window_geometry:
             self.restoreGeometry(
                 QByteArray.fromBase64(self.settings.window_geometry.encode("ascii"))
@@ -851,10 +980,26 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
             tab.set_sort_state(state[0], state[1])
 
     def _restore_files_dock_state(self) -> None:
-        """Восстанавливает область, плавание и видимость дока файлов."""
-        dock = self.files_dock
+        """Восстанавливает состояние обоих доков и применяет правила показа."""
+        self._files_dock_preference = self._restore_dock_state(
+            self.files_dock, "files_dock", True
+        )
+        self.files_dock_action.setChecked(self._files_dock_preference)
+        if self.imported_files_dock is not None:
+            self._imported_files_dock_preference = self._restore_dock_state(
+                self.imported_files_dock, "imported_files_dock", True
+            )
+            if self.imported_files_dock_action is not None:
+                self.imported_files_dock_action.setChecked(
+                    self._imported_files_dock_preference
+                )
+        self._update_docks_visibility()
+
+    def _restore_dock_state(self, dock, prefix: str, default: bool) -> bool:
+        """Восстанавливает область, плавание и выбор видимости одного дока."""
+        raw_area = getattr(self.settings, f"{prefix}_area", "")
         try:
-            area = Qt.DockWidgetArea(int(self.settings.files_dock_area))
+            area = Qt.DockWidgetArea(int(raw_area))
         except (TypeError, ValueError):
             area = Qt.RightDockWidgetArea
         if area not in (
@@ -865,18 +1010,18 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         ):
             area = Qt.RightDockWidgetArea
         self.addDockWidget(area, dock)
-        floating = _parse_bool(self.settings.files_dock_floating, False)
+        floating = _parse_bool(getattr(self.settings, f"{prefix}_floating", ""), False)
         dock.setFloating(floating)
-        if floating and self.settings.files_dock_geometry:
+        raw_geometry = getattr(self.settings, f"{prefix}_geometry", "")
+        if floating and raw_geometry:
             dock.restoreGeometry(
-                QByteArray.fromBase64(
-                    self.settings.files_dock_geometry.encode("ascii")
-                )
+                QByteArray.fromBase64(raw_geometry.encode("ascii"))
             )
-        visible = _parse_bool(self.settings.files_dock_visible, True)
-        dock.setVisible(visible)
-        # visibilityChanged не приходит, пока окно не показано: синхронизируем вручную
-        self.files_dock_action.setChecked(visible)
+        # visibilityChanged не приходит, пока окно не показано: показ панели
+        # выполняет _update_docks_visibility по правилам активной вкладки
+        return _parse_bool(
+            getattr(self.settings, f"{prefix}_visible", ""), default
+        )
 
     def _restore_filters(self) -> None:
         """Восстанавливает фильтры таблиц из настроек (два набора раздельно)."""
@@ -1151,6 +1296,9 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self.tasks_tab.refresh_all()
         self.statistics_tab.refresh()
         self.dashboard_tab.refresh()
+        # Манифест последнего импорта перезаписан сервисом: панель дашборда
+        # должна показать новый состав файлов, даже если она уже открыта
+        self._refresh_imported_files_dock()
 
     def _on_import_failed(
         self,

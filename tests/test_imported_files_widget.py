@@ -29,6 +29,7 @@ from internal_correspondence.orm.models import (
     Telegram,
     TerritorialUnit,
 )
+from internal_correspondence.utils.string_resources import STRINGS
 
 
 @pytest.fixture(scope="module")
@@ -246,8 +247,54 @@ def test_imported_files_legacy_manifest_paths_ignored(qt_app, env) -> None:
         assert widget.stack.currentWidget() is widget.empty_label
 
 
-def test_dashboard_includes_imported_files_only_for_head_office(qt_app, env) -> None:
-    """Блок файлов импорта есть только у дашборда головного офиса."""
+def test_imported_files_dock_is_movable_and_floatable(qt_app, env) -> None:
+    """Панель оформлена как док: закрывается, перетаскивается и отрывается."""
+    db, storage, docs, ids = env
+    with db.get_session() as session:
+        widget = ImportedFilesWidget(session, storage)
+        assert widget.objectName() == "imported_files_dock"
+        assert widget.allowedAreas() == Qt.AllDockWidgetAreas
+        features = widget.features()
+        assert features & widget.DockWidgetClosable
+        assert features & widget.DockWidgetMovable
+        assert features & widget.DockWidgetFloatable
+        assert widget.windowTitle() == STRINGS.dashboard_imported_files
+
+
+def test_imported_files_table_fits_dock_without_scroll(qt_app, env) -> None:
+    """Таблица не требует горизонтальной прокрутки при штатной ширине панели."""
+    db, storage, docs, ids = env
+    with db.get_session() as session:
+        widget = ImportedFilesWidget(session, storage)
+        widget.resize(420, 400)
+        widget.show()
+        qt_app.processEvents()
+        table = widget.table
+        header = table.horizontalHeader()
+        total = sum(header.sectionSize(i) for i in range(header.count()))
+        assert total <= table.viewport().width() + 1
+        assert not table.horizontalScrollBar().isVisible()
+        widget.close()
+
+
+def test_imported_files_tooltip_shows_full_text(qt_app, env) -> None:
+    """Сокращённый в узкой колонке текст доступен во всплывающей подсказке."""
+    db, storage, docs, ids = env
+    with db.get_session() as session:
+        widget = ImportedFilesWidget(session, storage)
+        model = widget.table_model
+        row = model.row_at(model.index(0, 0))
+        for column, expected in (
+            (0, row.filename),
+            (1, row.branch),
+            (2, row.doc_type),
+            (3, row.outgoing),
+        ):
+            assert model.data(model.index(0, column), Qt.ToolTipRole) == expected
+
+
+def test_dashboard_has_no_imported_files_block(qt_app, env) -> None:
+    """В раскладке дашборда панели файлов импорта больше нет."""
     from internal_correspondence.gui.dashboard_widget import DashboardWidget
 
     db, storage, docs, ids = env
@@ -258,13 +305,5 @@ def test_dashboard_includes_imported_files_only_for_head_office(qt_app, env) -> 
             None,
             storage_root=storage,
         )
-        assert dashboard.imported_files is not None
-        assert _rows(dashboard.imported_files) != []
-
-        branch_dashboard = DashboardWidget(
-            session,
-            Role.BRANCH.value,
-            "F1",
-            storage_root=storage,
-        )
-        assert branch_dashboard.imported_files is None
+        assert not hasattr(dashboard, "imported_files")
+        assert dashboard.findChild(ImportedFilesWidget) is None

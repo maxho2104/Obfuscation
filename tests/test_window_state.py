@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
     QWizard,
 )
 
-from internal_correspondence.core.constants import ReportType
+from internal_correspondence.core.constants import ReportType, Role
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.core.settings import AppSettings, SettingsManager
 from internal_correspondence.gui import application as application_module
@@ -661,9 +661,12 @@ def test_files_dock_menu_action_toggles_visibility(window_env, qt_app: QApplicat
     assert action.isCheckable()
     assert action.text() == STRINGS.menu_attached_files
 
+    # Док привязан к вкладкам документов: на дашборде он скрыт правилом
+    window.tabs.setCurrentIndex(1)
     window.show()
     qt_app.processEvents()
     assert action.isChecked()
+    assert window.files_dock.isVisible()
 
     # Снятие галочки скрывает док
     action.trigger()
@@ -854,6 +857,157 @@ def test_files_dock_garbage_geometry_is_tolerated(window_env, qt_app: QApplicati
     qt_app.processEvents()
 
     assert window.files_dock.isFloating()
+    window.close()
+
+
+# ---------------------------------------------------------------------------
+# Доки зависят от активной вкладки: прикреплённые файлы и файлы импорта
+# ---------------------------------------------------------------------------
+
+
+def test_files_dock_visible_only_on_document_tabs(
+    window_env, qt_app: QApplication
+) -> None:
+    """Док прикреплённых файлов показывается только на вкладках документов."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    # Дашборд, задачи и статистика не связаны с записью документа
+    for index in (0, 3, 4):
+        window.tabs.setCurrentIndex(index)
+        qt_app.processEvents()
+        assert window.files_dock.isHidden()
+        assert window.files_dock_action.isChecked()
+
+    # Научные материалы и телеграммы — рабочие вкладки дока
+    for index in (1, 2):
+        window.tabs.setCurrentIndex(index)
+        qt_app.processEvents()
+        assert window.files_dock.isVisible()
+    window.close()
+
+
+def test_imported_files_dock_exists_only_for_head_office(
+    window_env, qt_app: QApplication
+) -> None:
+    """Панель файлов импорта создаётся только в головном офисе."""
+    settings, db, manager = window_env
+    settings.role = Role.HEAD_OFFICE.value
+    window = MainWindow(settings, db, manager)
+    assert window.imported_files_dock is not None
+    assert window.imported_files_dock_action is not None
+    window.close()
+
+    settings.role = Role.BRANCH.value
+    branch_window = MainWindow(settings, db, manager)
+    assert branch_window.imported_files_dock is None
+    assert branch_window.imported_files_dock_action is None
+    branch_window.close()
+
+
+def test_imported_files_dock_menu_action_toggles_visibility(
+    window_env, qt_app: QApplication
+) -> None:
+    """Пункт меню «Вид» → «Файлы последнего импорта» управляет панелью."""
+    settings, db, manager = window_env
+    settings.role = Role.HEAD_OFFICE.value
+    window = MainWindow(settings, db, manager)
+    action = window.imported_files_dock_action
+    assert action is not None
+    assert action.isCheckable()
+    assert action.text() == STRINGS.menu_imported_files
+
+    window.show()
+    qt_app.processEvents()
+    # Активен дашборд: панель показана и пункт отмечен
+    assert action.isChecked()
+    assert window.imported_files_dock.isVisible()
+
+    action.trigger()
+    qt_app.processEvents()
+    assert window.imported_files_dock.isHidden()
+    assert not action.isChecked()
+
+    action.trigger()
+    qt_app.processEvents()
+    assert window.imported_files_dock.isVisible()
+    assert action.isChecked()
+    window.close()
+
+
+def test_imported_files_dock_visible_only_on_dashboard(
+    window_env, qt_app: QApplication
+) -> None:
+    """Панель файлов импорта видна только на дашборде головного офиса."""
+    settings, db, manager = window_env
+    settings.role = Role.HEAD_OFFICE.value
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    assert window.tabs.currentIndex() == 0
+    assert window.imported_files_dock.isVisible()
+
+    for index in (1, 2, 3, 4):
+        window.tabs.setCurrentIndex(index)
+        qt_app.processEvents()
+        assert window.imported_files_dock.isHidden()
+        # Возврат на дашборд восстанавливает панель без действий оператора
+    window.tabs.setCurrentIndex(0)
+    qt_app.processEvents()
+    assert window.imported_files_dock.isVisible()
+    window.close()
+
+
+def test_imported_files_dock_state_saved_and_restored(
+    window_env, qt_app: QApplication
+) -> None:
+    """Положение и выбор видимости панели импорта переживают перезапуск."""
+    settings, db, manager = window_env
+    settings.role = Role.HEAD_OFFICE.value
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    window.addDockWidget(Qt.LeftDockWidgetArea, window.imported_files_dock)
+    window.imported_files_dock_action.trigger()
+    window._save_ui_state()
+    window.close()
+
+    saved = manager.load()
+    assert saved.imported_files_dock_area == str(int(Qt.LeftDockWidgetArea))
+    assert saved.imported_files_dock_visible == "false"
+    assert saved.imported_files_dock_floating == "false"
+    assert saved.imported_files_dock_geometry == ""
+
+    restored = manager.load()
+    window2 = MainWindow(restored, db, manager)
+    window2.show()
+    qt_app.processEvents()
+    assert window2.dockWidgetArea(window2.imported_files_dock) == Qt.LeftDockWidgetArea
+    assert window2.imported_files_dock.isHidden()
+    assert not window2.imported_files_dock_action.isChecked()
+    window2.close()
+
+
+def test_hidden_dock_state_not_saved_when_tab_hides_it(
+    window_env, qt_app: QApplication
+) -> None:
+    """Скрытие панели правилом вкладки не считается отказом оператора."""
+    settings, db, manager = window_env
+    settings.role = Role.HEAD_OFFICE.value
+    window = MainWindow(settings, db, manager)
+    window.show()
+    window.tabs.setCurrentIndex(1)
+    qt_app.processEvents()
+    assert window.imported_files_dock.isHidden()
+
+    window._save_ui_state()
+    saved = manager.load()
+    assert saved.imported_files_dock_visible == "true"
+    assert saved.files_dock_visible == "true"
     window.close()
 
 

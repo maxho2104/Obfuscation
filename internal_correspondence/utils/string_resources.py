@@ -68,6 +68,7 @@ class AppStrings:
     menu_view: str = "Вид"
     menu_theme: str = "Оформление"
     menu_attached_files: str = "Прикреплённые файлы"
+    menu_imported_files: str = "Файлы последнего импорта"
     action_export: str = "Экспорт..."
     action_import: str = "Импорт..."
     action_import_primary: str = "Загрузка первичных данных..."

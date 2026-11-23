@@ -1,4 +1,4 @@
-"""Виджет файлов, восстановленных последней операцией импорта.
+"""Док-виджет файлов, восстановленных последней операцией импорта.
 
 Таблица строится по манифесту последнего импорта (см.
 ``importexport/import_service``): манифест хранит первичные ключи записей
@@ -9,6 +9,12 @@
 размещения недопустимо и не предлагается), контекстное меню «Расположение
 файла» / «Переименовать» / «Удалить файл». Строки упорядочены по алфавиту
 имени файла.
+
+Панель оформлена по образцу дока прикреплённых файлов
+(``gui/attached_files_widget``): свободно перетаскивается за заголовок во все
+области главного окна и в отдельное плавающее окно. Показ панели ограничен
+вкладкой «Дашборд» и ролью головного офиса — правило реализовано в
+``gui/application`` при переключении вкладок.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ from PyQt5.QtCore import (
 from PyQt5.QtGui import QColor, QDesktopServices, QFont, QIcon
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QDockWidget,
     QFileIconProvider,
     QHeaderView,
     QInputDialog,
@@ -68,6 +75,13 @@ COL_FILE = 0
 COL_BRANCH = 1
 COL_TYPE = 2
 COL_OUTGOING = 3
+
+# Начальные ширины колонок реквизитов: имя файла занимает остаток ширины
+# панели, длинный текст сокращается многоточием и раскрывается подсказкой
+_COLUMN_WIDTHS = {COL_BRANCH: 90, COL_TYPE: 85, COL_OUTGOING: 120}
+
+# Ширина панели, при которой таблица помещается без горизонтальной прокрутки
+_DOCK_MIN_WIDTH = 420
 
 
 @dataclass
@@ -135,6 +149,16 @@ class ImportedFilesTableModel(QAbstractTableModel):
             )[index.column()]
         if role == Qt.DecorationRole and index.column() == COL_FILE:
             return self._icon(row.path)
+        if role == Qt.ToolTipRole:
+            # Колонки уже́ панели: сокращённый текст раскрывается подсказкой
+            if row.missing:
+                return STRINGS.tooltip_file_missing.format(path=row.path)
+            return (
+                row.filename,
+                row.branch,
+                row.doc_type,
+                row.outgoing,
+            )[index.column()]
         if row.missing:
             if role == Qt.FontRole:
                 font = QFont()
@@ -142,8 +166,6 @@ class ImportedFilesTableModel(QAbstractTableModel):
                 return font
             if role == Qt.ForegroundRole:
                 return QColor(BROKEN_FILE_COLOR)
-            if role == Qt.ToolTipRole and index.column() == COL_FILE:
-                return STRINGS.tooltip_file_missing.format(path=row.path)
         return None
 
     # --- перетаскивание наружу ---
@@ -176,8 +198,8 @@ class ImportedFilesTableModel(QAbstractTableModel):
         return self._icon_provider.icon(QFileIconProvider.File)
 
 
-class ImportedFilesWidget(QWidget):
-    """Таблица файлов последнего импорта с поиском и контекстным меню."""
+class ImportedFilesWidget(QDockWidget):
+    """Док-виджет таблицы файлов последнего импорта с поиском и меню."""
 
     def __init__(
         self,
@@ -185,30 +207,37 @@ class ImportedFilesWidget(QWidget):
         storage_root: Path,
         parent: Optional[QWidget] = None,
     ) -> None:
-        super().__init__(parent)
+        super().__init__(STRINGS.dashboard_imported_files, parent)
         self.session = session
         self.storage_root = Path(storage_root)
         self._record_ids: List[str] = []
+        self.setObjectName("imported_files_dock")
+        # Панель свободно перетаскивается за заголовок: во все области
+        # главного окна и в отдельное плавающее окно.
+        self.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.setFeatures(
+            QDockWidget.DockWidgetClosable
+            | QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+        )
         self._setup_ui()
         self.refresh()
 
     # --- интерфейс ---
 
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        content = QWidget()
+        # Ширина, при которой таблица помещается без горизонтальной прокрутки
+        content.setMinimumWidth(_DOCK_MIN_WIDTH)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
-
-        title = QLabel(STRINGS.dashboard_imported_files)
-        title_font = title.font()
-        title_font.setBold(True)
-        title.setFont(title_font)
-        layout.addWidget(title)
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText(
             STRINGS.dashboard_imported_filter_placeholder
         )
+        self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.textChanged.connect(self._apply_filter)
         layout.addWidget(self.filter_edit)
 
@@ -241,15 +270,23 @@ class ImportedFilesWidget(QWidget):
         self.table.doubleClicked.connect(self._open_index)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(22)
-        self.table.setMinimumHeight(170)
+        self.table.setMinimumHeight(120)
         self.table.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Preferred
         )
         header = self.table.horizontalHeader()
+        # Имя файла занимает свободное место, реквизиты получают штатную
+        # ширину. В узкой панели появляется горизонтальная прокрутка, полный
+        # текст доступен во всплывающей подсказке; ширину панели оператор
+        # меняет перетаскиванием границы дока
         header.setSectionResizeMode(COL_FILE, QHeaderView.Stretch)
-        for column in (COL_BRANCH, COL_TYPE, COL_OUTGOING):
-            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        for column, width in _COLUMN_WIDTHS.items():
+            header.setSectionResizeMode(column, QHeaderView.Interactive)
+            header.resizeSection(column, width)
+        header.setStretchLastSection(False)
         self.stack.addWidget(self.table)
+
+        self.setWidget(content)
 
     def refresh(self) -> None:
         """Перечитывает манифест последнего импорта и перестраивает таблицу."""
