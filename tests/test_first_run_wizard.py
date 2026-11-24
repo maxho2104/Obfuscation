@@ -7,21 +7,14 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.core.settings import AppSettings
 from internal_correspondence.gui.first_run_wizard import (
     DatabasePage,
-    FIRST_RUN_PAGE_TITLE_SPACER,
-    FIRST_RUN_TITLE_BAR_CONTENT_GAP,
-    FirstRunWizard,
     RolePage,
     load_branches,
-)
-from internal_correspondence.gui.custom_title_bar import (
-    TITLE_BAR_CONTENT_GAP_PROPERTY,
 )
 from internal_correspondence.orm.models import Branch, TerritorialUnit
 
@@ -56,23 +49,6 @@ def test_load_branches_from_existing_database(db_with_branches: DatabaseManager)
 def test_load_branches_returns_empty_for_missing_database(tmp_path: Path) -> None:
     """Для отсутствующего файла БД список филиалов пуст."""
     assert load_branches(f"sqlite:///{tmp_path / 'missing.db'}") == []
-
-
-def test_first_run_wizard_requests_gap_below_custom_title_bar(qt_app) -> None:
-    """Содержимое мастера начинается с отступом под кастомной шапкой."""
-    wizard = FirstRunWizard(AppSettings())
-
-    assert (
-        wizard.property(TITLE_BAR_CONTENT_GAP_PROPERTY)
-        == FIRST_RUN_TITLE_BAR_CONTENT_GAP
-        == 16
-    )
-    assert wizard.titleFormat() == Qt.RichText
-    assert all(
-        page.title().startswith(FIRST_RUN_PAGE_TITLE_SPACER)
-        for page in (wizard.db_page, wizard.storage_page, wizard.role_page)
-    )
-    wizard.close()
 
 
 def test_role_page_uses_branch_identifier(qt_app, db_with_branches: DatabaseManager) -> None:

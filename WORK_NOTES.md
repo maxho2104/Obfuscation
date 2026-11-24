@@ -2848,6 +2848,38 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 
 ---
 
+## 2026-11-24 — Исправление переключения темы
+
+### Причина
+- `TaskDistributionWidget.apply_theme()` вызывал отсутствующий метод
+  `TaskManagementModel.refresh_theme()`, из-за чего переключение темы падало с
+  `AttributeError` после частичного обновления интерфейса.
+- Глобальная `current_theme()` обновлялась после применения палитры и QSS, хотя
+  Qt рассылает `PaletteChange` и `StyleChange` синхронно во время применения.
+
+### Изменения
+- `gui/table_model.py`: в базовую `SqlAlchemyTableModel` добавлен
+  `refresh_theme()`, который уведомляет представления об изменении модельных
+  цветов; метод доступен и `TaskManagementModel`.
+- `gui/theme.py`: активная тема устанавливается до применения палитры/QSS с
+  восстановлением прежней темы при исключении.
+- `gui/application.py`: настройка темы сохраняется только после успешного
+  обновления всех таблиц, графиков и шапки.
+- `tests/test_window_state.py`, `tests/test_theme.py`: добавлены повторное
+  переключение темы на полном главном окне и проверка темы внутри событий Qt.
+- `README.md`: описан безопасный порядок переключения темы.
+
+### Проверка
+- Целевые тесты тем и состояния окна — 60 passed.
+- `.venv/Scripts/python.exe -m pytest tests -q` с
+  `QT_QPA_PLATFORM=offscreen` — 513 passed, одно известное предупреждение DOCX.
+- Импорт GUI, `compileall` и `git diff --check` выполнены успешно.
+
+### Отложено
+- Нет.
+
+---
+
 ## 2026-11-24 — Организация в заголовке главного окна
 
 ### Задача
@@ -2880,6 +2912,25 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 - `pytest tests/test_window_state.py -k "title or theme or custom_title_bar"` — 13 passed.
 - Полный `pytest tests -q` — 516 passed, одно известное предупреждение DOCX.
 - Импорт `internal_correspondence.gui.application` — успешно.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-24 — Увеличение заголовков кастомных шапок
+
+### Изменения
+- `gui/application.qss`: размер названия главного окна увеличен с 11 до 13 px,
+  заголовков диалогов — с 12 до 14 px; высота шапок и кнопок не менялась.
+- `tests/test_theme.py`: размеры заголовков проверяются в итоговом QSS обеих тем.
+- `README.md`: описан увеличенный полужирный текст кастомных шапок.
+
+### Проверка
+- Целевые тесты тем — 14 passed.
+- `.venv/Scripts/python.exe -m pytest tests -q` с
+  `QT_QPA_PLATFORM=offscreen` — 513 passed, одно известное предупреждение DOCX.
+- Импорт GUI, `compileall` и `git diff --check` выполнены успешно.
 
 ### Отложено
 - Нет.
@@ -2920,6 +2971,40 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 - `pytest tests/test_first_run_wizard.py -q` — 11 passed.
 - Полный `pytest tests -q` — 516 passed, одно известное предупреждение DOCX.
 - Импорт `internal_correspondence.gui.application` — успешно.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-24 — Отступ под шапкой мастера первого запуска
+
+> Отменено при слиянии 2026-11-24: мастер исключён из автоустановки кастомной
+> шапки (см. запись выше), поэтому отступ-свойство и rich-text-заголовки
+> страниц удалены из `first_run_wizard.py`. Механизм индивидуального отступа
+> (`TITLE_BAR_CONTENT_GAP_PROPERTY`) в `custom_title_bar.py` сохранён.
+
+### Изменения
+- `gui/first_run_wizard.py`: мастер первого запуска запрашивает дополнительный
+  вертикальный отступ 16 px; встроенные заголовки всех страниц переведены в
+  формат rich text с верхним пустым блоком, поскольку внутренний layout
+  `QWizard` не учитывает внешние поля окна. Заголовок шага, описание и формы
+  теперь начинаются ниже кастомной шапки.
+- `gui/custom_title_bar.py`: контроллер диалоговой шапки учитывает индивидуальный
+  отступ окна при резервировании места и увеличивает высоту окна, поэтому
+  содержимое и нижние кнопки мастера не сжимаются.
+- `tests/test_first_run_wizard.py`, `tests/test_window_state.py`: проверены настройка
+  отступа, смещение встроенных заголовков страниц и применение отступа
+  контроллером кастомной шапки.
+- `README.md`: описан отступ мастера первого запуска.
+
+### Проверка
+- `pytest tests/test_first_run_wizard.py tests/test_window_state.py -q`
+  (`QT_QPA_PLATFORM=offscreen`) — 59 passed.
+- `.venv/Scripts/python.exe -m pytest tests -q` с
+  `QT_QPA_PLATFORM=offscreen` — 515 passed, одно известное предупреждение DOCX.
+- Импорт `internal_correspondence.gui.application`, `compileall` и
+  `git diff --check` выполнены успешно.
 
 ### Отложено
 - Нет.
@@ -3066,3 +3151,70 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 
 ### Отложено
 - Нет.
+
+---
+
+## 2026-11-24 — Подразделение в центре главной шапки
+
+### Изменения
+- `gui/custom_title_bar.py`: добавлена прозрачная для мыши центральная подпись
+  `WindowContextTitle`; она остаётся по центру всей шапки при изменении размера
+  окна и не мешает перетаскиванию за свободную область меню.
+- `gui/application.py`: для головного офиса выводится локализованная подпись
+  роли; для филиала выполняется поиск по сохранённому `branch_id` и выводится
+  «индекс — наименование», а при отсутствии записи в справочнике сохраняется
+  введённое вручную значение. После сохранения настроек подпись обновляется.
+- `gui/application.qss`: центральная подпись оформлена цветом и размером
+  заголовков активной темы.
+- `tests/test_window_state.py`, `tests/test_theme.py`: проверены центрирование,
+  пропуск событий мыши, головной офис, филиал из БД, ручное значение и стили
+  обеих тем.
+- `README.md`: описана центральная подпись роли/филиала.
+
+### Проверка
+- `pytest tests/test_window_state.py tests/test_theme.py tests/test_first_run_wizard.py -q`
+  (`QT_QPA_PLATFORM=offscreen`) — 75 passed.
+- `.venv/Scripts/python.exe -m pytest tests -q` с
+  `QT_QPA_PLATFORM=offscreen` — 517 passed, одно известное предупреждение DOCX.
+- Импорт `internal_correspondence.gui.application`, `compileall` и
+  `git diff --check` выполнены успешно.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-24 — Слияние origin/main (PR #20, lo0v777) в somebody_ms_branch
+
+### Конфликты и решения
+- `WORK_NOTES.md` (текстовый): сохранены обе истории записей.
+- `gui/table_model.py` (семантический): обе ветки добавили `refresh_theme()`
+  в `SqlAlchemyTableModel`; оставлена версия из main (Background+Foreground
+  роли, защита от пустых колонок), дубликат удалён.
+- Мастер первого запуска (семантический): параллельные решения одной проблемы
+  перекрытия заголовков. Оставлено исключение `QWizard` из кастомной шапки
+  (системная рамка); отступ `TITLE_BAR_CONTENT_GAP_PROPERTY` на мастере и
+  rich-text-заголовки с `<br><br><br>` из `first_run_wizard.py` удалены,
+  тест `test_first_run_wizard_requests_gap_below_custom_title_bar` снят.
+  Сам механизм индивидуального отступа в `custom_title_bar.py` и его тест
+  (`test_dialog_title_bar_reserves_requested_content_gap`) сохранены.
+- Заголовок главного окна: сосуществуют оба решения — заголовок окна
+  «{приложение} — {организация}» (`_window_title_text`, краткое наименование)
+  и центральная подпись шапки `WindowContextTitle` («индекс — наименование»,
+  `_organization_title`). Потенциальная избыточность отображения — на решении
+  пользователя.
+- `_set_theme` и `apply_theme`: принята версия main (тема активируется до
+  рассылки событий Qt, настройка сохраняется после успешного применения).
+- `README.md`: абзац о шапке мастера приведён к выбранному решению
+  (системная рамка у мастера).
+
+### Проверка
+- Целевые: `pytest tests/test_window_state.py tests/test_theme.py
+  tests/test_first_run_wizard.py tests/test_edit_dialog.py
+  tests/test_task_widget.py -q` — 117 passed.
+- Полный `pytest tests` — 522 passed, одно известное предупреждение DOCX.
+- Импорт `internal_correspondence.gui.application` — успешно.
+
+### Отложено
+- Решить судьбу дублирующегося отображения организации (левый заголовок
+  и центральная подпись показывают одно и то же разными форматами).
