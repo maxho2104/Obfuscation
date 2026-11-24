@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (
 
 
 ICONS_DIR = Path(__file__).resolve().parent / "icons"
+TITLE_BAR_CONTENT_GAP_PROPERTY = "customTitleBarContentGap"
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,60 @@ class WindowTitle(QLabel):
         self.setFixedHeight(44)
         self.setMinimumWidth(220)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+
+
+class WindowContextTitle(QLabel):
+    """Контекст текущего подразделения по центру главной шапки."""
+
+    HEIGHT = 44
+    MINIMUM_WIDTH = 160
+    MAXIMUM_WIDTH = 420
+
+    def __init__(self, text: str, parent: QMenuBar) -> None:
+        super().__init__(text, parent)
+        self.setObjectName("windowContextTitle")
+        self.setAlignment(Qt.AlignCenter)
+        self.setFixedHeight(self.HEIGHT)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setToolTip(text)
+        parent.installEventFilter(self)
+        self._sync_geometry()
+
+    def set_context(self, text: str) -> None:
+        """Обновляет подпись подразделения и её положение."""
+        self.setText(text)
+        self.setToolTip(text)
+        self._sync_geometry()
+
+    def _sync_geometry(self) -> None:
+        """Удерживает подпись по центру всей ширины шапки."""
+        menu_bar = self.parentWidget()
+        if menu_bar is None:
+            return
+        available_width = max(0, menu_bar.width())
+        preferred_width = max(
+            self.MINIMUM_WIDTH,
+            self.sizeHint().width() + 24,
+        )
+        width = min(preferred_width, self.MAXIMUM_WIDTH, available_width)
+        self.setGeometry(
+            max(0, (available_width - width) // 2),
+            0,
+            width,
+            self.HEIGHT,
+        )
+        self.raise_()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if watched is self.parentWidget() and event.type() in (
+            QEvent.Resize,
+            QEvent.Show,
+            QEvent.LayoutRequest,
+            QEvent.StyleChange,
+            QEvent.FontChange,
+        ):
+            self._sync_geometry()
+        return False
 
 
 class WindowControls(QWidget):
@@ -591,10 +646,11 @@ class DialogTitleBarController(QObject):
         if self._space_reserved:
             return
 
+        reserved_height = DialogTitleBar.HEIGHT + self._content_gap()
         left, top, right, bottom = self._dialog.getContentsMargins()
         self._dialog.setContentsMargins(
             left,
-            top + DialogTitleBar.HEIGHT,
+            top + reserved_height,
             right,
             bottom,
         )
@@ -605,18 +661,26 @@ class DialogTitleBarController(QObject):
             maximum_height = self._dialog.maximumHeight()
             if maximum_height < 16_777_215:
                 self._dialog.setMaximumHeight(
-                    maximum_height + DialogTitleBar.HEIGHT
+                    maximum_height + reserved_height
                 )
             minimum_height = self._dialog.minimumHeight()
             if minimum_height > 0:
                 self._dialog.setMinimumHeight(
-                    minimum_height + DialogTitleBar.HEIGHT
+                    minimum_height + reserved_height
                 )
             self._dialog.resize(
                 self._dialog.width(),
-                current_height + DialogTitleBar.HEIGHT,
+                current_height + reserved_height,
             )
             self._height_adjusted = True
+
+    def _content_gap(self) -> int:
+        """Возвращает дополнительный отступ содержимого под шапкой окна."""
+        value = self._dialog.property(TITLE_BAR_CONTENT_GAP_PROPERTY)
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
 
     def _sync_title_bar(self) -> None:
         self.title_bar.setGeometry(
@@ -739,6 +803,7 @@ class FramelessWindowMixin:
         menu_bar: QMenuBar,
         title: str,
         labels: WindowControlLabels,
+        context_title: str = "",
     ) -> None:
         """Настраивает безрамочное окно и виджеты его шапки."""
         self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
@@ -749,8 +814,14 @@ class FramelessWindowMixin:
         self.window_title = WindowTitle(title, menu_bar)
         menu_bar.setCornerWidget(self.window_title, Qt.TopLeftCorner)
 
+        self.window_context_title = WindowContextTitle(
+            context_title,
+            menu_bar,
+        )
+
         self.window_controls = WindowControls(self, labels, menu_bar)
         menu_bar.setCornerWidget(self.window_controls, Qt.TopRightCorner)
+        self.window_context_title._sync_geometry()
 
         self._window_drag_handler = WindowDragHandler(self)
         # Свободная часть menuBar перемещает окно, а пункты меню не
