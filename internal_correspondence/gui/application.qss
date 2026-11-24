@@ -361,7 +361,15 @@ QLabel#windowTitle {
     background-color: transparent;
     color: {{TITLE_TEXT}};
     padding-left: 16px;
-    font-size: 11px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QLabel#windowContextTitle {
+    background-color: transparent;
+    color: {{TITLE_TEXT}};
+    padding: 0 12px;
+    font-size: 13px;
     font-weight: 700;
 }
 
@@ -375,7 +383,7 @@ QLabel#dialogWindowTitle {
     background-color: transparent;
     color: {{TITLE_TEXT}};
     padding: 0;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 700;
 }
 

@@ -227,6 +227,11 @@ def current_theme() -> Theme:
 def apply_theme(app: QApplication, key: str) -> Theme:
     """Применяет тему по ключу; неизвестный ключ заменяет светлой темой."""
     theme = THEMES.get(key, LIGHT_THEME)
-    theme.apply(app)
+    previous_theme = _current_theme["theme"]
     _current_theme["theme"] = theme
+    try:
+        theme.apply(app)
+    except Exception:
+        _current_theme["theme"] = previous_theme
+        raise
     return theme

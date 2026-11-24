@@ -1,5 +1,6 @@
 """Мастер первого запуска приложения."""
 
+from html import escape
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -25,6 +26,9 @@ from sqlalchemy.orm import Session
 from internal_correspondence.core.constants import Role
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.core.settings import AppSettings
+from internal_correspondence.gui.custom_title_bar import (
+    TITLE_BAR_CONTENT_GAP_PROPERTY,
+)
 from internal_correspondence.importexport.branch_import import (
     InitialBranchImport,
     read_archive_branches,
@@ -33,6 +37,8 @@ from internal_correspondence.orm.models import Branch
 from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("first_run_wizard")
+FIRST_RUN_TITLE_BAR_CONTENT_GAP = 16
+FIRST_RUN_PAGE_TITLE_SPACER = "<br><br><br>"
 
 
 def load_branches(db_url: str) -> List[Tuple[str, str]]:
@@ -338,6 +344,10 @@ class FirstRunWizard(QWizard):
     def __init__(self, settings: AppSettings, parent=None) -> None:
         super().__init__(parent)
         self.settings = settings
+        self.setProperty(
+            TITLE_BAR_CONTENT_GAP_PROPERTY,
+            FIRST_RUN_TITLE_BAR_CONTENT_GAP,
+        )
         self.setWindowTitle(STRINGS.wizard_first_run_title)
         self.setWizardStyle(QWizard.ModernStyle)
         self.setOption(QWizard.HaveHelpButton, False)
@@ -346,6 +356,11 @@ class FirstRunWizard(QWizard):
         self.db_page = DatabasePage(settings)
         self.storage_page = StoragePage(settings)
         self.role_page = RolePage(settings)
+        self.setTitleFormat(Qt.RichText)
+        for page in (self.db_page, self.storage_page, self.role_page):
+            page.setTitle(
+                FIRST_RUN_PAGE_TITLE_SPACER + escape(page.title())
+            )
 
         self.addPage(self.db_page)
         self.addPage(self.storage_page)
