@@ -834,7 +834,36 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
             menubar,
             STRINGS.app_title,
             _window_control_labels(),
+            self._organization_title(),
         )
+
+    def _organization_title(self) -> str:
+        """Возвращает подпись роли или выбранного филиала для шапки."""
+        if self.settings.role == Role.HEAD_OFFICE.value:
+            return STRINGS.role_head_office
+
+        branch_id = str(self.settings.branch_id or "").strip()
+        if not branch_id:
+            return STRINGS.role_branch
+
+        session = self.db_manager.get_session()
+        try:
+            branch = session.get(Branch, branch_id)
+            if branch is not None and branch.name.strip():
+                return f"{branch.id} — {branch.name.strip()}"
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "Не удалось получить наименование филиала %s для шапки",
+                branch_id,
+                exc_info=True,
+            )
+        finally:
+            session.close()
+        return branch_id
+
+    def _refresh_organization_title(self) -> None:
+        """Обновляет центральную подпись главной шапки."""
+        self.window_context_title.set_context(self._organization_title())
 
     def _files_dock_action_toggled(self, checked: bool) -> None:
         """Включает или отключает док прикреплённых файлов из меню."""
@@ -876,6 +905,7 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         if dialog.exec_() == SettingsDialog.Accepted:
             settings_manager = SettingsManager()
             settings_manager.save(self.settings)
+            self._refresh_organization_title()
             QMessageBox.information(
                 self,
                 STRINGS.dialog_settings_title,
@@ -1057,18 +1087,21 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
 
     def _set_theme(self, theme_key: str) -> None:
         """Применяет тему оформления и сохраняет выбор в настройках."""
-        if self.settings.theme == theme_key:
+        if (
+            self.settings.theme == theme_key
+            and current_theme().key == theme_key
+        ):
             return
-        self.settings.theme = theme_key
-        apply_theme(QApplication.instance(), theme_key)
+        theme = apply_theme(QApplication.instance(), theme_key)
         self.window_controls.refresh_icons()
-        self._settings_manager.save(self.settings)
         # Перекрашиваем строки таблиц и графики
         self.materials_tab.refresh()
         self.telegram_tab.refresh()
         self.tasks_tab.apply_theme()
         self.statistics_tab.apply_theme()
         self.dashboard_tab.apply_theme()
+        self.settings.theme = theme.key
+        self._settings_manager.save(self.settings)
 
     def _export(self) -> None:
         """Формирует экспортные ZIP-архивы (в отдельном потоке)."""

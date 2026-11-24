@@ -34,10 +34,14 @@ from internal_correspondence.gui.application import (
     _window_control_labels,
 )
 from internal_correspondence.gui.custom_title_bar import (
+    DialogTitleBar,
+    DialogTitleBarController,
     DialogTitleBarInstaller,
+    TITLE_BAR_CONTENT_GAP_PROPERTY,
     _QtResizeHandler,
     install_dialog_title_bars,
 )
+from internal_correspondence.orm.models import Branch, TerritorialUnit
 from internal_correspondence.utils.string_resources import STRINGS
 
 
@@ -134,6 +138,18 @@ def test_main_window_uses_custom_title_bar(
     assert window.menuBar().height() == 46
     assert window.window_title.text() == STRINGS.app_title
     assert window.window_title.objectName() == "windowTitle"
+    assert window.window_context_title.text() == "BR-001"
+    assert window.window_context_title.objectName() == "windowContextTitle"
+    assert window.window_context_title.testAttribute(
+        Qt.WA_TransparentForMouseEvents
+    )
+    assert (
+        abs(
+            window.window_context_title.geometry().center().x()
+            - window.menuBar().rect().center().x()
+        )
+        <= 1
+    )
     assert window.menuBar() in window._window_drag_handler._targets
     assert window.window_title in window._window_drag_handler._targets
     assert window._qt_resize_handler is not None
@@ -151,6 +167,48 @@ def test_main_window_uses_custom_title_bar(
     assert all(not button.icon().isNull() for button in controls.buttons)
     assert [button.size().width() for button in controls.buttons] == [46, 46, 46]
     assert [button.size().height() for button in controls.buttons] == [44, 44, 44]
+    window.close()
+
+
+def test_main_window_title_shows_head_office(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """Для роли головного офиса шапка показывает название роли."""
+    settings, db, manager = window_env
+    settings.role = Role.HEAD_OFFICE.value
+    settings.branch_id = ""
+
+    window = MainWindow(settings, db, manager)
+
+    assert window.window_context_title.text() == STRINGS.role_head_office
+    window.close()
+
+
+def test_main_window_title_shows_selected_branch(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """Для выбранного филиала шапка показывает индекс и наименование."""
+    settings, db, manager = window_env
+    with db.get_session() as session:
+        session.add(TerritorialUnit(id="MSK", name="Москва"))
+        session.add(
+            Branch(
+                id="BR-001",
+                name="Московский филиал",
+                short_name="МФ",
+                territorial_unit_id="MSK",
+            )
+        )
+        session.commit()
+
+    window = MainWindow(settings, db, manager)
+
+    assert (
+        window.window_context_title.text()
+        == "BR-001 — Московский филиал"
+    )
     window.close()
 
 
@@ -335,6 +393,30 @@ def test_custom_title_bar_updates_maximize_action(
     window.close()
 
 
+def test_main_window_switches_theme_repeatedly(
+    window_env,
+    qt_app: QApplication,
+) -> None:
+    """Главное окно выдерживает повторную смену светлой и тёмной тем."""
+    from internal_correspondence.gui.theme import THEMES, current_theme
+
+    settings, db, manager = window_env
+    settings.theme = "light"
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    for theme_key in ("dark", "light", "dark", "light"):
+        window._set_theme(theme_key)
+        qt_app.processEvents()
+        assert current_theme().key == theme_key
+        assert window.settings.theme == theme_key
+        assert THEMES[theme_key].qss_colors["COMBO_ARROW"] in qt_app.styleSheet()
+        assert not window.window_controls.close_button.icon().isNull()
+
+    window.close()
+
+
 def test_regular_dialog_receives_custom_title_bar(
     qt_app: QApplication,
 ) -> None:
@@ -427,6 +509,26 @@ def test_dialog_title_bar_preserves_content_space_and_state(
     controller.window_controls.maximize_button.click()
     qt_app.processEvents()
     assert not dialog.isMaximized()
+    dialog.close()
+
+
+def test_dialog_title_bar_reserves_requested_content_gap(
+    qt_app: QApplication,
+) -> None:
+    """Индивидуальный отступ добавляется после шапки без сжатия окна."""
+    dialog = QDialog()
+    dialog.setProperty(TITLE_BAR_CONTENT_GAP_PROPERTY, 16)
+    original_margins = dialog.getContentsMargins()
+    dialog.resize(420, 260)
+    original_height = dialog.height()
+
+    controller = DialogTitleBarController(dialog, _window_control_labels())
+
+    margins = dialog.getContentsMargins()
+    reserved_height = DialogTitleBar.HEIGHT + 16
+    assert margins[1] == original_margins[1] + reserved_height
+    assert dialog.height() >= original_height + reserved_height
+    controller.deleteLater()
     dialog.close()
 
 
