@@ -5,19 +5,17 @@
    (территориальные единицы, три филиала, страны, звания, потребители,
    руководители) → экспортный файл для каждого филиала.
 2. Для каждого филиала: создание базы и хранилища → приём справочников →
-   генерация данных филиала (tests.seed_branch, с файлами-вложениями) →
+   генерация данных филиала (tests.seed_data.seed_branch_2, с файлами-вложениями) →
    экспортный файл филиала.
 3. Головной офис: приём файлов филиалов → регистрация документов и оценки
-   (tests.seed_head_office) → экспортный файл для каждого филиала.
+   (tests.seed_data.seed_head_office_3) → экспортный файл для каждого филиала.
 4. Каждый филиал принимает свой файл от головного офиса.
 
 Успех: записи филиала и головного офиса синхронизированы (входящие номера
 и даты, оценки, типы и адресация докладов), конфликтов при импорте нет.
 """
 
-import os
 from argparse import Namespace
-from datetime import date
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -37,8 +35,8 @@ from internal_correspondence.orm.models import (
     TerritorialUnit,
 )
 from internal_correspondence.services.change_tracking import register_change_tracking
-from tests import seed_branch, seed_head_office, seed_reference
-from tests.seed_reference import create_reference_data
+from tests.seed_data import seed_head_office_3, seed_branch_2
+from tests.seed_data.seed_reference_1 import create_reference_data
 
 BRANCHES: List[Tuple[str, str]] = [
     ("BR-001", "Ф-1"),
@@ -157,7 +155,7 @@ def _step2_branches(
         assert result["conflicts"] == [], result["conflicts"]
         reference_zips[branch_id].unlink()
 
-        assert seed_branch.main(
+        assert seed_branch_2.main(
             [
                 "--db-url", db_url,
                 "--storage", storage.as_posix(),
@@ -204,7 +202,7 @@ def _step3_head_office_registration(
         assert result["conflicts"] == [], result["conflicts"]
         branch_zips[branch_id].unlink()
 
-    assert seed_head_office.main(
+    assert seed_head_office_3.main(
         [
             "--db-url", hq_db_url,
             "--storage", hq_storage.as_posix(),

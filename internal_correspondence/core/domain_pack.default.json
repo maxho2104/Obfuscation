@@ -775,6 +775,7 @@
   },
   "strings": {
     "app_title": "Внутренняя корреспонденция",
+    "window_title_with_org": "{app_title} — {organization}",
     "menu_file": "Файл",
     "menu_settings": "Настройки...",
     "menu_exit": "Выход",
@@ -1005,8 +1006,7 @@
     "task_no_end": "Бессрочная",
     "task_middle_title": "Задачи вышестоящего элемента",
     "task_right_title": "Задачи элемента",
-    "task_hide_distributed": "Скрыть распределённые",
-    "task_show_distributed": "Показать распределённые",
+    "task_show_distributed_check": "Отображать распределённые",
     "task_distributed_tooltip": "Показать или скрыть задачи, уже распределённые нижестоящим элементам",
     "task_empty": "Задачи не найдены",
     "task_all_distributed": "Все задачи распределены ниже",

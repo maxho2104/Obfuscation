@@ -174,6 +174,16 @@ def test_dialog_fits_content_without_scrollbar(qapp, base_data) -> None:
         assert not small._scroll.verticalScrollBar().isVisible()
         small.close()
 
+        # Компактный диалог документа целиком помещается без прокрутки
+        office = MaterialEditDialog(
+            session, branch_id=None, role=Role.HEAD_OFFICE.value
+        )
+        office.show()
+        qapp.processEvents()
+        assert office._scroll.viewport().height() >= office._scroll.widget().sizeHint().height()
+        assert office._scroll.verticalScrollBar().maximum() == 0
+        office.close()
+
         # Объёмный диалог: высота — min(контент, экран), раскрытие «Больше» пересчитывает
         big = MaterialEditDialog(session, branch_id="F1", role=Role.BRANCH.value)
         big.show()
@@ -190,13 +200,8 @@ def test_dialog_fits_content_without_scrollbar(qapp, base_data) -> None:
 def _expected_fit_height(dialog) -> int:
     """Высота диалога по логике EntityEditDialog._fit_to_content."""
     hint = dialog._scroll.widget().sizeHint()
-    margins = dialog.layout().contentsMargins()
-    return (
-        hint.height()
-        + margins.top()
-        + margins.bottom()
-        + 2 * dialog._scroll.frameWidth()
-    )
+    chrome = dialog.height() - dialog._scroll.viewport().height()
+    return hint.height() + chrome
 
 
 def test_number_date_collects_both_columns(qapp, db_manager) -> None:
@@ -409,9 +414,23 @@ def test_material_dialog_head_office_fields(qapp, base_data) -> None:
         dialog = MaterialEditDialog(
             session, branch_id=None, role=Role.HEAD_OFFICE.value
         )
-        # Редактор филиала отображается для ручного ввода
+        # Редактор филиала обязателен (жирная метка с красной звёздочкой,
+        # без подчёркивания уникальности) и скрыт под кнопкой «Больше»
         branch_element = dialog.element("branch_id")
         assert branch_element is not None
+        assert branch_element.is_required()
+        assert not branch_element.is_unique()
+        label = dialog._label_for(branch_element)  # pylint: disable=protected-access
+        assert "*" in label.text()
+        assert not label.font().underline()
+        # Заполненное значение есть — строка скрыта до нажатия «Больше»
+        assert branch_element.isHidden()
+        # Строка филиала — последняя среди дополнительных полей
+        last_row = dialog._rows[-1]  # pylint: disable=protected-access
+        assert last_row["element"] is branch_element
+        assert last_row["is_extra"]
+        dialog.more_button.click()
+        assert not branch_element.isHidden()
 
         material = ScientificMaterial(
             type=MaterialType.MESSAGE,
@@ -439,6 +458,28 @@ def test_telegram_dialog_branch_role(qapp, base_data) -> None:
         assert dialog.element("report_addresses") is not None
         assert dialog.element("employees") is not None
         assert dialog.element("branch_id") is None
+
+
+def test_telegram_dialog_head_office_branch_in_extra(qapp, base_data) -> None:
+    """Телеграмма для головного офиса: обязательный филиал скрыт под «Больше»."""
+    with base_data.get_session() as session:
+        dialog = TelegramEditDialog(
+            session, branch_id=None, role=Role.HEAD_OFFICE.value
+        )
+        branch_element = dialog.element("branch_id")
+        assert branch_element is not None
+        assert branch_element.is_required()
+        assert not branch_element.is_unique()
+        label = dialog._label_for(branch_element)  # pylint: disable=protected-access
+        assert "*" in label.text()
+        assert not label.font().underline()
+        assert branch_element.isHidden()
+        last_row = dialog._rows[-1]  # pylint: disable=protected-access
+        assert last_row["element"] is branch_element
+        assert last_row["is_extra"]
+        dialog.more_button.click()
+        assert not branch_element.isHidden()
+        dialog.close()
 
 
 def test_enum_editor_empty_item_for_nullable_column(qapp, base_data) -> None:
