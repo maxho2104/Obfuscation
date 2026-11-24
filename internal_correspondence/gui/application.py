@@ -556,6 +556,7 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
 
         self.materials_tab.filtersChanged.connect(self._materials_filters_changed)
         self.telegram_tab.filtersChanged.connect(self._telegram_filters_changed)
+        self.tasks_tab.filtersChanged.connect(self._tasks_filters_changed)
 
         # Док-виджет прикреплённых файлов привязан к текущей записи вкладки
         self.files_dock = AttachedFilesWidget(
@@ -683,6 +684,10 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
     def _telegram_filters_changed(self, filters) -> None:
         """Запоминает фильтры телеграмм для сохранения при закрытии."""
         self.settings.telegram_filters = serialize_filters(filters)
+
+    def _tasks_filters_changed(self, filters) -> None:
+        """Запоминает фильтры таблицы управления задачами."""
+        self.settings.task_filters = serialize_filters(filters)
 
     def _setup_menu(self) -> None:
         """Формирует главное меню приложения."""
@@ -901,6 +906,12 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self.settings.telegram_sort = _format_sort_state(
             self.telegram_tab.sort_state()
         )
+        self.settings.task_columns_layout = (
+            self.tasks_tab.management_widget.columns_layout()
+        )
+        self.settings.task_sort = _format_sort_state(
+            self.tasks_tab.management_widget.sort_state()
+        )
         self._save_files_dock_state()
         self._settings_manager.save(self.settings)
 
@@ -971,6 +982,13 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
                 self.telegram_tab.set_column_widths(telegram_widths)
         self._restore_table_sort(self.materials_tab, self.settings.material_sort)
         self._restore_table_sort(self.telegram_tab, self.settings.telegram_sort)
+        if self.settings.task_columns_layout:
+            self.tasks_tab.management_widget.set_columns_layout(
+                self.settings.task_columns_layout
+            )
+        self._restore_table_sort(
+            self.tasks_tab.management_widget, self.settings.task_sort
+        )
         self._restore_filters()
 
     def _restore_table_sort(self, tab, raw: str) -> None:
@@ -1030,6 +1048,11 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         )
         self.telegram_tab.set_filters(
             deserialize_filters(self.settings.telegram_filters, Telegram)
+        )
+        self.tasks_tab.management_widget.set_filters(
+            deserialize_filters(
+                self.settings.task_filters, ScientificTask
+            )
         )
 
     def _set_theme(self, theme_key: str) -> None:

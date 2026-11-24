@@ -417,3 +417,236 @@ def test_branch_has_save_button_instead_of_export(
             assert not office_widget.export_button.isHidden()
         finally:
             office_widget.deleteLater()
+
+
+def _setup_management_data(session):
+    """Задачи с назначениями по уровням и двумя документами."""
+    from uuid import uuid4
+
+    from internal_correspondence.core.constants import MaterialType
+    from internal_correspondence.orm.models import (
+        ScientificMaterial,
+        material_task_association,
+        telegram_task_association,
+    )
+
+    _setup_data(session)
+    branch = session.query(Branch).one()
+    department = session.query(Department).one()
+    employee = session.query(Employee).one()
+    task = session.query(ScientificTask).one()
+    task.full_threshold = 10
+    task.partial_threshold = 5
+    task.comment = "примечание"
+    session.add_all(
+        [
+            AddedTask(task_id=task.id, node_type="region", node_id="MSK"),
+            AddedTask(task_id=task.id, node_type="branch", node_id=branch.id),
+            AddedTask(
+                task_id=task.id,
+                node_type="department",
+                node_id=str(department.id),
+            ),
+            AddedTask(
+                task_id=task.id, node_type="employee", node_id=str(employee.id)
+            ),
+        ]
+    )
+    material = ScientificMaterial(
+        id=uuid4(),
+        name="Материал 1",
+        branch_id=branch.id,
+        type=MaterialType.DOCUMENT.value,
+        outgoing_date=date(2026, 1, 5),
+    )
+    session.add(material)
+    session.flush()
+    session.execute(
+        material_task_association.insert().values(
+            material_id=material.id, task_id=task.id
+        )
+    )
+    session.commit()
+    return branch, department, employee, task
+
+
+def test_management_mode_hides_distribution_panel(
+    qt_app, db_manager: DatabaseManager
+) -> None:
+    """Кнопка «Управление задачами» скрывает распределение и показывает таблицу."""
+    from internal_correspondence.gui.task_distribution_widget import (
+        TaskDistributionWidget,
+    )
+
+    with db_manager.get_session() as session:
+        _setup_management_data(session)
+        widget = TaskDistributionWidget(session, Role.HEAD_OFFICE.value)
+        view = widget.management_widget
+        try:
+            assert widget.manage_button.isChecked() is False
+            assert widget.is_management_mode() is False
+            assert widget.stack.currentWidget() is widget.distribution_page
+            # Кнопка режима подсвечена темой как основная
+            assert widget.manage_button.property("role") == "primary"
+
+            widget.manage_button.setChecked(True)
+            assert widget.is_management_mode() is True
+            assert widget.stack.currentWidget() is view
+            assert widget.distributed_button.isHidden() is True
+            # Дерево и обе таблицы распределения скрыты вместе со страницей
+            assert widget.distribution_page.isHidden() is True
+            assert view.table_model.rowCount() == 1
+
+            widget.set_management_mode(False)
+            assert widget.is_management_mode() is False
+            assert widget.distributed_button.isHidden() is False
+        finally:
+            widget.deleteLater()
+
+
+def test_management_table_shows_assignments_for_head_office(
+    qt_app, db_manager: DatabaseManager
+) -> None:
+    """Головной офис видит назначения регионам и филиалам, процент и примечание."""
+    from PyQt5.QtCore import Qt
+
+    from internal_correspondence.gui.task_distribution_widget import (
+        TaskDistributionWidget,
+    )
+
+    with db_manager.get_session() as session:
+        _setup_management_data(session)
+        widget = TaskDistributionWidget(session, Role.HEAD_OFFICE.value)
+        widget.set_management_mode(True)
+        model = widget.management_widget.table_model
+        headers = [
+            model.headerData(index, Qt.Horizontal, Qt.DisplayRole)
+            for index in range(model.columnCount())
+        ]
+        try:
+            assert headers == [
+                "Код задачи",
+                "Наименование",
+                "Тип",
+                "Назначено регионам",
+                "Назначено филиалам",
+                "% процент выполнения",
+                "Частичное решение",
+                "Полное решение",
+                "Начало",
+                "Окончание",
+                "Примечание",
+            ]
+            values = {
+                header: model.data(model.index(0, column), Qt.DisplayRole)
+                for column, header in enumerate(headers)
+            }
+            assert values["Код задачи"] == "T1"
+            assert values["Тип"] == "ОЗ"
+            assert values["Назначено регионам"] == "Москва"
+            assert values["Назначено филиалам"] == "Ф-1"
+            assert values["% процент выполнения"] == "10%"
+            assert values["Частичное решение"] == "5,00"
+            assert values["Полное решение"] == "10,00"
+            assert values["Начало"] == "10.01.2026"
+            assert values["Окончание"] == ""
+            assert values["Примечание"] == "примечание"
+        finally:
+            widget.deleteLater()
+
+
+def test_management_table_shows_assignments_for_branch(
+    qt_app, db_manager: DatabaseManager
+) -> None:
+    """Филиал видит назначения своим отделам и исполнителям."""
+    from PyQt5.QtCore import Qt
+
+    from internal_correspondence.gui.task_distribution_widget import (
+        TaskDistributionWidget,
+    )
+
+    with db_manager.get_session() as session:
+        _setup_management_data(session)
+        widget = TaskDistributionWidget(session, Role.BRANCH.value, "BR1")
+        widget.set_management_mode(True)
+        model = widget.management_widget.table_model
+        headers = [
+            model.headerData(index, Qt.Horizontal, Qt.DisplayRole)
+            for index in range(model.columnCount())
+        ]
+        try:
+            assert "Назначено отделам" in headers
+            assert "Назначено исполнителям" in headers
+            assert "Назначено регионам" not in headers
+            values = {
+                header: model.data(model.index(0, column), Qt.DisplayRole)
+                for column, header in enumerate(headers)
+            }
+            assert values["Назначено отделам"] == "Отдел 1"
+            assert values["Назначено исполнителям"] == "Иванов И."
+            assert values["% процент выполнения"] == "10%"
+        finally:
+            widget.deleteLater()
+
+
+def test_management_table_search_and_sort(
+    qt_app, db_manager: DatabaseManager
+) -> None:
+    """Поиск и сортировка работают по вычисляемым колонкам."""
+    from internal_correspondence.gui.task_distribution_widget import (
+        TaskDistributionWidget,
+    )
+
+    with db_manager.get_session() as session:
+        _setup_management_data(session)
+        session.add(
+            ScientificTask(
+                id="T2",
+                name="Задача 2",
+                type=ScientificTaskType.ADDITIONAL.value,
+                start_date=date(2026, 2, 1),
+                full_threshold=2,
+            )
+        )
+        session.commit()
+        widget = TaskDistributionWidget(session, Role.HEAD_OFFICE.value)
+        widget.set_management_mode(True)
+        view = widget.management_widget
+        try:
+            assert view.table_model.rowCount() == 2
+            view.search_edit.setText("задача 2")
+            assert view.table_model.rowCount() == 1
+            assert view.table_model.task_at(0).id == "T2"
+
+            view.search_edit.setText("москва")
+            assert view.table_model.task_at(0).id == "T1"
+
+            view.search_edit.clear()
+            assert view.set_sort_state("progress", True) is True
+            assert view.sort_state() == ("progress", True)
+            assert view.table_model.task_at(0).id == "T1"
+        finally:
+            widget.deleteLater()
+
+
+def test_management_table_columns_layout_roundtrip(
+    qt_app, db_manager: DatabaseManager
+) -> None:
+    """Раскладка колонок сохраняется и восстанавливается."""
+    from internal_correspondence.gui.task_distribution_widget import (
+        TaskDistributionWidget,
+    )
+
+    with db_manager.get_session() as session:
+        _setup_management_data(session)
+        widget = TaskDistributionWidget(session, Role.HEAD_OFFICE.value)
+        view = widget.management_widget
+        try:
+            layout = view.columns_layout()
+            assert "id:" in layout and "comment:" in layout
+            view.set_columns_layout("name:300:1,id:90:0")
+            changed = view.columns_layout()
+            assert "name:300:1" in changed
+            assert "id:90:0" in changed
+        finally:
+            widget.deleteLater()

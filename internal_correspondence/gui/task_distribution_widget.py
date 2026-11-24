@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QSizePolicy,
     QSplitter,
+    QStackedWidget,
     QTableView,
     QToolButton,
     QTreeWidget,
@@ -55,6 +56,8 @@ from internal_correspondence.services.task_distribution_service import (
     TaskDistributionService,
 )
 from internal_correspondence.gui.task_dialog import ScientificTaskDialog
+from internal_correspondence.gui.task_management_model import management_columns
+from internal_correspondence.gui.task_management_widget import TaskManagementWidget
 from internal_correspondence.gui.task_table_model import (
     TASK_MIME_TYPE,
     TaskTableModel,
@@ -132,6 +135,8 @@ class _TaskTableView(QTableView):
 class TaskDistributionWidget(QWidget):
     """Дерево организации, задачи родителя и задачи выбранного узла."""
 
+    filtersChanged = pyqtSignal(list)
+
     def __init__(
         self,
         session,
@@ -175,6 +180,16 @@ class TaskDistributionWidget(QWidget):
         self.distributed_button.setToolTip(STRINGS.task_distributed_tooltip)
         self.distributed_button.toggled.connect(self._on_distributed_toggled)
         top.addWidget(self.distributed_button)
+
+        # Кнопка перехода в режим управления задачами: подсвечена, чтобы
+        # её было видно в режиме распределения.
+        self.manage_button = QToolButton()
+        self.manage_button.setCheckable(True)
+        self.manage_button.setText(STRINGS.task_manage)
+        self.manage_button.setToolTip(STRINGS.task_manage_tooltip)
+        self.manage_button.setProperty("role", "primary")
+        self.manage_button.toggled.connect(self._on_manage_toggled)
+        top.addWidget(self.manage_button)
 
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
@@ -314,10 +329,36 @@ class TaskDistributionWidget(QWidget):
         self.save_distribution_button.setVisible(not self.is_head_office)
         bottom.addWidget(self.save_distribution_button)
 
+        # Режим распределения: дерево, две таблицы и нижние кнопки
+        self.distribution_page = QWidget()
+        distribution_layout = QVBoxLayout(self.distribution_page)
+        distribution_layout.setContentsMargins(0, 0, 0, 0)
+        distribution_layout.addWidget(self.splitter, 1)
+        distribution_layout.addLayout(bottom)
+
+        # Режим управления: таблица задач периода с назначениями
+        self.management_widget = TaskManagementWidget(
+            self.session,
+            management_columns(self.is_head_office),
+            is_head_office=self.is_head_office,
+            scope_branch_id=self.branch_id,
+        )
+        self.management_widget.filtersChanged.connect(
+            self.filtersChanged.emit
+        )
+        self.management_widget.refreshRequested.connect(
+            self._refresh_after_data_change
+        )
+        self.management_widget.editRequested.connect(self._edit_task)
+        self.management_widget.deleteRequested.connect(self._delete_task)
+
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.distribution_page)
+        self.stack.addWidget(self.management_widget)
+
         layout = QVBoxLayout(self)
         layout.addLayout(top)
-        layout.addWidget(self.splitter, 1)
-        layout.addLayout(bottom)
+        layout.addWidget(self.stack, 1)
 
     @staticmethod
     def _configure_table(view: QTableView) -> None:
@@ -451,6 +492,8 @@ class TaskDistributionWidget(QWidget):
         # перестраивается до обновления таблиц.
         self._populate_tree()
         self._reload_all()
+        if self.is_management_mode():
+            self._reload_management()
 
     def _on_tree_current_item_changed(
         self, current: Optional[QTreeWidgetItem], _previous: Optional[QTreeWidgetItem]
@@ -516,12 +559,16 @@ class TaskDistributionWidget(QWidget):
         self._reload_periods()
         self._populate_tree()
         self._reload_all()
+        if self.is_management_mode():
+            self._reload_management()
 
     def _refresh_after_data_change(self) -> None:
         """Обновляет периоды, дерево и таблицы после правки задач."""
         self._reload_periods()
         self._populate_tree()
         self._reload_all()
+        if self.is_management_mode():
+            self._reload_management()
 
     # ------------------------------------------------------------------
     # Таблицы
@@ -617,6 +664,39 @@ class TaskDistributionWidget(QWidget):
             else STRINGS.task_hide_distributed
         )
         self._refresh_tables()
+
+    # ------------------------------------------------------------------
+    # Режим «Управление задачами»
+    # ------------------------------------------------------------------
+
+    def _on_manage_toggled(self, checked: bool) -> None:
+        """Переключает режим распределения и режим управления задачами."""
+        if checked:
+            self._reload_management()
+        self.stack.setCurrentWidget(
+            self.management_widget if checked else self.distribution_page
+        )
+        # Фильтр «скрыть распределённые» относится к режиму распределения
+        self.distributed_button.setVisible(not checked)
+        self.manage_button.setToolTip(
+            STRINGS.task_manage_hint if checked else STRINGS.task_manage_tooltip
+        )
+
+    def _reload_management(self) -> None:
+        """Заполняет таблицу управления задачами выбранного периода."""
+        period = self.current_period
+        if period is None:
+            self.management_widget.set_tasks([])
+            return
+        self.management_widget.set_tasks(self.service.tasks(period))
+
+    def is_management_mode(self) -> bool:
+        """Проверяет, открыт ли режим управления задачами."""
+        return self.stack.currentWidget() is self.management_widget
+
+    def set_management_mode(self, enabled: bool) -> None:
+        """Переключает режим управления задачами программно."""
+        self.manage_button.setChecked(enabled)
 
     @staticmethod
     def _node_title(node: DistributionNode) -> str:
@@ -1021,3 +1101,4 @@ class TaskDistributionWidget(QWidget):
         """Перерисовывает таблицы после смены темы."""
         self.middle_model.refresh_theme()
         self.right_model.refresh_theme()
+        self.management_widget.table_model.refresh_theme()

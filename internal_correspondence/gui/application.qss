@@ -55,19 +55,20 @@ QPushButton:disabled, QToolButton:disabled {
     border-color: {{BORDER}};
 }
 
-QPushButton[role="primary"], QPushButton:default {
+QPushButton[role="primary"], QPushButton:default, QToolButton[role="primary"] {
     background-color: {{ACCENT}};
     color: {{ON_ACCENT}};
     border-color: {{ACCENT}};
     font-weight: 600;
 }
 
-QPushButton[role="primary"]:hover, QPushButton:default:hover {
+QPushButton[role="primary"]:hover, QPushButton:default:hover, QToolButton[role="primary"]:hover {
     background-color: {{ACCENT_HOVER}};
     border-color: {{ACCENT_HOVER}};
 }
 
-QPushButton[role="primary"]:pressed, QPushButton:default:pressed {
+QPushButton[role="primary"]:pressed, QPushButton:default:pressed, QToolButton[role="primary"]:pressed,
+QToolButton[role="primary"]:checked {
     background-color: {{ACCENT_PRESSED}};
     border-color: {{ACCENT_PRESSED}};
 }

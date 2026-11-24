@@ -335,6 +335,25 @@ class AppStrings:
     task_code_required: str = "Не указан код задачи."
     task_name_required: str = "Не указано наименование задачи."
     task_threshold_order: str = "Частичное решение не может быть больше полного."
+    task_manage: str = "Управление задачами"
+    task_manage_tooltip: str = (
+        "Показать таблицу задач периода с назначениями и процентом выполнения"
+    )
+    task_manage_hint: str = "Режим управления задачами"
+    task_col_code: str = "Код задачи"
+    task_col_name: str = "Наименование"
+    task_col_type: str = "Тип"
+    task_col_regions: str = "Назначено регионам"
+    task_col_branches: str = "Назначено филиалам"
+    task_col_departments: str = "Назначено отделам"
+    task_col_employees: str = "Назначено исполнителям"
+    task_col_progress: str = "% процент выполнения"
+    task_col_partial: str = "Частичное решение"
+    task_col_full: str = "Полное решение"
+    task_col_start: str = "Начало"
+    task_col_end: str = "Окончание"
+    task_col_note: str = "Примечание"
+    task_manage_empty: str = "За выбранный период задач нет"
 
     # --- Удаление записей (orm/labels) ---
     msg_delete_records_one: str = "Вы действительно хотите удалить запись о {entity}?"

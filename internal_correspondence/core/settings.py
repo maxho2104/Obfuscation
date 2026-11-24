@@ -61,6 +61,12 @@ class AppSettings:
     material_filters: str = ""
     telegram_filters: str = ""
 
+    # Таблица режима «Управление задачами»: раскладка колонок, сортировка
+    # (тот же формат) и фильтры
+    task_columns_layout: str = ""
+    task_sort: str = ""
+    task_filters: str = ""
+
     # Панель прикреплённых файлов: видимость, область закрепления,
     # плавающее окно и его геометрия (см. gui/application.py)
     files_dock_visible: str = "true"
