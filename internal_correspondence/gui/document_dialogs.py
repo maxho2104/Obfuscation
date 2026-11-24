@@ -7,6 +7,10 @@
 в зависимости от выбранного значения «Типа» (семантические ключи
 IntEnum, не коды пакета предметной области).
 
+Для роли «головной офис» поле «Филиал» находится среди дополнительных
+полей, раскрываемых кнопкой «Больше» (``branch_in_extra``); обязательность
+сохраняется.
+
 Прикрепление файлов к документам выполняется док-виджетом файлов
 (см. ``gui/application.py``), а не диалогами редактирования.
 """
@@ -73,6 +77,7 @@ class MaterialEditDialog(EntityEditDialog):
             extra_fields=extra_fields,
             role=role,
             fixed_branch_id=branch_id,
+            branch_in_extra=True,
             visibility_driver="type",
             visibility_rules={
                 "serial_number": _SAMPLE_OR_DOC,
@@ -238,6 +243,7 @@ class TelegramEditDialog(EntityEditDialog):
             extra_fields=branch_extra if is_branch else office_extra,
             role=role,
             fixed_branch_id=branch_id,
+            branch_in_extra=True,
             parent=parent,
         )
 

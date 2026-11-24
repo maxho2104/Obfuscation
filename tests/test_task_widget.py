@@ -221,13 +221,12 @@ def test_distributed_toggle_filters_distributed_tasks(
             assert widget.middle_model.rowCount() == 2
             assert widget.right_model.rowCount() == 1
 
-            widget.distributed_button.setChecked(True)
+            widget.distributed_check.setChecked(False)
             assert widget.middle_model.rowCount() == 1
             assert widget.middle_model.task_at(0).id == "T1"
             assert widget.right_model.rowCount() == 0
-            assert widget.distributed_button.text() == "Показать распределённые"
 
-            widget.distributed_button.setChecked(False)
+            widget.distributed_check.setChecked(True)
             assert widget.middle_model.rowCount() == 2
             assert widget.right_model.rowCount() == 1
         finally:
@@ -492,14 +491,14 @@ def test_management_mode_hides_distribution_panel(
             widget.manage_button.setChecked(True)
             assert widget.is_management_mode() is True
             assert widget.stack.currentWidget() is view
-            assert widget.distributed_button.isHidden() is True
+            assert widget.distributed_check.isHidden() is True
             # Дерево и обе таблицы распределения скрыты вместе со страницей
             assert widget.distribution_page.isHidden() is True
             assert view.table_model.rowCount() == 1
 
             widget.set_management_mode(False)
             assert widget.is_management_mode() is False
-            assert widget.distributed_button.isHidden() is False
+            assert widget.distributed_check.isHidden() is False
         finally:
             widget.deleteLater()
 

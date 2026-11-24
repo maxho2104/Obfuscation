@@ -680,9 +680,14 @@ class DialogTitleBarInstaller(QObject):
         # открывается нативным средством ОС и не оформляется приложением.
         if isinstance(dialog, (QProgressDialog, QFileDialog)):
             return False
-        # Плагин offscreen аварийно завершается при безрамочном QWizard,
-        # QMessageBox. В обычном Windows/X11-сеансе ограничение отсутствует.
-        unsupported_offscreen = (QWizard, QMessageBox)
+        # QWizard раскладывает дочерние виджеты вручную, без QLayout, и
+        # игнорирует contents margins: кастомная шапка перекрывает заголовок
+        # страницы. Мастер сохраняет системную рамку окна.
+        if isinstance(dialog, QWizard):
+            return False
+        # Плагин offscreen аварийно завершается при безрамочном QMessageBox.
+        # В обычном Windows/X11-сеансе ограничение отсутствует.
+        unsupported_offscreen = (QMessageBox,)
         return not (
             (platform_name or app.platformName()) == "offscreen"
             and isinstance(dialog, unsupported_offscreen)

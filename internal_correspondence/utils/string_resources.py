@@ -21,6 +21,7 @@ class AppStrings:
     """Строки приложения (значения по умолчанию)."""
 
     app_title: str = "Внутренняя корреспонденция"
+    window_title_with_org: str = "{app_title} — {organization}"
     menu_file: str = "Файл"
     menu_settings: str = "Настройки..."
     menu_exit: str = "Выход"
@@ -290,8 +291,7 @@ class AppStrings:
     task_no_end: str = "Бессрочная"
     task_middle_title: str = "Задачи вышестоящего элемента"
     task_right_title: str = "Задачи элемента"
-    task_hide_distributed: str = "Скрыть распределённые"
-    task_show_distributed: str = "Показать распределённые"
+    task_show_distributed_check: str = "Отображать распределённые"
     task_distributed_tooltip: str = (
         "Показать или скрыть задачи, уже распределённые нижестоящим элементам"
     )

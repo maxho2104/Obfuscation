@@ -6,9 +6,11 @@
 ORM-моделей: уникальности исходящих номеров и связей между сущностями.
 
 Примеры запуска:
-    python -m tests.seed_data
     python tests/seed_data.py --clear --materials 200 --telegrams 100 --seed 42
     python tests/seed_data.py --with-files --storage "D:/Projects/Obfuscation/Файловое хранилище"
+
+Запуск через ``python -m`` недоступен: имя ``tests.seed_data`` занято
+одноимённым пакетом фазовых генераторов (``tests/seed_data/``).
 """
 
 import argparse

@@ -109,6 +109,7 @@ class EditElement(QWidget):
         self.model_class = attribute.class_
         self.field_name: str = attribute.key
         self._label_override = label
+        self._unique_override: Optional[bool] = None
         self.editor = self._build_editor()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -130,8 +131,14 @@ class EditElement(QWidget):
         """Проверяет обязательность заполнения переменной."""
         return field_required(self.model_class, self.field_name)
 
+    def set_unique(self, unique: Optional[bool]) -> None:
+        """Принудительно задаёт признак уникальности (None — из метаданных)."""
+        self._unique_override = unique
+
     def is_unique(self) -> bool:
         """Проверяет, входит ли колонка в ограничение уникальности."""
+        if self._unique_override is not None:
+            return self._unique_override
         return field_unique(self.model_class, self.field_name)
 
     def label_widget(self) -> QLabel:

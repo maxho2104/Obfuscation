@@ -132,7 +132,8 @@ def test_main_window_uses_custom_title_bar(
     assert window.windowFlags() & Qt.FramelessWindowHint
     assert window.menuBar().objectName() == "mainMenuBar"
     assert window.menuBar().height() == 46
-    assert window.window_title.text() == STRINGS.app_title
+    assert window.window_title.text() == window.windowTitle()
+    assert STRINGS.app_title in window.window_title.text()
     assert window.window_title.objectName() == "windowTitle"
     assert window.menuBar() in window._window_drag_handler._targets
     assert window.window_title in window._window_drag_handler._targets
@@ -361,10 +362,7 @@ def test_regular_dialog_receives_custom_title_bar(
     dialog.close()
 
 
-@pytest.mark.parametrize(
-    "dialog_class",
-    [QWizard, QMessageBox],
-)
+@pytest.mark.parametrize("dialog_class", [QMessageBox])
 def test_system_dialogs_are_enabled_outside_offscreen(
     dialog_class,
     qt_app: QApplication,
@@ -374,6 +372,28 @@ def test_system_dialogs_are_enabled_outside_offscreen(
     assert DialogTitleBarInstaller._should_install(dialog, "windows")
     assert not DialogTitleBarInstaller._should_install(dialog, "offscreen")
     dialog.close()
+
+
+def test_wizard_keeps_system_title_bar(qt_app: QApplication) -> None:
+    """Мастер никогда не получает кастомную шапку.
+
+    QWizard игнорирует contents margins, поэтому шапка перекрывала бы
+    заголовок страницы (см. FirstRunWizard).
+    """
+    wizard = QWizard()
+    assert not DialogTitleBarInstaller._should_install(wizard, "windows")
+    assert not DialogTitleBarInstaller._should_install(wizard, "offscreen")
+
+    from PyQt5.QtWidgets import QWizardPage
+
+    # См. FirstRunWizard: ModernStyle; страница без Aero-стиля offscreen-плагина
+    wizard.setWizardStyle(QWizard.ModernStyle)
+    wizard.addPage(QWizardPage())
+    wizard.show()
+    qt_app.processEvents()
+    assert getattr(wizard, "_custom_title_bar_controller", None) is None
+    assert not wizard.windowFlags() & Qt.FramelessWindowHint
+    wizard.close()
 
 
 @pytest.mark.parametrize("dialog_class", [QProgressDialog, QFileDialog])
@@ -790,6 +810,109 @@ def test_files_changed_signal_updates_document_row_highlight(window_env, qt_app:
 
     color = window.materials_tab.table_model.index(row, 0).data(Qt.BackgroundRole)
     assert color == theme.modified_row
+    window.close()
+
+
+def test_window_title_shows_head_office_role(
+    window_env, qt_app: QApplication
+) -> None:
+    """Для роли головного офиса заголовок содержит «Головной офис»."""
+    settings, db, manager = window_env
+    settings.role = Role.HEAD_OFFICE.value
+    window = MainWindow(settings, db, manager)
+    expected = STRINGS.window_title_with_org.format(
+        app_title=STRINGS.app_title,
+        organization=STRINGS.role_head_office,
+    )
+    assert window.windowTitle() == expected
+    assert window.window_title.text() == expected
+    window.close()
+
+
+def test_window_title_shows_branch_short_name(
+    window_env, qt_app: QApplication
+) -> None:
+    """Для филиала заголовок содержит его краткое наименование из БД."""
+    from internal_correspondence.orm.models import Branch, TerritorialUnit
+
+    settings, db, manager = window_env
+    with db.get_session() as session:
+        session.add(TerritorialUnit(id="MSK", name="Москва"))
+        session.add(
+            Branch(
+                id="BR-001",
+                name="Полное наименование филиала",
+                short_name="Филиал №1",
+                territorial_unit_id="MSK",
+            )
+        )
+        session.commit()
+
+    window = MainWindow(settings, db, manager)
+    expected = STRINGS.window_title_with_org.format(
+        app_title=STRINGS.app_title,
+        organization="Филиал №1",
+    )
+    assert window.windowTitle() == expected
+    assert window.window_title.text() == expected
+    window.close()
+
+
+def test_window_title_falls_back_to_branch_full_name(
+    window_env, qt_app: QApplication
+) -> None:
+    """Пустое краткое наименование заменяется полным."""
+    from internal_correspondence.orm.models import Branch, TerritorialUnit
+
+    settings, db, manager = window_env
+    with db.get_session() as session:
+        session.add(TerritorialUnit(id="MSK", name="Москва"))
+        session.add(
+            Branch(
+                id="BR-001",
+                name="Полное наименование филиала",
+                short_name="",
+                territorial_unit_id="MSK",
+            )
+        )
+        session.commit()
+
+    window = MainWindow(settings, db, manager)
+    assert "Полное наименование филиала" in window.windowTitle()
+    window.close()
+
+
+def test_window_title_falls_back_to_branch_id(
+    window_env, qt_app: QApplication
+) -> None:
+    """Филиал без записи в БД показывается идентификатором из настроек."""
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    expected = STRINGS.window_title_with_org.format(
+        app_title=STRINGS.app_title,
+        organization="BR-001",
+    )
+    assert window.windowTitle() == expected
+    window.close()
+
+
+def test_switch_theme_recolors_all_tabs(window_env, qt_app: QApplication) -> None:
+    """Переключение темы через настройку главного окна не падает."""
+    from internal_correspondence.gui.theme import current_theme
+
+    settings, db, manager = window_env
+    window = MainWindow(settings, db, manager)
+    window.show()
+    qt_app.processEvents()
+
+    window._set_theme("dark")  # pylint: disable=protected-access
+    qt_app.processEvents()
+    assert current_theme().key == "dark"
+    assert settings.theme == "dark"
+
+    window._set_theme("light")  # pylint: disable=protected-access
+    qt_app.processEvents()
+    assert current_theme().key == "light"
     window.close()
 
 

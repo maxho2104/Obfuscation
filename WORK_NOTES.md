@@ -2813,3 +2813,256 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 
 ### Отложено
 - Нет.
+
+---
+
+## 2026-11-24 — Исправление вылета при переключении темы оформления
+
+### Проблема
+При переключении темы («Вид» → «Тема») приложение падало с
+`AttributeError: 'TaskManagementModel' object has no attribute 'refresh_theme'`
+в `MainWindow._set_theme` → `task_distribution_widget.apply_theme()`.
+
+### Причина
+`TaskDistributionWidget.apply_theme()` вызывает `refresh_theme()` у модели таблицы
+режима «Управление задачами», но `TaskManagementModel` наследуется от
+`SqlAlchemyTableModel`, где такого метода не было (он существовал только в
+`TaskTableModel`).
+
+### Изменения
+- `gui/table_model.py`: в `SqlAlchemyTableModel` добавлен метод `refresh_theme()` —
+  эмитит `dataChanged` с `Qt.BackgroundRole` по всем видимым строкам (подсветка
+  изменённых записей берёт цвет из текущей темы).
+- `tests/test_window_state.py`: регрессионный тест
+  `test_switch_theme_recolors_all_tabs` — переключение темы через
+  `MainWindow._set_theme` в обе стороны не падает и обновляет настройки.
+
+### Проверка
+- Воспроизведение вылета скриптом (offscreen): до правки — `AttributeError`,
+  после — переключение dark/light/dark проходит без ошибок.
+- Полный `pytest tests -q` — 512 passed.
+- Импорт `internal_correspondence.gui.application` — успешно.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-24 — Организация в заголовке главного окна
+
+### Задача
+Отображать в заголовке главного окна «Головной офис» для роли головного офиса
+или краткое наименование филиала для роли филиала.
+
+### Решение (согласовано с пользователем)
+- Формат: «{название приложения} — {организация}», например
+  «Внутренняя корреспонденция — Головной офис».
+- Для филиала: краткое наименование (`Branch.short_name`); фолбэки — полное
+  наименование, затем идентификатор филиала из настроек.
+- Заголовок формируется при создании окна (смена роли/филиала применяется
+  перезапуском приложения).
+
+### Изменения
+- `utils/string_resources.py`: новый шаблон `window_title_with_org`
+  (`"{app_title} — {organization}"`); метка «Головной офис» переиспользует
+  существующую строку `role_head_office`.
+- `core/domain_pack.default.json`: секция `strings` регенерирована
+  (`scripts_dev/update_pack_strings.py`) — 608 ключей.
+- `gui/application.py`: `MainWindow._window_title_text()` и
+  `_organization_label()` (запрос `Branch` по `settings.branch_id`);
+  заголовок ставится и в `setWindowTitle`, и в кастомную шапку
+  (`setup_custom_title_bar` получает `self.windowTitle()`).
+- `tests/test_window_state.py`: тесты заголовка для головного офиса, филиала
+  с кратким наименованием, фолбэков на полное наименование и идентификатор;
+  тест кастомной шапки обновлён под новый заголовок.
+
+### Проверка
+- `pytest tests/test_window_state.py -k "title or theme or custom_title_bar"` — 13 passed.
+- Полный `pytest tests -q` — 516 passed, одно известное предупреждение DOCX.
+- Импорт `internal_correspondence.gui.application` — успешно.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-24 — Мастер первого запуска: метки страниц перекрывались шапкой окна
+
+### Проблема
+В диалогах мастера первого запуска заголовок и подзаголовок страницы
+заползали под кастомную шапку окна (44 px).
+
+### Причина
+`DialogTitleBarController` резервирует место под шапку через
+`setContentsMargins`, но `QWizard` раскладывает дочерние виджеты вручную,
+без `QLayout` (у мастера вообще нет layout — проверено: `wizard.layout()`
+возвращает None), и игнорирует contents margins: шапка страницы всегда
+рисуется у верхней кромки окна.
+
+### Решение
+`QWizard` исключён из автоустановки кастомной шапки — мастер сохраняет
+системную рамку окна, как `QProgressDialog` и `QFileDialog`. Альтернатива
+(вручную сдвигать дочерние виджеты мастера) отклонена как хрупкая: мастер
+перераскладывает их при каждом изменении размера и смене страницы.
+
+### Изменения
+- `gui/custom_title_bar.py`: в `DialogTitleBarInstaller._should_install`
+  `QWizard` исключён для всех платформ (ранее — только для offscreen).
+- `tests/test_window_state.py`: `QWizard` убран из параметризации теста
+  «системные диалоги оформляются вне offscreen»; добавлен
+  `test_wizard_keeps_system_title_bar` — мастер никогда не получает кастомную
+  шапку и не становится безрамочным. Нюанс: offscreen-плагин падает
+  (access violation) при показе `QWizard` со стилем по умолчанию (Aero),
+  поэтому в тесте используется `ModernStyle` — как в `FirstRunWizard`.
+
+### Проверка
+- `pytest tests/test_window_state.py -q` — 50 passed.
+- `pytest tests/test_first_run_wizard.py -q` — 11 passed.
+- Полный `pytest tests -q` — 516 passed, одно известное предупреждение DOCX.
+- Импорт `internal_correspondence.gui.application` — успешно.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-24 — Поле «Филиал» в диалогах документов головного офиса
+
+### Задача
+Убрать поле «Филиал» из обязательных в диалогах редактирования научных
+материалов и телеграмм для роли «головной офис»; виджет выбора филиала
+переместить к полям, раскрываемым кнопкой «Больше».
+
+### Изменения
+- `gui/edit_elements.py`: в `EditElement` добавлены `set_required()`
+  и переопределение обязательности (`_required_override`); по умолчанию
+  обязательность по-прежнему берётся из метаданных колонки.
+- `gui/entity_edit_dialog.py`: новый параметр `branch_in_extra` — выбор
+  филиала для роли «головной офис» делается необязательным и размещается
+  последней строкой среди дополнительных полей (под «Больше»); без флага
+  поведение прежнее (обязательный список в начале диалога).
+- `gui/document_dialogs.py`: `MaterialEditDialog` и `TelegramEditDialog`
+  передают `branch_in_extra=True`.
+- `tests/test_edit_dialog.py`: тест материалов для ГО проверяет
+  необязательность, скрытие под «Больше» и положение строки; добавлен
+  аналогичный тест для телеграмм.
+
+### Проверка
+- `pytest tests/test_edit_dialog.py -q` — 24 passed.
+- Полный `pytest tests -q` — 517 passed, одно известное предупреждение DOCX.
+- Импорт `internal_correspondence.gui.application` — успешно.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-24 — Размеры диалога материала и обязательность поля «Филиал»
+
+### Задачи
+1. Диалог редактирования научного материала по умолчанию должен показывать
+   все поля и кнопки «Сохранить»/«Отмена» без прокрутки.
+2. Поле «Филиал» материалов и телеграмм снова обязательное (жирная метка
+   с красной звёздочкой), но без подчёркивания (подчёркивание — только для
+   уникальных полей) и по-прежнему скрыто под «Больше» для головного офиса.
+
+### Причины
+- Подгонка размеров (`_fit_to_content`) выполнялась только в конструкторе:
+  подсказки размеров до показа не учитывают оформление стилем, а «обвязка»
+  (поля layout + рамка области прокрутки) недоучитывалась — высота занижалась
+  и появлялась прокрутка.
+- Метка филиала получала подчёркивание, потому что `branch_id` входит
+  в составной UniqueConstraint документа, хотя сам по себе не уникален.
+
+### Изменения
+- `gui/entity_edit_dialog.py`:
+  - `_fit_to_content` считает «обвязку» по фактической геометрии
+    (`высота диалога − высота viewport`) и подгоняет также ширину;
+  - добавлен `showEvent` с отложенной (`QTimer.singleShot(0)`) повторной
+    подгонкой — в момент showEvent дочерние виджеты ещё не «полированы»
+    стилем;
+  - `branch_in_extra` больше не снимает обязательность филиала; вместо этого
+    снимается подчёркивание уникальности (`element.set_unique(False)`).
+    Незаполненное обязательное поле по-прежнему показывается даже в
+    свёрнутом виде (правило `_apply_row_visibility`).
+- `gui/edit_elements.py`: в `EditElement` добавлен `set_unique()`
+  (`_unique_override`); неиспользуемый `set_required` удалён.
+- `tests/test_edit_dialog.py`: тесты ГО-диалогов проверяют обязательность,
+  звёздочку в метке, отсутствие подчёркивания и скрытие под «Больше»;
+  тест подгонки размеров обновлён под новую логику и дополнен случаем
+  компактного диалога документа (все поля без прокрутки).
+
+### Проверка
+- `pytest tests/test_edit_dialog.py -q` — 24 passed.
+- Полный `pytest tests -q` — 517 passed, одно известное предупреждение DOCX.
+- Импорт `internal_correspondence.gui.application` — успешно.
+- Высокие диалоги филиала в offscreen-экране 800×600 по-прежнему упираются
+  в доступную высоту (прокрутка — штатный запасной вариант); на реальном
+  экране содержимое помещается.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-24 — Вкладка задач: чекбокс «Отображать распределённые»
+
+### Задача
+Заменить кнопку «Скрыть/Показать распределённые» на чекбокс
+«Отображать распределённые» с тем же функционалом.
+
+### Изменения
+- `gui/task_distribution_widget.py`: `QToolButton distributed_button` заменён
+  на `QCheckBox distributed_check` («Отображать распределённые», включён по
+  умолчанию — соответствует прежнему состоянию «показывать все»); фильтрация
+  применяется при снятом флажке; переключение текста кнопки удалено; в режиме
+  «Управление задачами» чекбокс скрывается, как и раньше.
+- `utils/string_resources.py`: ключи `task_hide_distributed` и
+  `task_show_distributed` заменены одним `task_show_distributed_check`;
+  подсказка `task_distributed_tooltip` сохранена.
+- `core/domain_pack.default.json`: секция `strings` регенерирована — 607 ключей.
+- `tests/test_task_widget.py`: тесты фильтра и режима управления обновлены
+  под чекбокс (снятие флажка скрывает распределённые).
+- `README.md`: описание вкладки задач приведено к чекбоксу.
+
+### Проверка
+- `pytest tests/test_task_widget.py -q` — 14 passed.
+- Полный `pytest tests -q` — 517 passed, одно известное предупреждение DOCX.
+- Импорт `internal_correspondence.gui.application` — успешно.
+
+### Отложено
+- Нет.
+
+---
+
+## 2026-11-24 — Перемещение генераторов сидирования в пакет tests/seed_data/
+
+### Контекст
+Пользователь переместил фазовые генераторы в пакет `tests/seed_data/`
+с переименованием: `seed_reference.py` → `seed_data/seed_reference_1.py`,
+`seed_branch.py` → `seed_data/seed_branch_2.py`,
+`seed_head_office.py` → `seed_data/seed_head_office_3.py`.
+
+### Правки после перемещения
+- `tests/seed_data/*.py`: `PROJECT_ROOT` — `parents[1]` → `parents[2]`
+  (файлы на уровень глубже; корень проекта нужен для sys.path и как app_dir
+  DatabaseManager); примеры запуска в docstring — на новые пути модулей.
+- `tests/test_full_cycle.py`: обращения `seed_branch.main`/`seed_head_office.main`
+  заменены на `seed_branch_2.main`/`seed_head_office_3.main`; docstring обновлён.
+- `tests/test_seed_branch.py`, `tests/test_seed_head_office.py`: обращения
+  к старым именам модулей заменены на новые (`seed_reference_1`,
+  `seed_branch_2`, `seed_head_office_3`).
+- `README.md`: команды запуска генераторов — `python -m tests.seed_data.seed_*`.
+- `tests/seed_data.py`: из docstring убран пример `python -m tests.seed_data` —
+  имя модуля теперь занято одноимённым пакетом; запуск по пути файла работает.
+- `AGENTS.md`: упомянут пакет `tests/seed_data/`.
+
+### Проверка
+- `pytest tests/test_full_cycle.py -q` — 5 passed.
+- `pytest tests/test_seed_branch.py tests/test_seed_head_office.py tests/test_seed_reference.py -q` — 27 passed.
+- Запуск генераторов `--help`: `python -m tests.seed_data.seed_reference_1`,
+  `...seed_branch_2`, `...seed_head_office_3` и `python tests/seed_data.py` — успешно.
+- Полный `pytest tests -q` — 517 passed, одно известное предупреждение DOCX.
+
+### Отложено
+- Нет.
