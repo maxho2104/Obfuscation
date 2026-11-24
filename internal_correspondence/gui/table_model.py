@@ -118,19 +118,27 @@ class SqlAlchemyTableModel(QAbstractTableModel):
                 return current_theme().modified_row
         return None
 
+    def refresh_theme(self) -> None:
+        """Перерисовывает модель-зависимые цвета после смены темы."""
+        if not self._items or not self.columns:
+            return
+        top_left = self.index(0, 0)
+        bottom_right = self.index(
+            len(self._items) - 1,
+            len(self.columns) - 1,
+        )
+        self.dataChanged.emit(
+            top_left,
+            bottom_right,
+            [Qt.BackgroundRole, Qt.ForegroundRole],
+        )
+
     def headerData(
         self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole
     ) -> Any:
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
             return self._headers[section]
         return None
-
-    def refresh_theme(self) -> None:
-        """Перерисовывает строки после смены темы оформления."""
-        if self._items:
-            top = self.index(0, 0)
-            bottom = self.index(len(self._items) - 1, len(self.columns) - 1)
-            self.dataChanged.emit(top, bottom, [Qt.BackgroundRole])
 
     def sort(self, column_index: int, order: Qt.SortOrder = Qt.AscendingOrder) -> None:
         if column_index < 0 or column_index >= len(self.columns):

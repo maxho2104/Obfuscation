@@ -5,8 +5,9 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PyQt5.QtCore import QEvent
 from PyQt5.QtGui import QPalette
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QWidget
 
 from internal_correspondence.core.settings import AppSettings, SettingsManager
 from internal_correspondence.gui.theme import THEMES, apply_theme, current_theme
@@ -50,6 +51,32 @@ def test_unknown_theme_falls_back_to_light(qt_app: QApplication) -> None:
     assert current_theme().key == "light"
 
 
+def test_theme_is_current_during_qt_change_events(
+    qt_app: QApplication,
+) -> None:
+    """Обработчики Qt видят новую тему уже во время Palette/StyleChange."""
+    observed: list[str] = []
+
+    class ThemeProbe(QWidget):
+        def event(self, event: QEvent) -> bool:
+            if event.type() in (QEvent.PaletteChange, QEvent.StyleChange):
+                observed.append(current_theme().key)
+            return super().event(event)
+
+    probe = ThemeProbe()
+    probe.show()
+    qt_app.processEvents()
+    observed.clear()
+
+    apply_theme(qt_app, "dark")
+    qt_app.processEvents()
+    assert observed
+    assert set(observed) == {"dark"}
+
+    probe.close()
+    apply_theme(qt_app, "light")
+
+
 def test_modified_row_color_differs() -> None:
     """Цвет выделения изменений различается между темами."""
     assert THEMES["light"].modified_row != THEMES["dark"].modified_row
@@ -76,12 +103,25 @@ def test_custom_title_bar_is_styled_by_both_themes() -> None:
         stylesheet = theme.stylesheet
         assert "QMenuBar#mainMenuBar" in stylesheet
         assert "QLabel#windowTitle" in stylesheet
+        assert "QLabel#windowContextTitle" in stylesheet
         assert "QWidget#dialogTitleBar" in stylesheet
         assert "QLabel#dialogWindowTitle" in stylesheet
         assert "QToolButton#windowMinimizeButton" in stylesheet
         assert "QToolButton#windowMaximizeButton" in stylesheet
         assert "QToolButton#windowCloseButton" in stylesheet
         assert theme.qss_colors["TITLE_TEXT"] in stylesheet
+        main_title_rule = stylesheet.split(
+            "QLabel#windowTitle", 1
+        )[1].split("}", 1)[0]
+        context_title_rule = stylesheet.split(
+            "QLabel#windowContextTitle", 1
+        )[1].split("}", 1)[0]
+        dialog_title_rule = stylesheet.split(
+            "QLabel#dialogWindowTitle", 1
+        )[1].split("}", 1)[0]
+        assert "font-size: 13px" in main_title_rule
+        assert "font-size: 13px" in context_title_rule
+        assert "font-size: 14px" in dialog_title_rule
 
     assert THEMES["light"].qss_colors["TITLE_TEXT"] == "#9A6B00"
     assert THEMES["dark"].qss_colors["TITLE_TEXT"] == "#D8B45A"
