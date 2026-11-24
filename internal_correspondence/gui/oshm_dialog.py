@@ -31,6 +31,8 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
+    QSpacerItem,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
@@ -40,7 +42,10 @@ from PyQt5.QtWidgets import (
 
 from internal_correspondence.core.constants import Role
 from internal_correspondence.core.logging_config import get_logger
-from internal_correspondence.gui.oshm_details_panel import ElementDetailsPanel
+from internal_correspondence.gui.oshm_details_panel import (
+    ElementDetailsPanel,
+    branch_display_name,
+)
 from internal_correspondence.orm.labels import (
     entity_label,
     field_form_label,
@@ -135,7 +140,9 @@ class OSHMDialog(QDialog):
         if self.is_head_office or not self.branch_id:
             return f"{STRINGS.title_oshm} — {STRINGS.role_head_office}"
         branch = self.session.get(Branch, self.branch_id)
-        branch_name = branch.name if branch is not None else self.branch_id
+        branch_name = (
+            branch_display_name(branch) if branch is not None else self.branch_id
+        )
         return STRINGS.oshm_window_title.format(branch_name=branch_name)
 
     # ------------------------------------------------------------------
@@ -143,7 +150,11 @@ class OSHMDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
+        self.setObjectName("oshmDialog")
         layout = QVBoxLayout(self)
+        # Компактные отступы: шире доступная площадь деревьев и таблиц
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
 
         # Два дерева одно под другим
         splitter = QSplitter(Qt.Vertical)
@@ -151,6 +162,7 @@ class OSHMDialog(QDialog):
         structure_widget = QWidget()
         structure_layout = QVBoxLayout(structure_widget)
         structure_layout.setContentsMargins(0, 0, 0, 0)
+        structure_layout.setSpacing(2)
         structure_layout.addWidget(QLabel(STRINGS.oshm_tree_structure))
         self.tree_structure = self._create_tree()
         structure_layout.addWidget(self.tree_structure)
@@ -159,6 +171,7 @@ class OSHMDialog(QDialog):
         workgroups_widget = QWidget()
         workgroups_layout = QVBoxLayout(workgroups_widget)
         workgroups_layout.setContentsMargins(0, 0, 0, 0)
+        workgroups_layout.setSpacing(2)
         workgroups_layout.addWidget(QLabel(STRINGS.oshm_tree_workgroups))
         self.tree_workgroups = self._create_tree()
         workgroups_layout.addWidget(self.tree_workgroups)
@@ -180,27 +193,50 @@ class OSHMDialog(QDialog):
         main_splitter.addWidget(self.details_panel)
         main_splitter.setSizes([700, 620])
         main_splitter.setChildrenCollapsible(False)
+        # Деревья сохраняют ширину, панель сведений забирает прирост окна:
+        # диаграммы увеличиваются вместе с ней
+        main_splitter.setStretchFactor(0, 0)
+        main_splitter.setStretchFactor(1, 1)
         splitter.setMinimumWidth(360)
         self.details_panel.setMinimumWidth(620)
         layout.addWidget(main_splitter)
         self.details_panel.hide()
 
-        # Кнопки добавления и скрытия
+        # Кнопки добавления, действий с элементом и закрытия — одним рядом:
+        # «Скрыть», «Изменить», «Статистика» и «Сохранить» прижаты к кнопке
+        # «Закрыть» с отступом в один сантиметр
         buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(6)
         self.add_btn = QPushButton("+")
         self.add_btn.setToolTip(STRINGS.button_add)
         self.add_btn.clicked.connect(self._add_clicked)
-        self.toggle_btn = QPushButton("−")
-        self.toggle_btn.setToolTip(STRINGS.action_toggle_hide)
-        self.toggle_btn.clicked.connect(self._toggle_selected)
         buttons_row.addWidget(self.add_btn)
-        buttons_row.addWidget(self.toggle_btn)
         buttons_row.addStretch()
+        self.hide_btn = self.details_panel.hide_btn
+        self.edit_btn = self.details_panel.edit_btn
+        self.stats_btn = self.details_panel.stats_btn
+        self.save_btn = self.details_panel.save_btn
+        buttons_row.addWidget(self.hide_btn)
+        buttons_row.addWidget(self.edit_btn)
+        buttons_row.addWidget(self.stats_btn)
+        buttons_row.addWidget(self.save_btn)
+        # Отступ ровно 1 см между кнопками действий и «Закрыть»
+        # (межэлементный зазор ряда при этом вычитается)
+        buttons_row.addItem(
+            QSpacerItem(max(0, self._cm(1.0) - buttons_row.spacing()), 0)
+        )
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        # Блок «Закрыть» прижат к своему содержимому: иначе он растягивается
+        # на всю ширину и отступ до кнопки становится произвольным
+        self.buttons.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.buttons.rejected.connect(self.reject)
+        buttons_row.addWidget(self.buttons)
         layout.addLayout(buttons_row)
 
-        self.buttons = QDialogButtonBox(QDialogButtonBox.Close)
-        self.buttons.rejected.connect(self.reject)
-        layout.addWidget(self.buttons)
+    def _cm(self, value: float) -> int:
+        """Переводит сантиметры в пиксели экрана."""
+        dpi = self.logicalDpiX() if hasattr(self, "logicalDpiX") else 96
+        return int(round(dpi * value / 2.54))
 
     def _create_tree(self) -> OSHMTreeWidget:
         """Создаёт настроенное дерево ОШС."""
@@ -281,11 +317,12 @@ class OSHMDialog(QDialog):
             )
             if branch is None:
                 return
+            branch_title = branch_display_name(branch)
             root_s = self._add_node(
-                self.tree_structure, None, "branch", branch.id, branch.name
+                self.tree_structure, None, "branch", branch.id, branch_title
             )
             root_w = self._add_node(
-                self.tree_workgroups, None, "branch", branch.id, branch.name
+                self.tree_workgroups, None, "branch", branch.id, branch_title
             )
             self._fill_branch(root_s, root_w, branch.id)
         self._restore_tree_state(expanded, selected)
@@ -353,11 +390,12 @@ class OSHMDialog(QDialog):
         branch: Branch,
     ) -> None:
         """Добавляет узел филиала и его структуру в оба дерева."""
+        branch_title = branch_display_name(branch)
         node_s = self._add_node(
-            self.tree_structure, structure_parent, "branch", branch.id, branch.name
+            self.tree_structure, structure_parent, "branch", branch.id, branch_title
         )
         node_w = self._add_node(
-            self.tree_workgroups, workgroups_parent, "branch", branch.id, branch.name
+            self.tree_workgroups, workgroups_parent, "branch", branch.id, branch_title
         )
         self._fill_branch(node_s, node_w, branch.id)
 

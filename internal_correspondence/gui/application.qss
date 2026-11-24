@@ -221,6 +221,32 @@ QGroupBox::title {
     background-color: {{SURFACE}};
 }
 
+/* Диалог ОШС: компактные отступы вокруг таблиц (в три раза меньше общих),
+   отступ сверху у таблиц удвоен относительно остальных */
+QDialog#oshmDialog QGroupBox {
+    margin-top: 16px;
+    padding: 3px 3px 3px 3px;
+}
+
+QDialog#oshmDialog QGroupBox::title {
+    left: 8px;
+    padding: 0 4px;
+}
+
+QDialog#oshmDialog QTreeWidget,
+QDialog#oshmDialog QTableWidget {
+    border-radius: 5px;
+}
+
+QDialog#oshmDialog QHeaderView::section {
+    padding: 3px 6px;
+}
+
+QDialog#oshmDialog QSplitter::handle {
+    height: 4px;
+    width: 4px;
+}
+
 QTabWidget {
     background-color: transparent;
 }

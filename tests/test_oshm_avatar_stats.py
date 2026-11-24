@@ -271,13 +271,89 @@ def test_details_panel_new_structure(qt_app, db_manager, element_data, tmp_path)
     assert panel.avatar_label.width() == AVATAR_WIDTH
     assert panel.avatar_label.height() == AVATAR_HEIGHT
     assert not panel.avatar_add_btn.isEnabled() is False  # доступна
-    # Коэффициент эффективности — просто цифра справа от наименования
+    # Коэффициент эффективности — отдельная подпись под данными элемента
     assert panel.coef_value is not None
-    # Таблица оценок и две диаграммы на месте
+    assert panel.coef_label.text().startswith("Коэффициент")
+    # Таблица оценок и две диаграммы на месте; высота таблицы фиксирована
     assert panel.eval_table.columnCount() == 2
+    assert panel.eval_table.height() == panel.eval_table.minimumHeight()
+    assert panel.eval_table.maximumHeight() == panel.eval_table.height()
     assert panel.current_chart is not None
     assert panel.previous_chart is not None
-    assert panel.print_btn is not None
+    # Кнопка «Печать» заменена на «Сохранить» (выгрузка карточки в DOCX)
+    assert not hasattr(panel, "print_btn")
+    assert panel.save_btn is not None
+    dialog.deleteLater()
+
+
+def test_details_panel_coefficient_row(qt_app, db_manager, element_data):
+    """Коэффициент идёт последней строкой полей — под территориальной единицей."""
+    from internal_correspondence.core.constants import Role
+
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    branch_item = dialog.tree_structure.topLevelItem(0)
+    dialog._show_details(branch_item, dialog.tree_structure)
+
+    panel = dialog.details_panel
+    layout = panel.fields_layout
+    last_row = layout.rowCount() - 1
+    label = layout.itemAt(last_row, layout.LabelRole).widget()
+    value = layout.itemAt(last_row, layout.FieldRole).widget()
+    assert label is panel.coef_label
+    assert value is panel.coef_value
+    # Подпись «Коэффициент эффективности» идёт после «Территориальная единица»
+    previous = layout.itemAt(last_row - 1, layout.LabelRole).widget()
+    assert previous.text().startswith("Территориальная единица")
+    # Размер шрифта значения не уменьшился: крупнее обычного на 4 пункта
+    plain = value.font()
+    assert plain.pointSize() == layout.itemAt(0, layout.FieldRole).widget().font().pointSize() + 4
+    # Повторное открытие карточки не дублирует строку коэффициента
+    dialog._show_details(branch_item, dialog.tree_structure)
+    assert layout.rowCount() == last_row + 1
+    dialog.deleteLater()
+
+
+def test_details_panel_save_docx(qt_app, db_manager, element_data, tmp_path):
+    """«Сохранить» выгружает карточку в DOCX: тексты, таблицы и диаграммы."""
+    from docx import Document
+
+    from internal_correspondence.core.constants import Role
+
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    branch_item = dialog.tree_structure.topLevelItem(0)
+    dialog._show_details(branch_item, dialog.tree_structure)
+
+    target = dialog.details_panel.save_docx(tmp_path / "card.docx")
+    assert target.exists()
+    document = Document(str(target))
+    texts = [paragraph.text for paragraph in document.paragraphs]
+    # Карточка филиала: наименование без слова «Филиал», период и разделы
+    assert texts[0] == "Филиал 1"
+    assert any(text.startswith("Период:") for text in texts)
+    # Поля элемента и коэффициент — таблицей, диаграммы — картинками
+    fields = document.tables[0]
+    joined = "\n".join(cell.text for row in fields.rows for cell in row.cells)
+    assert "Территориальная единица" in joined
+    assert "Коэффициент эффективности" in joined
+    assert len(document.inline_shapes) == 2  # две диаграммы
+    target.unlink()
+    dialog.deleteLater()
+
+
+def test_details_panel_save_btn_requires_node(qt_app, db_manager):
+    """«Сохранить» недоступно, пока карточка не открыта."""
+    from internal_correspondence.core.constants import Role
+
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    # Узла нет (дерево пустое) — сохранять нечего
+    assert dialog.details_panel.current_node is None
+    assert not dialog.details_panel.save_btn.isEnabled()
     dialog.deleteLater()
 
 
@@ -312,12 +388,14 @@ def test_donut_structure_example(qt_app):
     mantle, outer = series[0], series[1]
     assert isinstance(mantle, QPieSeries) and isinstance(outer, QPieSeries)
 
-    # Мантия: два сектора, пропорционально количествам, с подписями
+    # Мантия: два сектора, пропорционально количествам; на секторах — только
+    # числа, названия классов раскрыты в описании под диаграммой
     assert mantle.count() == 2
     assert mantle.sum() == 20
     labels = {s.label() for s in mantle.slices()}
-    assert any("ТГ" in label and "8" in label for label in labels)
-    assert any("НМ" in label and "12" in label for label in labels)
+    assert labels == {"8", "12"}
+    for slice_ in mantle.slices():
+        assert slice_.label().isdigit()
 
     # Внешнее кольцо: сектора оценок, сумма равна общему количеству
     # (неоценённые документы закрыты сектором «без оценки»)
@@ -331,14 +409,17 @@ def test_donut_structure_example(qt_app):
     # Центр: только число
     assert widget._view._center.text() == "20"
 
-    # Легенда: три значения оценок, цветными маркерами
-    legend_texts = [
-        widget._legend_row.itemAt(i).widget().text().strip()
-        for i in range(widget._legend_row.count())
-        if widget._legend_row.itemAt(i).widget() is not None
-        and hasattr(widget._legend_row.itemAt(i).widget(), "text")
-    ]
-    assert len([t for t in legend_texts if t]) == 3  # Важно, Полезно, Интересно
+    # Описание: все цвета диаграммы расшифрованы — классы ТГ/НМ и оценки
+    descriptions = widget.legend_descriptions()
+    assert "ТГ — телеграммы" in descriptions
+    assert "НМ — научные материалы" in descriptions
+    assert "П — Полезно" in descriptions
+    assert "И — Интересно" in descriptions
+    assert "В — Важно" in descriptions
+    # Описание — одна надпись, которая переносит пары сама
+    assert widget._legend_label.wordWrap()
+    for short in ("ТГ", "НМ", "П", "И", "В"):
+        assert short in widget._legend_label.text()
     widget.deleteLater()
 
 
@@ -362,14 +443,9 @@ def test_donut_unevaluated_fill_class_arcs(qt_app):
     assert outer.sum() == 22
     outer_counts = sorted(int(float(s.value())) for s in outer.slices())
     assert outer_counts == [4, 5, 6, 7]
-    # «без оценки» в легенде
-    legend_texts = [
-        widget._legend_row.itemAt(i).widget().text().strip()
-        for i in range(widget._legend_row.count())
-        if widget._legend_row.itemAt(i).widget() is not None
-        and hasattr(widget._legend_row.itemAt(i).widget(), "text")
-    ]
-    assert any("БЕЗ ОЦЕНКИ" in t for t in legend_texts)
+    # «без оценки» в описании цветов
+    descriptions = widget.legend_descriptions()
+    assert any("б/о — без оценки" in text for text in descriptions)
     widget.deleteLater()
 
 
@@ -381,6 +457,58 @@ def test_donut_no_data(qt_app):
     widget.set_data("Июнь 2026", 0, 0, {}, {})
     assert widget._view.chart().series() == []
     assert "0" in widget._view._center.text()
+    widget.deleteLater()
+
+
+def test_donut_area_is_square_and_grows(qt_app):
+    """Область построения диаграммы квадратная и растёт вместе с виджетом."""
+    from internal_correspondence.gui.oshm_element_charts import ElementDonutWidget
+
+    widget = ElementDonutWidget()
+    widget.set_data("Июнь 2026", 12, 8, {1: 2}, {1: 2})
+    widget.resize(260, 420)
+    widget.show()
+    qt_app.processEvents()
+
+    view = widget._view
+    # Квадрат: ширина и высота области построения совпадают
+    assert view.width() == view.height()
+    assert view.width() >= ElementDonutWidget.MIN_SIDE
+    narrow = widget.chart_side()
+
+    # При увеличении виджета диаграмма увеличивается
+    widget.resize(420, 620)
+    qt_app.processEvents()
+    assert view.width() == view.height()
+    wide = widget.chart_side()
+    assert wide > narrow
+    # Верхняя граница стороны соблюдается
+    assert wide <= ElementDonutWidget.MAX_SIDE
+    widget.deleteLater()
+
+
+def test_donut_description_lists_every_color(qt_app):
+    """В описании есть расшифровка каждого цвета с диаграммы."""
+    from internal_correspondence.core.constants import EvaluationValue
+    from internal_correspondence.gui.oshm_element_charts import ElementDonutWidget
+
+    widget = ElementDonutWidget()
+    widget.set_data(
+        "Июнь 2026",
+        materials=12,
+        telegrams=8,
+        material_evaluations={int(EvaluationValue.USELESS): 3},
+        telegram_evaluations={int(EvaluationValue.USEFUL): 4},
+    )
+    descriptions = widget.legend_descriptions()
+    # Классы документов и все встреченные оценки, включая «без оценки»
+    assert descriptions[0] == "ТГ — телеграммы"
+    assert descriptions[1] == "НМ — научные материалы"
+    for expected in ("Б — Бесполезно", "П — Полезно", "б/о — без оценки"):
+        assert expected in descriptions
+    # Каждая расшифровка присутствует в тексте надписи
+    for text in descriptions:
+        assert text in widget._legend_label.text()
     widget.deleteLater()
 
 
