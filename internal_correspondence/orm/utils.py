@@ -3,7 +3,6 @@
 import uuid
 from typing import Any, Optional
 
-from internal_correspondence.orm.base import Base
 
 
 def resolve_entity_class(entity_name: str) -> Optional[type]:

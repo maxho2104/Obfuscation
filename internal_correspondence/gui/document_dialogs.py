@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 from internal_correspondence.core.constants import (
     MaterialType,
     Role,
-    TelegramType,
 )
 from internal_correspondence.gui.edit_elements import (
     ManyToManyEditElement,
@@ -31,7 +30,6 @@ from internal_correspondence.gui.edit_elements import (
 )
 from internal_correspondence.gui.entity_edit_dialog import EntityEditDialog, FieldSpec
 from internal_correspondence.orm import models as models_mod
-from internal_correspondence.orm.labels import entity_label
 from internal_correspondence.utils.string_resources import STRINGS
 
 

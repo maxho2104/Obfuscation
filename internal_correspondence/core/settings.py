@@ -3,7 +3,7 @@
 import configparser
 import os
 import sys
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Optional
 

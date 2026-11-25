@@ -16,7 +16,7 @@
 «номер и дата» — отдельными классами.
 """
 
-from datetime import date, datetime, time
+from datetime import date, datetime
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import sqlalchemy as sa

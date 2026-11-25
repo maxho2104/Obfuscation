@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy.orm import Session
 
@@ -32,10 +32,8 @@ from internal_correspondence.text_import.models import (
     ImportResult,
     LayoutScheme,
     MatchPreview,
-    MatchResult,
     MatchRule,
     MatchRuleSet,
-    ParsedRow,
     SchemeMatch,
     ValidationReport,
 )

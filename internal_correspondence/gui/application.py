@@ -917,8 +917,25 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         """Добавляет пункт меню для редактора справочника."""
         action = QAction(entity_label(model_class, plural=True), self)
         action.triggered.connect(
-            lambda: ReferenceEditorDialog(
-                self.db_manager.get_session(),
+            lambda: self._open_reference_editor(
+                model_class, service_class, columns, dialog_factory, editable
+            )
+        )
+        menu.addAction(action)
+
+    def _open_reference_editor(
+        self,
+        model_class,
+        service_class,
+        columns,
+        dialog_factory,
+        editable: bool,
+    ) -> None:
+        """Открывает редактор справочника с сессией, закрываемой в любом случае."""
+        session = self.db_manager.get_session()
+        try:
+            ReferenceEditorDialog(
+                session,
                 model_class,
                 service_class,
                 columns,
@@ -926,8 +943,8 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
                 read_only=not editable,
                 parent=self,
             ).exec_()
-        )
-        menu.addAction(action)
+        finally:
+            session.close()
 
     def _open_settings(self) -> None:
         """Открывает диалог настроек."""
@@ -1593,8 +1610,9 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         if not is_head_office and not branch_id:
             QMessageBox.warning(self, STRINGS.title_oshm, STRINGS.msg_no_branch_selected)
             return
+        session = self.db_manager.get_session()
         dialog = OSHMDialog(
-            self.db_manager.get_session(),
+            session,
             branch_id=branch_id or None,
             role=self.settings.role,
             storage_root=self.settings.storage_path_obj(),
@@ -1606,7 +1624,10 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         dialog.details_panel.statistics_requested.connect(
             lambda node: self._on_oshm_statistics(dialog, node)
         )
-        dialog.exec_()
+        try:
+            dialog.exec_()
+        finally:
+            session.close()
         if self._oshm_statistics_node is not None:
             self.tabs.setCurrentWidget(self.statistics_tab)
             self.statistics_tab.show_element(self._oshm_statistics_node)

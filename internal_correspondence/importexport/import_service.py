@@ -943,7 +943,6 @@ class ImportService:
 
                 target_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_file, target_dir / target_name)
-                target = (target_dir / target_name).resolve()
                 if file_record is not None:
                     record_id = str(file_record.id)
                     if record_id not in restored:

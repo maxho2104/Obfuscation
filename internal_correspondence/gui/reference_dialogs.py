@@ -11,7 +11,7 @@ from typing import Optional
 from PyQt5.QtWidgets import QWidget
 from sqlalchemy.orm import Session
 
-from internal_correspondence.gui.entity_edit_dialog import EntityEditDialog, FieldSpec
+from internal_correspondence.gui.entity_edit_dialog import EntityEditDialog
 from internal_correspondence.orm.models import (
     AcademicTitle,
     Branch,

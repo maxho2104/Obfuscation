@@ -6,7 +6,7 @@
 """
 
 from datetime import date
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (

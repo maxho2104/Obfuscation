@@ -222,7 +222,7 @@ def test_preview_is_split_and_refreshes_after_correction(
         )
 
         assert not any(
-            button.text() == STRINGS.import_load
+            button.text() == "Загрузить"
             for button in dialog.findChildren(type(dialog.next_button))
         )
         dialog.file_edit.setText(str(path))
