@@ -38,8 +38,13 @@ from internal_correspondence.gui.custom_title_bar import (
     DialogTitleBarController,
     DialogTitleBarInstaller,
     TITLE_BAR_CONTENT_GAP_PROPERTY,
+    WIZARD_CUSTOM_TITLE_BAR_PROPERTY,
     _QtResizeHandler,
     install_dialog_title_bars,
+)
+from internal_correspondence.gui.first_run_wizard import (
+    FIRST_RUN_PAGE_TITLE_SPACER,
+    FirstRunWizard,
 )
 from internal_correspondence.orm.models import Branch, TerritorialUnit
 from internal_correspondence.utils.string_resources import STRINGS
@@ -136,8 +141,8 @@ def test_main_window_uses_custom_title_bar(
     assert window.windowFlags() & Qt.FramelessWindowHint
     assert window.menuBar().objectName() == "mainMenuBar"
     assert window.menuBar().height() == 46
-    assert window.window_title.text() == window.windowTitle()
-    assert STRINGS.app_title in window.window_title.text()
+    assert window.windowTitle() == STRINGS.app_title
+    assert window.window_title.text() == STRINGS.app_title
     assert window.window_title.objectName() == "windowTitle"
     assert window.window_context_title.text() == "BR-001"
     assert window.window_context_title.objectName() == "windowContextTitle"
@@ -456,12 +461,10 @@ def test_system_dialogs_are_enabled_outside_offscreen(
     dialog.close()
 
 
-def test_wizard_keeps_system_title_bar(qt_app: QApplication) -> None:
-    """Мастер никогда не получает кастомную шапку.
-
-    QWizard игнорирует contents margins, поэтому шапка перекрывала бы
-    заголовок страницы (см. FirstRunWizard).
-    """
+def test_unprepared_wizard_keeps_system_title_bar(
+    qt_app: QApplication,
+) -> None:
+    """Обычный QWizard без внутреннего отступа сохраняет системную шапку."""
     wizard = QWizard()
     assert not DialogTitleBarInstaller._should_install(wizard, "windows")
     assert not DialogTitleBarInstaller._should_install(wizard, "offscreen")
@@ -475,6 +478,29 @@ def test_wizard_keeps_system_title_bar(qt_app: QApplication) -> None:
     qt_app.processEvents()
     assert getattr(wizard, "_custom_title_bar_controller", None) is None
     assert not wizard.windowFlags() & Qt.FramelessWindowHint
+    wizard.close()
+
+
+def test_first_run_wizard_receives_custom_title_bar(
+    qt_app: QApplication,
+) -> None:
+    """Подготовленный мастер первого запуска получает кастомную шапку."""
+    wizard = FirstRunWizard(AppSettings())
+    assert wizard.property(WIZARD_CUSTOM_TITLE_BAR_PROPERTY) is True
+    assert DialogTitleBarInstaller._should_install(wizard, "windows")
+    assert DialogTitleBarInstaller._should_install(wizard, "offscreen")
+
+    wizard.show()
+    qt_app.processEvents()
+
+    controller = getattr(wizard, "_custom_title_bar_controller", None)
+    assert controller is not None
+    assert wizard.windowFlags() & Qt.FramelessWindowHint
+    assert controller.title_bar.title_label.text() == STRINGS.wizard_first_run_title
+    assert all(
+        page.title().startswith(FIRST_RUN_PAGE_TITLE_SPACER)
+        for page in (wizard.db_page, wizard.storage_page, wizard.role_page)
+    )
     wizard.close()
 
 
@@ -918,25 +944,20 @@ def test_files_changed_signal_updates_document_row_highlight(window_env, qt_app:
 def test_window_title_shows_head_office_role(
     window_env, qt_app: QApplication
 ) -> None:
-    """Для роли головного офиса заголовок содержит «Головной офис»."""
+    """Роль головного офиса не дублируется слева от меню."""
     settings, db, manager = window_env
     settings.role = Role.HEAD_OFFICE.value
     window = MainWindow(settings, db, manager)
-    expected = STRINGS.window_title_with_org.format(
-        app_title=STRINGS.app_title,
-        organization=STRINGS.role_head_office,
-    )
-    assert window.windowTitle() == expected
-    assert window.window_title.text() == expected
+    assert window.windowTitle() == STRINGS.app_title
+    assert window.window_title.text() == STRINGS.app_title
+    assert window.window_context_title.text() == STRINGS.role_head_office
     window.close()
 
 
-def test_window_title_shows_branch_short_name(
+def test_window_title_does_not_duplicate_selected_branch(
     window_env, qt_app: QApplication
 ) -> None:
-    """Для филиала заголовок содержит его краткое наименование из БД."""
-    from internal_correspondence.orm.models import Branch, TerritorialUnit
-
+    """Выбранный филиал отображается только в центральной подписи."""
     settings, db, manager = window_env
     with db.get_session() as session:
         session.add(TerritorialUnit(id="MSK", name="Москва"))
@@ -951,21 +972,19 @@ def test_window_title_shows_branch_short_name(
         session.commit()
 
     window = MainWindow(settings, db, manager)
-    expected = STRINGS.window_title_with_org.format(
-        app_title=STRINGS.app_title,
-        organization="Филиал №1",
+    assert window.windowTitle() == STRINGS.app_title
+    assert window.window_title.text() == STRINGS.app_title
+    assert (
+        window.window_context_title.text()
+        == "BR-001 — Полное наименование филиала"
     )
-    assert window.windowTitle() == expected
-    assert window.window_title.text() == expected
     window.close()
 
 
-def test_window_title_falls_back_to_branch_full_name(
+def test_window_context_title_uses_branch_full_name(
     window_env, qt_app: QApplication
 ) -> None:
-    """Пустое краткое наименование заменяется полным."""
-    from internal_correspondence.orm.models import Branch, TerritorialUnit
-
+    """Центральная подпись филиала использует полное наименование."""
     settings, db, manager = window_env
     with db.get_session() as session:
         session.add(TerritorialUnit(id="MSK", name="Москва"))
@@ -980,21 +999,20 @@ def test_window_title_falls_back_to_branch_full_name(
         session.commit()
 
     window = MainWindow(settings, db, manager)
-    assert "Полное наименование филиала" in window.windowTitle()
+    assert window.windowTitle() == STRINGS.app_title
+    assert "Полное наименование филиала" in window.window_context_title.text()
     window.close()
 
 
-def test_window_title_falls_back_to_branch_id(
+def test_window_context_title_falls_back_to_branch_id(
     window_env, qt_app: QApplication
 ) -> None:
-    """Филиал без записи в БД показывается идентификатором из настроек."""
+    """Филиал без записи в БД показывается по центру идентификатором."""
     settings, db, manager = window_env
     window = MainWindow(settings, db, manager)
-    expected = STRINGS.window_title_with_org.format(
-        app_title=STRINGS.app_title,
-        organization="BR-001",
-    )
-    assert window.windowTitle() == expected
+    assert window.windowTitle() == STRINGS.app_title
+    assert window.window_title.text() == STRINGS.app_title
+    assert window.window_context_title.text() == "BR-001"
     window.close()
 
 
