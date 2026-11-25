@@ -496,41 +496,11 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self.db_manager = db_manager
         self._settings_manager = settings_manager or SettingsManager()
         self.app_dir = Path(app_dir) if app_dir is not None else Path(__file__).resolve().parent.parent.parent
-        self.setWindowTitle(self._window_title_text())
+        self.setWindowTitle(STRINGS.app_title)
         self.setMinimumSize(1024, 768)
         self._setup_ui()
         self._setup_menu()
         self._restore_ui_state()
-
-    def _window_title_text(self) -> str:
-        """Заголовок окна: название приложения и организация пользователя."""
-        organization = self._organization_label()
-        if not organization:
-            return STRINGS.app_title
-        return STRINGS.window_title_with_org.format(
-            app_title=STRINGS.app_title,
-            organization=organization,
-        )
-
-    def _organization_label(self) -> str:
-        """Метка организации: «Головной офис» или наименование филиала."""
-        if self.settings.role == Role.HEAD_OFFICE.value:
-            return STRINGS.role_head_office
-        branch_id = (self.settings.branch_id or "").strip()
-        if not branch_id:
-            return ""
-        session = self.db_manager.get_session()
-        try:
-            branch = session.get(Branch, branch_id)
-        finally:
-            session.close()
-        if branch is None:
-            return branch_id
-        return (
-            (branch.short_name or "").strip()
-            or (branch.name or "").strip()
-            or branch_id
-        )
 
     def _setup_ui(self) -> None:
         """Инициализирует интерфейс главного окна с вкладками."""

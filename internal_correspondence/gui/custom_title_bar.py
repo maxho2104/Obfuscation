@@ -28,6 +28,7 @@ from PyQt5.QtWidgets import (
 
 ICONS_DIR = Path(__file__).resolve().parent / "icons"
 TITLE_BAR_CONTENT_GAP_PROPERTY = "customTitleBarContentGap"
+WIZARD_CUSTOM_TITLE_BAR_PROPERTY = "customTitleBarWizardReady"
 
 
 @dataclass(frozen=True)
@@ -744,10 +745,13 @@ class DialogTitleBarInstaller(QObject):
         # открывается нативным средством ОС и не оформляется приложением.
         if isinstance(dialog, (QProgressDialog, QFileDialog)):
             return False
-        # QWizard раскладывает дочерние виджеты вручную, без QLayout, и
-        # игнорирует contents margins: кастомная шапка перекрывает заголовок
-        # страницы. Мастер сохраняет системную рамку окна.
-        if isinstance(dialog, QWizard):
+        # QWizard игнорирует contents margins, поэтому кастомная шапка
+        # разрешена только мастерам, которые сами подготовили отступ внутри
+        # заголовков страниц (см. FirstRunWizard).
+        if (
+            isinstance(dialog, QWizard)
+            and not dialog.property(WIZARD_CUSTOM_TITLE_BAR_PROPERTY)
+        ):
             return False
         # Плагин offscreen аварийно завершается при безрамочном QMessageBox.
         # В обычном Windows/X11-сеансе ограничение отсутствует.
