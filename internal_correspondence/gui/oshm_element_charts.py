@@ -73,7 +73,7 @@ class _DonutView(QChartView):
         self._center = QLabel(self)
         self._center.setAlignment(Qt.AlignCenter)
         self._center.setStyleSheet(
-            "font-size: 16pt; font-weight: bold; color: black;"
+            "font-size: 13pt; font-weight: bold; color: black;"
             " background: transparent;"
         )
         self._center.hide()

@@ -31,6 +31,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
@@ -177,13 +178,20 @@ class OSHMDialog(QDialog):
         self.details_panel.edit_requested.connect(self._edit_node)
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.addWidget(splitter)
-        main_splitter.addWidget(self.details_panel)
+        # Панель — в области прокрутки: при нехватке высоты окна содержимое
+        # сохраняет минимальные размеры, а не наезжает друг на друга
+        panel_scroll = QScrollArea()
+        panel_scroll.setWidgetResizable(True)
+        panel_scroll.setFrameShape(QScrollArea.NoFrame)
+        panel_scroll.setWidget(self.details_panel)
+        main_splitter.addWidget(panel_scroll)
         main_splitter.setSizes([700, 620])
         main_splitter.setChildrenCollapsible(False)
         splitter.setMinimumWidth(360)
-        self.details_panel.setMinimumWidth(620)
+        panel_scroll.setMinimumWidth(640)
         layout.addWidget(main_splitter)
-        self.details_panel.hide()
+        self._panel_scroll = panel_scroll
+        panel_scroll.hide()
 
         # Кнопки добавления и скрытия
         buttons_row = QHBoxLayout()
@@ -234,24 +242,24 @@ class OSHMDialog(QDialog):
         self._activate_tree(tree)
         tree.setCurrentItem(item)
         if self.details_panel.show_node(payload, can_edit_people=self.can_edit_people):
-            self.details_panel.show()
+            self._panel_scroll.show()
 
     def _hide_details(self) -> None:
         """Скрывает панель сведений (кнопка «Скрыть»)."""
-        self.details_panel.hide()
+        self._panel_scroll.hide()
 
     def _refresh_details_panel(self) -> None:
         """Обновляет панель после перестройки деревьев.
 
         Если элемент был удалён, панель скрывается.
         """
-        if self.details_panel.isHidden():
+        if self._panel_scroll.isHidden():
             return
         node = self.details_panel.current_node
         if node is None:
             return
         if not self.details_panel.show_node(node, can_edit_people=self.can_edit_people):
-            self.details_panel.hide()
+            self._panel_scroll.hide()
 
     # ------------------------------------------------------------------
     # Загрузка данных

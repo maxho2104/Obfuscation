@@ -5,17 +5,25 @@
 действовавших на дату документа, филиал — по принадлежности документа).
 Документ относится к периоду по дате исходящего (иначе входящего) номера;
 оценка документа — последняя выставленная (как в статистике).
+
+Производительность: кандидаты отбираются SQL-запросом (диапазон дат и, где
+возможно, принадлежность элементу), связи документов подгружаются заранее
+(selectinload) — без ленивых запросов на каждый документ. Показатели за
+текущий и прошлогодний периоды считаются за один проход
+(:meth:`ElementStatsService.period_stats_pair`).
 """
 
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Dict, List, Optional, Tuple
+from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.orm import Session, selectinload
 
 from internal_correspondence.core.domain_pack import enum_weight
 from internal_correspondence.core.enum_registry import pack_enum_display
-from internal_correspondence.orm.models import ScientificMaterial, Telegram
+from internal_correspondence.orm.models import Employee, ScientificMaterial, Telegram
 from internal_correspondence.reports.statistics_service import Period
 
 
@@ -82,21 +90,60 @@ class ElementStatsService:
             )
         return False
 
-    def element_documents(
-        self, node_type: str, node_id: str
+    def _query_candidates(self, model, node_type: str, node_id: str, start: date, end: date):
+        """SQL-запрос кандидатов: диапазон дат + принадлежность, где выразима.
+
+        Принадлежность сотруднику/отделу/филиалу фильтруется в SQL; рабочая
+        группа зависит от даты документа (участие на дату) — остаточная
+        проверка в Python по заранее подгруженным данным.
+        """
+        # Дата документа — исходящая, при её отсутствии входящая
+        document_date = func.coalesce(model.outgoing_date, model.incoming_date)
+        query = self.session.query(model).filter(
+            document_date >= start, document_date <= end
+        )
+        if node_type == "branch":
+            query = query.filter(model.branch_id == node_id)
+        elif node_type == "employee":
+            query = query.filter(
+                model.employees.any(Employee.id == UUID(node_id))
+            )
+        elif node_type == "department":
+            query = query.filter(
+                model.employees.any(Employee.department_id == UUID(node_id))
+            )
+        return query.options(
+            selectinload(model.employees).selectinload(Employee.workgroup_memberships),
+            selectinload(model.employees).joinedload(Employee.department),
+            selectinload(model.evaluations),
+        )
+
+    def _candidates(
+        self, node_type: str, node_id: str, start: date, end: date
     ) -> Tuple[List[ScientificMaterial], List[Telegram]]:
-        """Возвращает (материалы, телеграммы) элемента без фильтра периода."""
+        """Загружает документы-кандидаты за диапазон дат одним проходом."""
         materials = [
             doc
-            for doc in self.session.query(ScientificMaterial).all()
+            for doc in self._query_candidates(
+                ScientificMaterial, node_type, node_id, start, end
+            ).all()
             if self._document_matches(doc, node_type, node_id)
         ]
         telegrams = [
             doc
-            for doc in self.session.query(Telegram).all()
+            for doc in self._query_candidates(
+                Telegram, node_type, node_id, start, end
+            ).all()
             if self._document_matches(doc, node_type, node_id)
         ]
         return materials, telegrams
+
+    def element_documents(
+        self, node_type: str, node_id: str
+    ) -> Tuple[List[ScientificMaterial], List[Telegram]]:
+        """Возвращает (материалы, телеграммы) элемента без фильтра периода."""
+        # Полный диапазон дат: используется только вспомогательными сценариями
+        return self._candidates(node_type, node_id, date.min, date.max)
 
     @staticmethod
     def _document_date(document) -> Optional[date]:
@@ -131,11 +178,13 @@ class ElementStatsService:
                 weights.append(float(weight))
         return count, evaluation_counts, weights, type_counts
 
-    def period_stats(
-        self, node_type: str, node_id: str, period: Period
+    def _stats_from(
+        self,
+        materials: List[ScientificMaterial],
+        telegrams: List[Telegram],
+        period: Period,
     ) -> ElementPeriodStats:
-        """Показатели элемента за период: материалы, телеграммы, оценки."""
-        materials, telegrams = self.element_documents(node_type, node_id)
+        """Считает показатели по уже загруженным документам."""
         materials_count, mat_counts, mat_weights, mat_types = self._collect(
             materials, period
         )
@@ -159,4 +208,30 @@ class ElementStatsService:
             material_type_counts=mat_types,
             telegram_type_counts=tel_types,
             avg_weight=avg,
+        )
+
+    def period_stats(
+        self, node_type: str, node_id: str, period: Period
+    ) -> ElementPeriodStats:
+        """Показатели элемента за период: материалы, телеграммы, оценки."""
+        materials, telegrams = self._candidates(
+            node_type, node_id, period.start, period.end
+        )
+        return self._stats_from(materials, telegrams, period)
+
+    def period_stats_pair(
+        self, node_type: str, node_id: str, period: Period
+    ) -> Tuple[ElementPeriodStats, ElementPeriodStats]:
+        """Показатели за период и аналогичный период прошлого года.
+
+        Кандидаты загружаются одним проходом за объединённый диапазон дат —
+        вдвое меньше запросов, чем два отдельных расчёта.
+        """
+        previous_period = shift_period_year(period, -1)
+        start = min(period.start, previous_period.start)
+        end = max(period.end, previous_period.end)
+        materials, telegrams = self._candidates(node_type, node_id, start, end)
+        return (
+            self._stats_from(materials, telegrams, period),
+            self._stats_from(materials, telegrams, previous_period),
         )
