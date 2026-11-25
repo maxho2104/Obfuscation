@@ -3246,3 +3246,19 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 ### Проверка
 - `pytest tests`: **522/522 passed**; импорт GUI — OK; `pyflakes` — 0 замечаний.
 - Не закрыто (осознанно): разбиение `application.py` (1743 строки) — рекомендация «при следующих касаниях».
+
+
+---
+
+## Оптимизация панели сведений ОШС (2026-11-25)
+### Причина медленной работы
+- `ElementStatsService.element_documents` загружал ВСЕ материалы и телеграммы и фильтровал в Python; связи (`employees`, `participating_workgroups` через `workgroup_on`, `latest_evaluation`) догружались лениво — N+1 запросов на каждый документ; расчёт выполнялся дважды (текущий период + прошлый год).
+
+### Изменения (`services/element_stats_service.py`)
+- Кандидаты отбираются SQL-запросом: диапазон дат (`coalesce(outgoing_date, incoming_date)` между границами периода) + принадлежность, где выразима в SQL (филиал — `branch_id`, сотрудник/отдел — `employees.any(...)`); рабочая группа (участие на дату документа) — остаточная проверка в Python по подгруженным данным.
+- Eager-загрузка: `selectinload(employees → workgroup_memberships, evaluations)`, `joinedload(employees → department)` — без ленивых запросов на документ.
+- Новый `period_stats_pair()` — показатели текущего и прошлогоднего периодов за ОДИН проход (объединённый диапазон дат); панель (`_refresh_stats`) переведена на него.
+
+### Проверка
+- Новый тест `test_period_stats_pair_query_count`: счётчик SQL-запросов через `event.listen(before_cursor_execute)` — пара периодов считается ≤ 12 запросами независимо от числа документов (защита от регресса N+1); результаты совпадают с раздельным расчётом.
+- `pytest tests`: **523/523 passed**; импорт GUI — OK; pyflakes — чист.

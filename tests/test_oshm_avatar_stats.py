@@ -232,6 +232,36 @@ def test_period_stats_previous_year(db_manager, element_data):
     assert stats.avg_weight == 1.0  # «Интересно», вес 1
 
 
+def test_period_stats_pair_query_count(db_manager, element_data):
+    """Пара периодов считается без N+1: запросов немного и не по числу документов."""
+    from sqlalchemy import event
+
+    session = db_manager.get_session()
+    service = ElementStatsService(session)
+    period = Period("Июнь 2026", date(2026, 6, 1), date(2026, 6, 30))
+
+    statements = []
+
+    def count_statements(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    engine = db_manager.engine
+    event.listen(engine, "before_cursor_execute", count_statements)
+    try:
+        current, previous = service.period_stats_pair(
+            "employee", str(element_data["employee"].id), period
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count_statements)
+
+    # Результат совпадает с раздельным расчётом
+    assert current.materials == 3 and current.telegrams == 1
+    assert previous.materials == 1
+    # Без N+1: фиксированное число запросов (по 2 модели x основной запрос +
+    # selectin-загрузки сотрудников/участий/оценок), а не запрос на документ
+    assert len(statements) <= 12, len(statements)
+
+
 def test_shift_period_year():
     period = Period("Июнь 2026", date(2026, 6, 1), date(2026, 6, 30))
     shifted = shift_period_year(period, -1)

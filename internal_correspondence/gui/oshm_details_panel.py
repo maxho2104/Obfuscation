@@ -457,9 +457,9 @@ class ElementDetailsPanel(QWidget):
         period = self.period_selector.current_period()
         if period is None:
             return
-        stats = self._stats_service.period_stats(node_type, node_id, period)
-        previous = self._stats_service.period_stats(
-            node_type, node_id, shift_period_year(period, -1)
+        # Один проход по БД на оба периода (текущий и прошлогодний)
+        stats, previous = self._stats_service.period_stats_pair(
+            node_type, node_id, period
         )
         # Коэффициент эффективности — средняя оценка за период (только цифра)
         self.coef_value.setText(
