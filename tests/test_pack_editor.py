@@ -8,6 +8,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QApplication
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +51,70 @@ def test_editor_loads_builtin_and_saves(pack_editor_module, qt_app, tmp_path):
 
     pack = load_domain_pack(target)
     assert pack.strings()[original_key] == "Изменённое значение"
+    window.deleteLater()
+
+
+def test_editor_strings_grouping(pack_editor_module, qt_app):
+    """Строки группируются по префиксу ключа; выбор группы фильтрует таблицу."""
+    window = pack_editor_module.PackEditorWindow()
+    tab = window.strings_tab
+    assert tab._group_list is not None
+    total = tab.table.rowCount()
+    assert tab._group_list.count() > 1
+    assert tab._group_list.item(0).text().startswith("Все")
+
+    # Выбираем первую группу — видимы только её строки
+    tab._group_list.setCurrentRow(1)
+    prefix = tab._group_list.item(1).data(Qt.UserRole)
+    visible = [
+        row
+        for row in range(tab.table.rowCount())
+        if not tab.table.isRowHidden(row)
+    ]
+    assert visible
+    assert len(visible) < total
+    for row in visible:
+        assert tab.table.item(row, 0).text().split("_", 1)[0] == prefix
+
+    # Возврат к «Все» показывает всё
+    tab._group_list.setCurrentRow(0)
+    assert all(
+        not tab.table.isRowHidden(row) for row in range(tab.table.rowCount())
+    )
+    window.deleteLater()
+
+
+def test_editor_rename_enum(pack_editor_module, qt_app, monkeypatch):
+    """Переименование перечисления переносит секцию на новое имя."""
+    from PyQt5.QtWidgets import QInputDialog
+
+    window = pack_editor_module.PackEditorWindow()
+    old_name = window.enums_tab.enum_list.item(0).text()
+    window.enums_tab.enum_list.setCurrentRow(0)
+    monkeypatch.setattr(
+        QInputDialog, "getText", staticmethod(lambda *a, **kw: ("renamed_enum", True))
+    )
+    window.enums_tab._rename_enum()
+    assert "renamed_enum" in window._data["enums"]
+    assert old_name not in window._data["enums"]
+    assert window.enums_tab.enum_list.currentItem().text() == "renamed_enum"
+    window.deleteLater()
+
+
+def test_editor_mandatory_highlight(pack_editor_module, qt_app):
+    """Пустые обязательные ячейки подсвечиваются."""
+    from PyQt5.QtGui import QColor
+
+    window = pack_editor_module.PackEditorWindow()
+    tab = window.enums_tab
+    tab.enum_list.setCurrentRow(0)
+    # Очищаем обязательную ячейку «Метка»
+    item = tab.table.item(0, 2)
+    item.setText("")
+    assert item.background().color() == QColor("#F5C6CB")
+    # Заполняем обратно — подсветка снимается
+    item.setText("Метка")
+    assert item.background().color() != QColor("#F5C6CB")
     window.deleteLater()
 
 

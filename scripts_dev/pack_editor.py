@@ -30,14 +30,17 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QBrush, QColor
 from PyQt5.QtWidgets import (
     QApplication,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -57,6 +60,9 @@ from internal_correspondence.core.domain_pack import (
     load_domain_pack,
     save_domain_pack,
 )
+
+# Фон пустой обязательной ячейки
+MANDATORY_BG = QColor("#F5C6CB")
 
 # Колонки таблиц
 _ENUM_COLUMNS = ("Ключ", "Код", "Метка", "Вес", "Устаревшее")
@@ -93,10 +99,23 @@ class GeneralTab(QWidget):
         self.version_edit = QLineEdit()
         form.addRow("Идентификатор пакета:", self.id_edit)
         form.addRow("Версия:", self.version_edit)
+        self.id_edit.textChanged.connect(self._highlight_mandatory)
+        self.version_edit.textChanged.connect(self._highlight_mandatory)
+
+    def _highlight_mandatory(self) -> None:
+        """Подсвечивает пустые обязательные поля."""
+        style = f"background-color: {MANDATORY_BG.name()};"
+        self.id_edit.setStyleSheet(
+            style if not self.id_edit.text().strip() else ""
+        )
+        self.version_edit.setStyleSheet(
+            style if not self.version_edit.text().strip() else ""
+        )
 
     def load(self, data: dict) -> None:
         self.id_edit.setText(str(data.get("id", "")))
         self.version_edit.setText(str(data.get("version", "")))
+        self._highlight_mandatory()
 
     def store(self, data: dict) -> None:
         data["id"] = self.id_edit.text().strip()
@@ -135,8 +154,12 @@ class EnumsTab(QWidget):
         remove_btn = QPushButton("−")
         remove_btn.setToolTip("Удалить значение")
         remove_btn.clicked.connect(self._remove_value)
+        rename_btn = QPushButton("Переименовать...")
+        rename_btn.setToolTip("Переименовать перечисление")
+        rename_btn.clicked.connect(self._rename_enum)
         buttons.addWidget(add_btn)
         buttons.addWidget(remove_btn)
+        buttons.addWidget(rename_btn)
         buttons.addStretch()
         right.addLayout(buttons)
         layout.addLayout(right, stretch=3)
@@ -178,6 +201,7 @@ class EnumsTab(QWidget):
                 )
         self.enum_label_edit.blockSignals(False)
         self.table.blockSignals(False)
+        self._highlight_mandatory()
 
     def _store_current(self) -> None:
         """Переносит содержимое таблицы обратно в структуру пакета."""
@@ -209,6 +233,7 @@ class EnumsTab(QWidget):
                 value["deprecated"] = True
             values.append(value)
         enum_def["values"] = values
+        self._highlight_mandatory()
 
     def _add_value(self) -> None:
         row = self.table.rowCount()
@@ -225,6 +250,46 @@ class EnumsTab(QWidget):
         for row in reversed(rows):
             self.table.removeRow(row)
         self._store_current()
+
+    def _rename_enum(self) -> None:
+        """Переименовывает перечисление (ключ секции пакета)."""
+        if self._current is None:
+            return
+        new_name, ok = QInputDialog.getText(
+            self, "Переименование", "Новое имя перечисления:", text=self._current
+        )
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == self._current:
+            return
+        if new_name in self._data.get("enums", {}):
+            QMessageBox.warning(
+                self, "Переименование",
+                f"Перечисление «{new_name}» уже существует.",
+            )
+            return
+        self._store_current()
+        self._data["enums"][new_name] = self._data["enums"].pop(self._current)
+        self._current = None
+        self.load(self._data)
+        items = self.enum_list.findItems(new_name, Qt.MatchExactly)
+        if items:
+            self.enum_list.setCurrentItem(items[0])
+
+    def _highlight_mandatory(self) -> None:
+        """Подсвечивает пустые обязательные ячейки (ключ, код, метка)."""
+        self.table.blockSignals(True)
+        for row in range(self.table.rowCount()):
+            for column in (0, 1, 2):
+                item = self.table.item(row, column)
+                if item is None:
+                    continue
+                if not item.text().strip():
+                    item.setBackground(MANDATORY_BG)
+                else:
+                    item.setBackground(QBrush())
+        self.table.blockSignals(False)
 
 
 class EntitiesTab(QWidget):
@@ -263,8 +328,12 @@ class EntitiesTab(QWidget):
         remove_btn = QPushButton("−")
         remove_btn.setToolTip("Удалить поле")
         remove_btn.clicked.connect(self._remove_field)
+        rename_btn = QPushButton("Переименовать...")
+        rename_btn.setToolTip("Переименовать сущность")
+        rename_btn.clicked.connect(self._rename_entity)
         buttons.addWidget(add_btn)
         buttons.addWidget(remove_btn)
+        buttons.addWidget(rename_btn)
         buttons.addStretch()
         right.addLayout(buttons)
         layout.addLayout(right, stretch=3)
@@ -310,6 +379,7 @@ class EntitiesTab(QWidget):
         for edit in self.label_edits.values():
             edit.blockSignals(False)
         self.fields_table.blockSignals(False)
+        self._highlight_mandatory()
 
     def _store_current(self) -> None:
         if self._current is None:
@@ -340,6 +410,7 @@ class EntitiesTab(QWidget):
                 field_def["required"] = True
             fields[name_item.text().strip()] = field_def
         entity_def["fields"] = fields
+        self._highlight_mandatory()
 
     def _add_field(self) -> None:
         row = self.fields_table.rowCount()
@@ -355,15 +426,59 @@ class EntitiesTab(QWidget):
             self.fields_table.removeRow(row)
         self._store_current()
 
+    def _rename_entity(self) -> None:
+        """Переименовывает сущность (ключ секции entities пакета)."""
+        if self._current is None:
+            return
+        new_name, ok = QInputDialog.getText(
+            self, "Переименование", "Новое имя сущности:", text=self._current
+        )
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == self._current:
+            return
+        if new_name in self._data.get("entities", {}):
+            QMessageBox.warning(
+                self, "Переименование",
+                f"Сущность «{new_name}» уже существует.",
+            )
+            return
+        self._store_current()
+        self._data["entities"][new_name] = self._data["entities"].pop(self._current)
+        self._current = None
+        self.load(self._data)
+        items = self.entity_list.findItems(new_name, Qt.MatchExactly)
+        if items:
+            self.entity_list.setCurrentItem(items[0])
+
+    def _highlight_mandatory(self) -> None:
+        """Подсвечивает пустые обязательные ячейки (имя поля)."""
+        self.fields_table.blockSignals(True)
+        for row in range(self.fields_table.rowCount()):
+            item = self.fields_table.item(row, 0)
+            if item is None:
+                continue
+            if not item.text().strip():
+                item.setBackground(MANDATORY_BG)
+            else:
+                item.setBackground(QBrush())
+        self.fields_table.blockSignals(False)
+
 
 class KeyValueTab(QWidget):
-    """Таблица «ключ — значение» (директории, строки интерфейса)."""
+    """Таблица «ключ — значение» (директории, строки интерфейса).
+
+    При ``group_by_prefix=True`` слева показывается список групп по префиксу
+    ключа (часть до первого «_») — для длинных секций вроде строк интерфейса.
+    """
 
     def __init__(
         self,
         section: str,
         key_editable: bool,
         with_filter: bool = False,
+        group_by_prefix: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -372,15 +487,28 @@ class KeyValueTab(QWidget):
         self._data: dict = {}
         layout = QVBoxLayout(self)
         self._filter: Optional[QLineEdit] = None
+        self._group_list: Optional[QListWidget] = None
+
+        body = QHBoxLayout()
+        if group_by_prefix:
+            self._group_list = QListWidget()
+            self._group_list.setMaximumWidth(200)
+            self._group_list.currentRowChanged.connect(
+                lambda _row: self._apply_filter(self._filter.text() if self._filter else "")
+            )
+            body.addWidget(self._group_list)
+
+        right = QVBoxLayout()
         if with_filter:
             self._filter = QLineEdit()
             self._filter.setPlaceholderText("Фильтр по ключу и значению...")
             self._filter.textChanged.connect(self._apply_filter)
-            layout.addWidget(self._filter)
+            right.addWidget(self._filter)
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["Ключ", "Значение"])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        layout.addWidget(self.table)
+        self.table.itemChanged.connect(lambda _item: self._highlight_mandatory())
+        right.addWidget(self.table)
         if key_editable:
             buttons = QHBoxLayout()
             add_btn = QPushButton("+")
@@ -390,11 +518,19 @@ class KeyValueTab(QWidget):
             buttons.addWidget(add_btn)
             buttons.addWidget(remove_btn)
             buttons.addStretch()
-            layout.addLayout(buttons)
+            right.addLayout(buttons)
+        body.addLayout(right, stretch=1)
+        layout.addLayout(body)
+
+    def _groups(self) -> List[str]:
+        """Префиксы ключей секции (группы строк)."""
+        section = self._data.get(self._section, {})
+        return sorted({key.split("_", 1)[0] for key in section})
 
     def load(self, data: dict) -> None:
         self._data = data
         section = data.get(self._section, {})
+        self.table.blockSignals(True)
         self.table.setRowCount(len(section))
         for row, (key, value) in enumerate(sorted(section.items())):
             key_item = _item(key)
@@ -402,8 +538,24 @@ class KeyValueTab(QWidget):
                 key_item.setFlags(key_item.flags() & ~Qt.ItemIsEditable)
             self.table.setItem(row, 0, key_item)
             self.table.setItem(row, 1, _item(str(value)))
+        self.table.blockSignals(False)
+        if self._group_list is not None:
+            self._group_list.blockSignals(True)
+            self._group_list.clear()
+            self._group_list.addItem(f"Все ({len(section)})")
+            for prefix in self._groups():
+                count = sum(
+                    1 for key in section if key.split("_", 1)[0] == prefix
+                )
+                item = QListWidgetItem(f"{prefix} ({count})")
+                item.setData(Qt.UserRole, prefix)
+                self._group_list.addItem(item)
+            self._group_list.setCurrentRow(0)
+            self._group_list.blockSignals(False)
         if self._filter is not None:
             self._filter.clear()
+        self._apply_filter("")
+        self._highlight_mandatory()
 
     def store(self, data: dict) -> None:
         section: Dict[str, str] = {}
@@ -417,21 +569,48 @@ class KeyValueTab(QWidget):
             )
         data[self._section] = section
 
+    def _current_prefix(self) -> Optional[str]:
+        if self._group_list is None:
+            return None
+        item = self._group_list.currentItem()
+        if item is None:
+            return None
+        return item.data(Qt.UserRole)  # None у пункта «Все»
+
     def _apply_filter(self, text: str) -> None:
         needle = text.strip().lower()
+        prefix = self._current_prefix()
         for row in range(self.table.rowCount()):
             key_item = self.table.item(row, 0)
             value_item = self.table.item(row, 1)
+            key = key_item.text() if key_item else ""
+            if prefix is not None and key.split("_", 1)[0] != prefix:
+                self.table.setRowHidden(row, True)
+                continue
             haystack = " ".join(
                 item.text().lower() for item in (key_item, value_item) if item
             )
             self.table.setRowHidden(row, bool(needle) and needle not in haystack)
+
+    def _highlight_mandatory(self) -> None:
+        """Подсвечивает пустые обязательные ячейки (значение строки)."""
+        self.table.blockSignals(True)
+        for row in range(self.table.rowCount()):
+            value_item = self.table.item(row, 1)
+            if value_item is None:
+                continue
+            if not value_item.text().strip():
+                value_item.setBackground(MANDATORY_BG)
+            else:
+                value_item.setBackground(QBrush())
+        self.table.blockSignals(False)
 
     def _add_row(self) -> None:
         row = self.table.rowCount()
         self.table.insertRow(row)
         self.table.setItem(row, 0, _item(""))
         self.table.setItem(row, 1, _item(""))
+        self._highlight_mandatory()
 
     def _remove_rows(self) -> None:
         rows = sorted({index.row() for index in self.table.selectedIndexes()})
@@ -468,7 +647,7 @@ class PackEditorWindow(QMainWindow):
         self.entities_tab = EntitiesTab()
         self.directories_tab = KeyValueTab("directories", key_editable=True)
         self.strings_tab = KeyValueTab(
-            "strings", key_editable=False, with_filter=True
+            "strings", key_editable=False, with_filter=True, group_by_prefix=True
         )
         self.tabs.addTab(self.general_tab, "Общие")
         self.tabs.addTab(self.enums_tab, "Перечисления")
