@@ -1,15 +1,17 @@
 """Диаграммы и выбор периода панели сведений об элементе ОШС."""
 
+import html
 from datetime import date
 from typing import Dict, List, Optional, Tuple
 
 from PyQt5.QtChart import QChart, QChartView, QPieSeries, QPieSlice
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QPainter
+from PyQt5.QtCore import QMargins, Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QPainter
 from PyQt5.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -45,8 +47,18 @@ _EVALUATION_COLORS = (
 # Цвет сектора «без оценки»
 _NO_EVALUATION_COLOR = QColor("#95A5A6")
 
-# Цвет подписей на секторах
-_LABEL_COLOR = Qt.black
+
+def _label_color() -> Qt.GlobalColor:
+    """Цвет подписей секторов и числа в центре под текущую тему."""
+    return Qt.white if current_theme().key == "dark" else Qt.black
+
+
+def _sector_font() -> QFont:
+    """Шрифт подписей секторов (крупнее стандартного, чтобы читались)."""
+    font = QFont()
+    font.setPointSize(9)
+    font.setBold(True)
+    return font
 
 
 def _evaluation_color(value: int) -> QColor:
@@ -64,56 +76,174 @@ def _evaluation_sort_key(value: int) -> Tuple[int, int]:
     return (-weight if weight is not None else 0, value)
 
 
+def _evaluation_short(value: int) -> str:
+    """Сокращённое наименование оценки (код перечисления: Б, И, П, В)."""
+    return pack_enum_display("evaluation_value", value)
+
+
+def _evaluation_full(value: int) -> str:
+    """Полное наименование оценки (для подсказки легенды)."""
+    return enum_label("evaluation_value", _evaluation_short(value))
+
+
 class _DonutView(QChartView):
-    """Вид диаграммы с надписью в центре кольца."""
+    """Вид диаграммы с надписью в центре кольца.
+
+    Область построения всегда квадратная: вид занимает всю доступную
+    площадь, а поля диаграммы подбираются так, чтобы круг вписался в
+    квадрат со стороной ``min(width, height)`` и был отцентрован.
+    """
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(QChart())
         self.setRenderHint(QPainter.Antialiasing)
         self._center = QLabel(self)
         self._center.setAlignment(Qt.AlignCenter)
+        self._style_center()
+        self._center.hide()
+
+    def _style_center(self) -> None:
+        """Оформляет надпись в центре под текущую тему."""
+        color = "white" if current_theme().key == "dark" else "black"
         self._center.setStyleSheet(
-            "font-size: 13pt; font-weight: bold; color: black;"
+            f"font-size: 16pt; font-weight: bold; color: {color};"
             " background: transparent;"
         )
-        self._center.hide()
 
     def set_center_text(self, text: str) -> None:
         self._center.setText(text)
+        # Тема могла смениться после создания вида — цвет подписи обновляем
+        self._style_center()
         self._center.show()
         self._center.raise_()
+        self.apply_square_area()
 
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        side = min(self.width(), self.height())
-        inner = int(side * 0.34)
+    def square_side(self) -> int:
+        """Сторона квадратной области построения."""
+        return max(0, min(self.width(), self.height()))
+
+    def apply_square_area(self) -> None:
+        """Вписывает круг диаграммы в квадрат и центрирует его.
+
+        Поля диаграммы выравнивают область построения по меньшей стороне
+        вида, поэтому круг остаётся кругом при любой форме виджета.
+        Размеры самого вида не меняются — раскладка не пересчитывается
+        заново, поэтому рекурсии при изменении размера не возникает.
+        """
+        width, height = self.width(), self.height()
+        if width <= 0 or height <= 0:
+            return
+        side = min(width, height)
+        left = (width - side) // 2
+        top = (height - side) // 2
+        chart = self.chart()
+        if chart is not None:
+            chart.setMargins(
+                QMargins(left, top, width - side - left, height - side - top)
+            )
+        inner = int(side * 0.30)
         self._center.setGeometry(
-            (self.width() - inner) // 2,
-            (self.height() - inner) // 2,
+            left + (side - inner) // 2,
+            top + (side - inner) // 2,
             inner,
             inner,
         )
+        # Надпись в центре подстраивается под размер кольца
+        font = QFont(self._center.font())
+        font.setPointSize(max(8, min(16, int(side * 0.055))))
+        font.setBold(True)
+        self._center.setFont(font)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.apply_square_area()
 
 
 class ElementDonutWidget(QWidget):
     """Диаграмма показателей элемента за период.
 
     В центре — общее количество материалов и телеграмм; «мантия» из двух
-    пропорциональных секторов (телеграммы и материалы) с подписями;
-    внешнее кольцо — сектора оценок внутри каждого класса документов
-    (числа на секторах), названия оценок — цветная легенда внизу.
+    пропорциональных секторов (телеграммы и материалы); внешнее кольцо —
+    сектора оценок внутри каждого класса документов. На секторах — только
+    числа; что означает каждый цвет, расшифровано в описании под диаграммой
+    (сокращение и его полное наименование).
+
+    Область построения квадратная и подстраивается под размер виджета:
+    с ростом панели диаграмма увеличивается, с уменьшением — сжимается,
+    поэтому кольцо не вытягивается и подписи не наезжают друг на друга.
     """
+
+    # Минимальная и максимальная сторона области построения (квадрат)
+    MIN_SIDE = 180
+    MAX_SIDE = 460
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        self._title_label = QLabel()
+        self._title_label.setAlignment(Qt.AlignCenter)
+        self._title_label.setWordWrap(True)
+        self._title_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        layout.addWidget(self._title_label)
         self._view = _DonutView()
-        self._view.setMinimumSize(230, 230)
-        layout.addWidget(self._view)
-        self._legend_row = QHBoxLayout()
-        self._legend_row.addStretch()
-        layout.addLayout(self._legend_row)
+        # Вид растягивается по ширине панели, высота подгоняется под ширину
+        # (квадрат области построения выравнивается полями диаграммы):
+        # размеры виджета не меняются, поэтому раскладка не зацикливается
+        self._view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self._view.setMinimumWidth(self.MIN_SIDE)
+        self._view.setMinimumHeight(self.MIN_SIDE)
+        self._view.setMaximumWidth(self.MAX_SIDE)
+        layout.addWidget(self._view, stretch=1)
+        # Описание цветов — обычная надпись с переносом по словам: строки
+        # пересобираются самой разметкой, а не пересчётом раскладки
+        self._legend_label = QLabel()
+        self._legend_label.setWordWrap(True)
+        self._legend_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._legend_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        layout.addWidget(self._legend_label)
+        # Пары «сокращение — полное наименование — цвет»
+        self._legend_items: List[Tuple[str, str, QColor]] = []
+
+    # ------------------------------------------------------------------
+    # Квадратная область построения
+    # ------------------------------------------------------------------
+
+    def resizeEvent(self, event) -> None:
+        """Держит область построения квадратной при изменении размера."""
+        super().resizeEvent(event)
+        side = min(max(self.width(), self.MIN_SIDE), self.MAX_SIDE)
+        # Высота вида равна его ширине, поэтому область построения — квадрат.
+        # Меняется только высота: ширина вида от неё не зависит, поэтому
+        # раскладка не пересчитывается рекурсивно.
+        if self._view.height() != side:
+            self._view.setFixedHeight(side)
+        self._update_title_font()
+
+    def _update_title_font(self) -> None:
+        """Заголовок периода подстраивается под размер диаграммы."""
+        font = QFont(self._title_label.font())
+        font.setPointSize(
+            max(8, min(12, int(self.chart_side() * 0.035)))
+        )
+        font.setBold(True)
+        self._title_label.setFont(font)
+
+    def chart_side(self) -> int:
+        """Сторона квадратной области построения (для проверок и экспорта)."""
+        return self._view.square_side()
+
+    def chart_title(self) -> str:
+        """Заголовок диаграммы (период, при отсутствии данных — с пометкой)."""
+        return self._title_label.text()
+
+    def legend_descriptions(self) -> List[str]:
+        """Расшифровка всех цветов диаграммы (для проверок и экспорта)."""
+        return [
+            STRINGS.oshm_legend_item.format(short=short, full=full)
+            for short, full, _color in self._legend_items
+        ]
 
     def set_data(
         self,
@@ -130,11 +260,17 @@ class ElementDonutWidget(QWidget):
             if current_theme().key == "dark"
             else QChart.ChartThemeLight
         )
-        chart.setTitle(title)
+        # Заголовок вынесен из диаграммы, поэтому область построения
+        # остаётся квадратной и не «съедается» подписью периода
+        chart.setTitle("")
+        chart.setMargins(QMargins(0, 0, 0, 0))
+        chart.setBackgroundRoundness(0)
         chart.legend().setVisible(False)
+        self._title_label.setText(title)
+        self._update_title_font()
         total = materials + telegrams
         if total == 0:
-            chart.setTitle(f"{title} — {STRINGS.chart_no_data}")
+            self._title_label.setText(f"{title} — {STRINGS.chart_no_data}")
             self._view.setChart(chart)
             self._view.set_center_text("0")
             self._clear_legend()
@@ -143,29 +279,33 @@ class ElementDonutWidget(QWidget):
         # «Мантия»: телеграммы и материалы, пропорционально количествам.
         # Порядок секторов (телеграммы, затем материалы) совпадает с порядком
         # секторов оценок во внешнем кольце — дуги согласованы.
+        # На секторах — только числа: расшифровка цветов идёт в описании.
         mantle = QPieSeries()
-        mantle.setPieSize(0.62)
-        mantle.setHoleSize(0.34)
+        mantle.setPieSize(0.54)
+        mantle.setHoleSize(0.30)
         if telegrams > 0:
-            slice_ = mantle.append(f"{STRINGS.oshm_chart_telegrams} — {telegrams}", telegrams)
+            slice_ = mantle.append(str(telegrams), telegrams)
             slice_.setColor(_MANTLE_COLORS["telegrams"])
             slice_.setLabelVisible(True)
             slice_.setLabelPosition(QPieSlice.LabelInsideHorizontal)
-            slice_.setLabelColor(_LABEL_COLOR)
+            slice_.setLabelColor(_label_color())
+            slice_.setLabelFont(_sector_font())
         if materials > 0:
-            slice_ = mantle.append(f"{STRINGS.oshm_chart_materials} — {materials}", materials)
+            slice_ = mantle.append(str(materials), materials)
             slice_.setColor(_MANTLE_COLORS["materials"])
             slice_.setLabelVisible(True)
             slice_.setLabelPosition(QPieSlice.LabelInsideHorizontal)
-            slice_.setLabelColor(_LABEL_COLOR)
+            slice_.setLabelColor(_label_color())
+            slice_.setLabelFont(_sector_font())
         chart.addSeries(mantle)
 
         # Внешнее кольцо: оценки телеграмм, затем оценки материалов.
         # Каждая группа секторов занимает ровно дугу своего сектора мантии:
         # неоценённые документы закрываются сектором «без оценки».
+        # Числа выводятся снаружи кольца: на узких секторах они не обрезаются.
         outer = QPieSeries()
-        outer.setPieSize(0.95)
-        outer.setHoleSize(0.64)
+        outer.setPieSize(0.80)
+        outer.setHoleSize(0.54)
         legend_values: List[int] = []
         legend_no_evaluation = False
         for evaluations, class_total in (
@@ -178,63 +318,104 @@ class ElementDonutWidget(QWidget):
                     continue
                 slice_ = outer.append(str(count), count)
                 slice_.setColor(_evaluation_color(value))
-                slice_.setLabelVisible(True)
-                slice_.setLabelPosition(QPieSlice.LabelInsideHorizontal)
-                slice_.setLabelColor(_LABEL_COLOR)
+                self._style_outer_slice(slice_)
                 if value not in legend_values:
                     legend_values.append(value)
             unevaluated = class_total - sum(evaluations.values())
             if unevaluated > 0:
                 slice_ = outer.append(str(unevaluated), unevaluated)
                 slice_.setColor(_NO_EVALUATION_COLOR)
-                slice_.setLabelVisible(True)
-                slice_.setLabelPosition(QPieSlice.LabelInsideHorizontal)
-                slice_.setLabelColor(_LABEL_COLOR)
+                self._style_outer_slice(slice_)
                 legend_no_evaluation = True
         if outer.count() > 0:
             chart.addSeries(outer)
 
         self._view.setChart(chart)
         self._view.set_center_text(str(total))
-        self._build_legend(legend_values, legend_no_evaluation)
+        self._build_legend(
+            legend_values,
+            legend_no_evaluation,
+            telegrams=telegrams,
+            materials=materials,
+        )
+
+    @staticmethod
+    def _style_outer_slice(slice_: QPieSlice) -> None:
+        """Оформляет сектор внешнего кольца: подпись числа снаружи кольца."""
+        slice_.setLabelVisible(True)
+        slice_.setLabelPosition(QPieSlice.LabelOutside)
+        slice_.setLabelArmLengthFactor(0.10)
+        slice_.setLabelColor(_label_color())
+        slice_.setLabelFont(_sector_font())
 
     def _clear_legend(self) -> None:
-        while self._legend_row.count():
-            item = self._legend_row.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
+        """Очищает описание цветов."""
+        self._legend_items = []
+        self._legend_label.clear()
 
-    def _build_legend(self, values: List[int], no_evaluation: bool) -> None:
-        """Строит цветную легенду оценок внизу диаграммы."""
-        self._clear_legend()
-        first = True
+    def _build_legend(
+        self,
+        values: List[int],
+        no_evaluation: bool,
+        telegrams: int = 0,
+        materials: int = 0,
+    ) -> None:
+        """Строит описание диаграммы: все цвета с расшифровкой сокращений.
+
+        В описании перечислены все цвета, встречающиеся на диаграмме:
+        классы документов мантии (ТГ, НМ) и значения оценок (Б, И, П, В,
+        «б/о»). Каждая пара — цветной маркер и текст «сокращение — полное
+        наименование», поэтому сокращения на секторах читаются однозначно.
+        Надпись переносит пары по строкам в зависимости от ширины панели.
+        """
+        entries: List[Tuple[str, str, QColor]] = []
+        if telegrams > 0:
+            entries.append(
+                (
+                    STRINGS.oshm_chart_telegrams,
+                    STRINGS.oshm_chart_telegrams_full,
+                    _MANTLE_COLORS["telegrams"],
+                )
+            )
+        if materials > 0:
+            entries.append(
+                (
+                    STRINGS.oshm_chart_materials,
+                    STRINGS.oshm_chart_materials_full,
+                    _MANTLE_COLORS["materials"],
+                )
+            )
         for value in sorted(values, key=_evaluation_sort_key):
-            if not first:
-                spacer = QLabel("  ")
-                self._legend_row.addWidget(spacer)
-            first = False
-            marker = QLabel()
-            marker.setFixedSize(12, 12)
-            color = _evaluation_color(value)
-            marker.setStyleSheet(
-                f"background-color: {color.name()}; border: 1px solid #888;"
+            entries.append(
+                (
+                    _evaluation_short(value),
+                    _evaluation_full(value),
+                    _evaluation_color(value),
+                )
             )
-            self._legend_row.addWidget(marker)
-            short = pack_enum_display("evaluation_value", value)
-            self._legend_row.addWidget(QLabel(enum_label("evaluation_value", short)))
         if no_evaluation:
-            if not first:
-                self._legend_row.addWidget(QLabel("  "))
-            marker = QLabel()
-            marker.setFixedSize(12, 12)
-            marker.setStyleSheet(
-                f"background-color: {_NO_EVALUATION_COLOR.name()};"
-                " border: 1px solid #888;"
+            entries.append(
+                (
+                    STRINGS.oshm_chart_no_evaluation_short,
+                    STRINGS.oshm_chart_no_evaluation_full,
+                    _NO_EVALUATION_COLOR,
+                )
             )
-            self._legend_row.addWidget(marker)
-            self._legend_row.addWidget(QLabel(STRINGS.oshm_chart_no_evaluation))
-        self._legend_row.addStretch()
+        self._legend_items = entries
+        self._legend_label.setText(self._legend_html())
+
+    def _legend_html(self) -> str:
+        """Разметка описания: цветной маркер перед каждой расшифровкой."""
+        parts = []
+        for short, full, color in self._legend_items:
+            text = STRINGS.oshm_legend_item.format(
+                short=html.escape(short), full=html.escape(full)
+            )
+            parts.append(
+                f"<span style='color:{color.name()};'>\u25a0</span>&nbsp;{text}"
+            )
+        # Пары разделены точкой с запятой: одна надпись переносит их сама
+        return "; ".join(parts)
 
 
 class PeriodSelectorWidget(QWidget):
@@ -251,13 +432,27 @@ class PeriodSelectorWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QLabel(STRINGS.label_period))
         self.period_combo = QComboBox()
+        # Компактные списки: блок выбора периода не задаёт панели лишней
+        # минимальной ширины и не вызывает горизонтальную прокрутку
+        self.period_combo.setSizeAdjustPolicy(
+            QComboBox.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.period_combo.setMinimumContentsLength(4)
         for key, label in PERIOD_LABELS.items():
             self.period_combo.addItem(label, key)
         layout.addWidget(self.period_combo)
         self.index_combo = QComboBox()
+        self.index_combo.setSizeAdjustPolicy(
+            QComboBox.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.index_combo.setMinimumContentsLength(4)
         layout.addWidget(self.index_combo)
         layout.addWidget(QLabel(STRINGS.label_year))
         self.year_combo = QComboBox()
+        self.year_combo.setSizeAdjustPolicy(
+            QComboBox.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.year_combo.setMinimumContentsLength(4)
         today = date.today()
         for year in range(today.year - 6, today.year + 2):
             self.year_combo.addItem(str(year), year)

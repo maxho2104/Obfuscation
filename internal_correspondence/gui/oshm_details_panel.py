@@ -1,14 +1,17 @@
 """Панель сведений об элементе ОШС.
 
 Выдвигается справа в диалоге ОШС по двойному щелчку на элементе дерева.
-Верхняя часть: аватарка с кнопками (+ добавить, − удалить, «Печать»),
-наименование элемента с коэффициентом эффективности и поля данных,
-таблица оценок за выбранный период. Ниже — задачи элемента и блок
-сравнения периодов: две трёхкольцевые диаграммы (текущий период и
-аналогичный период прошлого года). Кнопки: «Скрыть», «Изменить»,
-«Статистика» (запрашивает у приложения статистику по элементу).
+Верхняя часть: аватарка с кнопками под изображением (+ добавить, − удалить),
+наименование элемента, поля данных и коэффициент эффективности, таблица
+оценок за выбранный период. Ниже — задачи элемента и блок сравнения
+периодов: две трёхкольцевые диаграммы (текущий период и аналогичный период
+прошлого года). Содержимое панели прокручивается, поэтому блоки не
+наползают друг на друга при недостатке высоты. Кнопки действий («Скрыть»,
+«Изменить», «Статистика», «Сохранить») размещает диалог в своём нижнем ряду.
 """
 
+import re
+import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
 from uuid import UUID
@@ -22,6 +25,7 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -30,6 +34,8 @@ from PyQt5.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -84,15 +90,54 @@ NodeRef = Tuple[str, str]
 # Отображение пустого значения
 EMPTY = "—"
 
+# Число строк таблицы оценок, помещающихся в фиксированной высоте
+# (значения перечисления оценки: Б, И, П, В)
+EVAL_TABLE_ROWS = 4
+
 
 def _date_text(value) -> str:
     """Форматирует дату для показа на панели."""
     return value.strftime("%d.%m.%Y") if value is not None else EMPTY
 
 
+# Наименование вида «Филиал «Название»»: слово-метка и кавычки убираются,
+# чтобы в карточке не дублировалось «Филиал: Филиал «…»»
+_BRANCH_PREFIX_RE = re.compile(r"^\s*филиал\s*[«\"]\s*(.+?)\s*[»\"]\s*$", re.IGNORECASE)
+
+
+def branch_display_name(branch) -> str:
+    """Возвращает наименование филиала для подписи карточки.
+
+    Из справочного наименования убираются ведущее слово «Филиал» и кавычки:
+    «Филиал «Бобров Инкорпорэйтед»» → «Бобров Инкорпорэйтед». Наименования
+    без такой формы (например, «Филиал 1») возвращаются как есть.
+    """
+    name = (getattr(branch, "name", "") or "").strip()
+    match = _BRANCH_PREFIX_RE.match(name)
+    if match:
+        name = match.group(1).strip()
+    if not name:
+        name = (getattr(branch, "short_name", "") or getattr(branch, "id", "")).strip()
+    return name
+
+
 def _bool_text(value: bool) -> str:
     """Форматирует признак активности для показа на панели."""
     return STRINGS.value_yes if value else STRINGS.value_no
+
+
+# Недопустимые в имени файла символы заменяются на подчёркивание
+_FILE_NAME_BAD_CHARS = '<>:"/\\|?*'
+
+
+def _safe_file_name(text: str) -> str:
+    """Преобразует наименование карточки в безопасное имя файла."""
+    cleaned = "".join(
+        "_" if char in _FILE_NAME_BAD_CHARS or ord(char) < 32 else char
+        for char in (text or "").strip()
+    )
+    cleaned = " ".join(cleaned.split()).strip(" .")
+    return cleaned[:120] or STRINGS.oshm_doc_title
 
 
 class TaskPickerDialog(QDialog):
@@ -167,6 +212,10 @@ class ElementDetailsPanel(QWidget):
         self._stats_service = ElementStatsService(session)
         self.current_node: Optional[NodeRef] = None
         self._employee: Optional[Employee] = None
+        # Пары «подпись — значение» полей карточки (для выгрузки в DOCX)
+        self._field_rows: List[Tuple[str, str]] = []
+        # Признак того, что строка коэффициента уже вставлена в карточку
+        self._coef_row_added = False
         # Узел, для которого показывается таблица задач, и его старший
         # элемент (ограничение назначения: задача должна быть у старшего)
         self._tasks_node: Optional[NodeRef] = None
@@ -179,12 +228,48 @@ class ElementDetailsPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        # Кнопки действий создаются здесь, но размещаются в нижнем ряду
+        # диалога ОШС — на одном уровне с кнопкой «+» (Добавить)
+        self.hide_btn = QPushButton(STRINGS.button_hide)
+        self.hide_btn.clicked.connect(self.hide_requested.emit)
+        self.edit_btn = QPushButton(STRINGS.button_edit)
+        self.edit_btn.clicked.connect(self._edit_clicked)
+        self.stats_btn = QPushButton(STRINGS.button_statistics)
+        self.stats_btn.clicked.connect(self._show_statistics)
+        # «Сохранить» — выгрузка карточки в DOCX (размещается диалогом
+        # в нижнем ряду, рядом с «Закрыть»)
+        self.save_btn = QPushButton(STRINGS.button_save)
+        self.save_btn.setToolTip(STRINGS.oshm_save_tooltip)
+        self.save_btn.clicked.connect(self._save_panel)
+        # Пока карточка не открыта, сохранять нечего
+        self.save_btn.setEnabled(False)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        # Содержимое прокручивается: при небольшой высоте блоки не сжимаются
+        # и не наползают друг на друга, диаграммы не обрезаются
+        self._scroll = QScrollArea(self)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._content = QWidget()
+        self._content.setObjectName("oshmDetailsContent")
+        layout = QVBoxLayout(self._content)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(8)
+        self._scroll.setWidget(self._content)
+        outer.addWidget(self._scroll)
 
         # Верхняя строка: аватар | название + коэффициент + поля | оценки
         top_row = QHBoxLayout()
+        top_row.setSpacing(10)
 
-        avatar_column = QVBoxLayout()
+        # Столбец аватара фиксирован: кнопки всегда стоят под изображением
+        avatar_widget = QWidget()
+        avatar_widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        avatar_column = QVBoxLayout(avatar_widget)
+        avatar_column.setContentsMargins(0, 0, 0, 0)
+        avatar_column.setSpacing(4)
         self.avatar_label = QLabel()
         self.avatar_label.setFixedSize(AVATAR_WIDTH, AVATAR_HEIGHT)
         self.avatar_label.setAlignment(Qt.AlignCenter)
@@ -192,22 +277,23 @@ class ElementDetailsPanel(QWidget):
         self.avatar_label.setStyleSheet("border: 1px solid palette(Mid);")
         avatar_column.addWidget(self.avatar_label)
         avatar_buttons = QHBoxLayout()
+        avatar_buttons.setContentsMargins(0, 0, 0, 0)
+        avatar_buttons.setSpacing(4)
         self.avatar_add_btn = QPushButton("+")
         self.avatar_add_btn.setToolTip(STRINGS.oshm_avatar_add)
         self.avatar_add_btn.clicked.connect(self._add_avatar)
         self.avatar_remove_btn = QPushButton("−")
         self.avatar_remove_btn.setToolTip(STRINGS.oshm_avatar_remove)
         self.avatar_remove_btn.clicked.connect(self._remove_avatar)
-        self.print_btn = QPushButton(STRINGS.button_print)
-        self.print_btn.clicked.connect(self._print_panel)
         avatar_buttons.addWidget(self.avatar_add_btn)
         avatar_buttons.addWidget(self.avatar_remove_btn)
-        avatar_buttons.addWidget(self.print_btn)
         avatar_buttons.addStretch()
         avatar_column.addLayout(avatar_buttons)
-        top_row.addLayout(avatar_column)
+        avatar_widget.adjustSize()
+        top_row.addWidget(avatar_widget, alignment=Qt.AlignTop)
 
         center_column = QVBoxLayout()
+        center_column.setSpacing(4)
         title_row = QHBoxLayout()
         self.title_label = QLabel()
         title_font = self.title_label.font()
@@ -215,37 +301,75 @@ class ElementDetailsPanel(QWidget):
         self.title_label.setFont(title_font)
         self.title_label.setWordWrap(True)
         title_row.addWidget(self.title_label, stretch=1)
-        # Коэффициент эффективности — просто цифра справа от наименования
+        center_column.addLayout(title_row)
+        # Коэффициент эффективности показывается отдельным полем под данными
+        # элемента (размер шрифта значения задаётся в _add_coefficient_row)
         self.coef_value = QLabel()
+        self.fields_layout = QFormLayout()
+        self.fields_layout.setContentsMargins(0, 0, 0, 0)
+        self.fields_layout.setHorizontalSpacing(8)
+        self.fields_layout.setVerticalSpacing(4)
+        self.fields_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        # Длинные подписи полей переносятся на строку выше, а не растягивают
+        # карточку: при узком окне панель не получает горизонтальную прокрутку
+        self.fields_layout.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        center_column.addLayout(self.fields_layout)
+        # Коэффициент эффективности показывается отдельной подписью сразу под
+        # данными элемента (для филиала — под «Территориальная единица»)
+        self.coef_label = QLabel(f"{STRINGS.oshm_coefficient}:")
+        self.coef_label.setWordWrap(True)
+        self.coef_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.coef_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self.coef_value = QLabel(EMPTY)
+        # Размер шрифта значения сохранён: на 4 пункта крупнее обычного
         coef_font = self.coef_value.font()
         coef_font.setBold(True)
         coef_font.setPointSize(coef_font.pointSize() + 4)
         self.coef_value.setFont(coef_font)
-        title_row.addWidget(self.coef_value)
-        title_row.addSpacing(8)
-        center_column.addLayout(title_row)
-        self.fields_layout = QFormLayout()
-        center_column.addLayout(self.fields_layout)
+        self.coef_value.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         center_column.addStretch()
         top_row.addLayout(center_column, stretch=1)
 
         self.eval_group = QGroupBox(STRINGS.oshm_eval_table_title)
+        # Политика Preferred, а не Fixed: блок может сужаться до своего
+        # минимума, поэтому при узком окне панель не уходит в горизонтальную
+        # прокрутку
+        self.eval_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         eval_layout = QVBoxLayout(self.eval_group)
+        eval_layout.setContentsMargins(4, 4, 4, 4)
         self.eval_table = QTableWidget(0, 2)
+        self.eval_table.setMinimumWidth(180)
         self.eval_table.setHorizontalHeaderLabels(
             [STRINGS.oshm_eval_col_value, STRINGS.oshm_eval_col_count]
         )
         self.eval_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.eval_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeToContents
+        )
         self.eval_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.eval_table.verticalHeader().setVisible(False)
+        self.eval_table.setWordWrap(False)
+        # Высота фиксирована: помещаются заголовок и четыре строки оценок
+        # (значения перечисления Б, И, П, В), лишние строки прокручиваются
+        row_height = max(
+            self.eval_table.verticalHeader().defaultSectionSize(),
+            self.eval_table.fontMetrics().height() + 6,
+        )
+        header_height = self.eval_table.horizontalHeader().sizeHint().height()
+        self.eval_table.setFixedHeight(
+            header_height + row_height * EVAL_TABLE_ROWS
+            + 2 * self.eval_table.frameWidth()
+        )
         eval_layout.addWidget(self.eval_table)
-        top_row.addWidget(self.eval_group)
+        top_row.addWidget(self.eval_group, alignment=Qt.AlignTop)
 
         layout.addLayout(top_row)
 
         # Задачи сотрудника
         self.tasks_group = QGroupBox(STRINGS.oshm_tasks_section)
         tasks_layout = QVBoxLayout(self.tasks_group)
+        tasks_layout.setContentsMargins(4, 4, 4, 4)
+        tasks_layout.setSpacing(4)
         self.tasks_table = QTableWidget(0, 5)
         self.tasks_table.setHorizontalHeaderLabels(
             [
@@ -260,17 +384,23 @@ class ElementDetailsPanel(QWidget):
             QHeaderView.Interactive
         )
         self.tasks_table.horizontalHeader().setStretchLastSection(True)
-        self.tasks_table.setColumnWidth(0, 90)
-        self.tasks_table.setColumnWidth(2, 150)
+        # Ширины подобраны так, чтобы заголовки колонок читались целиком
+        # даже при минимальной ширине панели
+        self.tasks_table.setColumnWidth(0, 78)
+        self.tasks_table.setColumnWidth(1, 180)
+        self.tasks_table.setColumnWidth(2, 100)
         self.tasks_table.setColumnWidth(3, 100)
         self.tasks_table.setColumnWidth(4, 100)
         self.tasks_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tasks_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tasks_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tasks_table.verticalHeader().setVisible(False)
+        self.tasks_table.setMinimumHeight(110)
         tasks_layout.addWidget(self.tasks_table)
 
         tasks_buttons = QHBoxLayout()
+        tasks_buttons.setContentsMargins(0, 0, 0, 0)
+        tasks_buttons.setSpacing(4)
         self.task_add_btn = QPushButton("+")
         self.task_add_btn.setToolTip(STRINGS.button_add)
         self.task_add_btn.clicked.connect(self._add_tasks)
@@ -289,25 +419,12 @@ class ElementDetailsPanel(QWidget):
         self.period_selector.period_changed.connect(self._refresh_stats)
         layout.addWidget(self.period_selector)
         charts_row = QHBoxLayout()
+        charts_row.setSpacing(8)
         self.current_chart = ElementDonutWidget()
         self.previous_chart = ElementDonutWidget()
-        charts_row.addWidget(self.current_chart)
-        charts_row.addWidget(self.previous_chart)
+        charts_row.addWidget(self.current_chart, stretch=1)
+        charts_row.addWidget(self.previous_chart, stretch=1)
         layout.addLayout(charts_row, stretch=1)
-
-        # Кнопки действий
-        buttons_row = QHBoxLayout()
-        self.hide_btn = QPushButton(STRINGS.button_hide)
-        self.hide_btn.clicked.connect(self.hide_requested.emit)
-        self.edit_btn = QPushButton(STRINGS.button_edit)
-        self.edit_btn.clicked.connect(self._edit_clicked)
-        self.stats_btn = QPushButton(STRINGS.button_statistics)
-        self.stats_btn.clicked.connect(self._show_statistics)
-        buttons_row.addWidget(self.hide_btn)
-        buttons_row.addWidget(self.edit_btn)
-        buttons_row.addWidget(self.stats_btn)
-        buttons_row.addStretch()
-        layout.addLayout(buttons_row)
 
     # ------------------------------------------------------------------
     # Наполнение данными
@@ -332,6 +449,8 @@ class ElementDetailsPanel(QWidget):
         self._tasks_parent = None
         if not loader():
             return False
+        # Коэффициент эффективности — последней строкой полей карточки
+        self._add_coefficient_row()
         self.current_node = node
         # «Изменить»: людей редактирует только филиал; филиал и корень ГО
         # редактируются в справочниках, а не в этом диалоге
@@ -354,14 +473,39 @@ class ElementDetailsPanel(QWidget):
         return True
 
     def _clear_fields(self) -> None:
+        # Пары «подпись — значение» дублируются в списке: по ним карточка
+        # выгружается в DOCX (текстом, а не изображением)
+        self._field_rows = []
+        # Строку коэффициента забираем без удаления виджетов: значение
+        # переиспользуется в следующей карточке
+        if self._coef_row_added:
+            self.fields_layout.takeRow(self.fields_layout.rowCount() - 1)
+            self._coef_row_added = False
         while self.fields_layout.rowCount():
             self.fields_layout.removeRow(0)
 
+    def _add_coefficient_row(self) -> None:
+        """Добавляет в карточку строку «Коэффициент эффективности».
+
+        Строка идёт последней — у филиала сразу под «Территориальная
+        единица». Размер шрифта значения не меняется при перестройке.
+        """
+        self.fields_layout.addRow(self.coef_label, self.coef_value)
+        self._coef_row_added = True
+
     def _add_field(self, label: str, value: Optional[str]) -> None:
-        value_label = QLabel(value or EMPTY)
+        text = value or EMPTY
+        self._field_rows.append((label, text))
+        value_label = QLabel(text)
         value_label.setWordWrap(True)
         value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.fields_layout.addRow(f"{label}:", value_label)
+        # Подпись переносится по словам: длинные названия полей («Сокращенное
+        # наименование») не растягивают карточку и не вызывают прокрутку
+        label_widget = QLabel(f"{label}:")
+        label_widget.setWordWrap(True)
+        label_widget.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        label_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self.fields_layout.addRow(label_widget, value_label)
 
     # ------------------------------------------------------------------
     # Аватарка
@@ -384,7 +528,8 @@ class ElementDetailsPanel(QWidget):
         can_edit = entity is not None and self._storage_root is not None
         self.avatar_add_btn.setEnabled(can_edit)
         self.avatar_remove_btn.setEnabled(can_edit)
-        self.print_btn.setEnabled(self.current_node is not None)
+        # «Сохранить» доступно, когда карточка показывает хотя бы один элемент
+        self.save_btn.setEnabled(self.current_node is not None)
         path = None
         if entity is not None and self._storage_root is not None:
             path = resolve_avatar(
@@ -494,36 +639,143 @@ class ElementDetailsPanel(QWidget):
         )
 
     # ------------------------------------------------------------------
-    # Печать
+    # Сохранение карточки в DOCX
     # ------------------------------------------------------------------
 
-    def _print_panel(self) -> None:
-        """Выводит панель сведений на печать."""
-        printer = QPrinter(QPrinter.HighResolution)
-        # QPrintDialog с невалидным принтером падает нативно — проверяем заранее
-        if not printer.isValid():
-            QMessageBox.warning(self, STRINGS.button_print, STRINGS.msg_print_unavailable)
+    def _save_panel(self) -> None:
+        """Сохраняет отображаемую карточку в документ Word (DOCX)."""
+        if self.current_node is None:
             return
-        dialog = QPrintDialog(printer, self)
-        if dialog.exec_() != QPrintDialog.Accepted:
-            return
-        pixmap = self.grab()
-        painter = QPainter()
-        if not painter.begin(printer):
-            QMessageBox.warning(self, STRINGS.button_print, STRINGS.msg_print_unavailable)
+        default_name = f"{_safe_file_name(self._card_title())}.docx"
+        path, _selected = QFileDialog.getSaveFileName(
+            self,
+            STRINGS.oshm_save_title,
+            str(Path.home() / default_name),
+            STRINGS.oshm_save_filter,
+        )
+        if not path:
             return
         try:
-            rect = painter.viewport()
-            scaled = pixmap.scaled(
-                rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+            target = self.save_docx(Path(path))
+        except Exception as error:  # pragma: no cover - защита интерфейса
+            logger.exception("Ошибка сохранения карточки")
+            QMessageBox.critical(
+                self,
+                STRINGS.oshm_save_title,
+                STRINGS.oshm_save_error.format(error=error),
             )
-            painter.drawPixmap(
-                (rect.width() - scaled.width()) // 2,
-                (rect.height() - scaled.height()) // 2,
-                scaled,
+            return
+        QMessageBox.information(
+            self,
+            STRINGS.oshm_save_title,
+            STRINGS.oshm_save_done.format(path=target),
+        )
+
+    def _card_title(self) -> str:
+        """Наименование карточки (заголовок элемента или общая подпись)."""
+        title = self.title_label.text().strip()
+        return title or STRINGS.oshm_doc_title
+
+    def save_docx(self, path: Path) -> Path:
+        """Выгружает карточку элемента в DOCX: текстовые блоки и диаграммы.
+
+        Текстовые сведения (наименование, поля элемента, коэффициент
+        эффективности, назначенные задачи, таблица оценок) пишутся текстом,
+        обе диаграммы вставляются изображениями, аватарка — картинкой.
+        """
+        from docx import Document
+        from docx.shared import Cm
+
+        document = Document()
+        document.add_heading(self._card_title(), 0)
+
+        period = self.period_selector.current_period()
+        if period is not None:
+            document.add_paragraph(f"{STRINGS.oshm_doc_period}: {period.label}")
+
+        avatar_path = self._avatar_path()
+        if avatar_path is not None:
+            document.add_picture(str(avatar_path), width=Cm(3.5))
+        else:
+            document.add_paragraph(STRINGS.oshm_doc_no_avatar)
+
+        document.add_heading(STRINGS.oshm_doc_fields, 1)
+        fields_table = document.add_table(rows=0, cols=2)
+        fields_table.style = "Light Grid Accent 1"
+        for label, value in self._field_rows:
+            row = fields_table.add_row().cells
+            row[0].text = f"{label}:"
+            row[1].text = value
+        coefficient_row = fields_table.add_row().cells
+        coefficient_row[0].text = f"{STRINGS.oshm_coefficient}:"
+        coefficient_row[1].text = self.coef_value.text()
+
+        if not self.tasks_group.isHidden():
+            document.add_heading(STRINGS.oshm_doc_tasks, 1)
+            tasks_table = document.add_table(
+                rows=1, cols=self.tasks_table.columnCount()
             )
-        finally:
-            painter.end()
+            tasks_table.style = "Light Grid Accent 1"
+            for column in range(self.tasks_table.columnCount()):
+                header = self.tasks_table.horizontalHeaderItem(column)
+                tasks_table.rows[0].cells[column].text = (
+                    header.text() if header is not None else ""
+                )
+            for row in range(self.tasks_table.rowCount()):
+                cells = tasks_table.add_row().cells
+                for column in range(self.tasks_table.columnCount()):
+                    item = self.tasks_table.item(row, column)
+                    cells[column].text = item.text() if item is not None else ""
+
+        document.add_heading(STRINGS.oshm_doc_evaluations, 1)
+        if self.eval_table.rowCount():
+            eval_table = document.add_table(
+                rows=1, cols=self.eval_table.columnCount()
+            )
+            eval_table.style = "Light Grid Accent 1"
+            for column in range(self.eval_table.columnCount()):
+                header = self.eval_table.horizontalHeaderItem(column)
+                eval_table.rows[0].cells[column].text = (
+                    header.text() if header is not None else ""
+                )
+            for row in range(self.eval_table.rowCount()):
+                cells = eval_table.add_row().cells
+                for column in range(self.eval_table.columnCount()):
+                    item = self.eval_table.item(row, column)
+                    cells[column].text = item.text() if item is not None else ""
+        else:
+            document.add_paragraph(STRINGS.chart_no_data)
+
+        document.add_heading(STRINGS.oshm_doc_charts, 1)
+        for chart in (self.current_chart, self.previous_chart):
+            descriptions = chart.legend_descriptions()
+            if descriptions:
+                # Расшифровка цветов обязательна: на секторах только числа
+                document.add_paragraph(
+                    f"{chart.chart_title()}: " + "; ".join(descriptions)
+                )
+        with tempfile.TemporaryDirectory() as tmp:
+            for key, chart in (
+                ("current", self.current_chart),
+                ("previous", self.previous_chart),
+            ):
+                image_path = Path(tmp) / f"{key}.png"
+                chart.grab().save(str(image_path), "PNG")
+                document.add_picture(str(image_path), width=Cm(8.5))
+
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        document.save(str(target))
+        return target
+
+    def _avatar_path(self) -> Optional[Path]:
+        """Путь к файлу аватарки текущего элемента (None — аватарки нет)."""
+        if self._tasks_node is None or self._storage_root is None:
+            return None
+        entity = self._avatar_entity()
+        if entity is None:
+            return None
+        return resolve_avatar(self._storage_root, entity, self._tasks_node[0])
 
     def _show_head_office(self) -> bool:
         self.title_label.setText(STRINGS.role_head_office)
@@ -534,13 +786,14 @@ class ElementDetailsPanel(QWidget):
         branch = self.session.get(Branch, node_id)
         if branch is None:
             return False
-        self.title_label.setText(branch.name)
+        self.title_label.setText(branch_display_name(branch))
         self._add_field(field_label(Branch, "id"), branch.id)
         self._add_field(field_label(Branch, "short_name"), branch.short_name)
         if branch.territorial_unit is not None:
+            # Сокращённое наименование — первичный ключ территориальной единицы
             self._add_field(
                 field_label(Branch, "territorial_unit_id"),
-                branch.territorial_unit.name,
+                branch.territorial_unit.id,
             )
         # Задачи филиала — из пула региона (как во вкладке «Задачи»)
         self._tasks_node = (NODE_BRANCH, str(branch.id))
@@ -556,7 +809,8 @@ class ElementDetailsPanel(QWidget):
         self._add_field(field_label(Department, "short_name"), department.short_name)
         if department.branch is not None:
             self._add_field(
-                field_label(Department, "branch_id"), department.branch.name
+                field_label(Department, "branch_id"),
+                branch_display_name(department.branch),
             )
         self._add_field(
             field_label(Department, "active"), _bool_text(department.active)

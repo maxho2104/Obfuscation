@@ -141,7 +141,11 @@ def test_head_office_sees_all_branches(qt_app, db_manager, oshm_data) -> None:
     # Структуру редактировать можно, людей — нельзя
     assert not dialog.can_edit_people
     assert dialog.add_btn.isEnabled()
-    assert dialog.toggle_btn.isEnabled()
+    # Кнопка «−» (Скрыть/показать) убрана из нижнего ряда: действие доступно
+    # из контекстного меню и через панель сведений
+    assert not hasattr(dialog, "toggle_btn")
+    for button in (dialog.hide_btn, dialog.edit_btn, dialog.stats_btn):
+        assert button is not None
     dialog.deleteLater()
 
 
