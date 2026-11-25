@@ -1,7 +1,7 @@
 """Импорт справочных данных из файлов Excel."""
 
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional
 
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session

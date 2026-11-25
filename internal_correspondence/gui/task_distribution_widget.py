@@ -1,8 +1,7 @@
 """Вкладка распределения научных задач по иерархии организации."""
 
-from datetime import date
 from pathlib import Path
-from typing import List, Optional, Sequence, Set, Tuple
+from typing import List, Optional, Sequence
 
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QBrush, QColor

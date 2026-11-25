@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from internal_correspondence.core.constants import DEFAULT_PAGE_SIZE, Role
+from internal_correspondence.core.constants import Role
 from internal_correspondence.core.logging_config import get_logger
 from internal_correspondence.gui.document_dialogs import (
     MaterialEditDialog,
@@ -31,14 +31,12 @@ from internal_correspondence.gui.filter_dialog import FilterDialog
 from internal_correspondence.gui.table_model import (
     ColumnDef,
     DocumentsTableModel,
-    SqlAlchemyTableModel,
 )
 from internal_correspondence.orm.base import Base
 from internal_correspondence.utils.string_resources import STRINGS
 from internal_correspondence.orm.labels import deletion_confirmation_text
 from internal_correspondence.orm.models import (
     ScientificMaterial,
-    Telegram,
 )
 from internal_correspondence.services.document_service import (
     ScientificMaterialService,

@@ -9,7 +9,7 @@
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 

@@ -9,10 +9,13 @@ README описывает предметную область и ТЗ; здес�
 
 1. `.venv/Scripts/python.exe -m pytest tests -q` — все тесты зелёные, без исключений.
 2. `PYTHONPATH=. .venv/Scripts/python.exe -c "import internal_correspondence.gui.application"` — импорт GUI не сломан.
-3. Если менялась схема БД — есть миграция Alembic с переносом данных (см. ниже).
-4. Если менялись строки интерфейса — регенерирована секция `strings` пакета
+3. `.venv/Scripts/python.exe -m pyflakes internal_correspondence/` — нет новых предупреждений
+   (неиспользуемые импорты/переменные, неопределённые имена). pyflakes ставится в `.venv`
+   (`pip install pyflakes`).
+4. Если менялась схема БД — есть миграция Alembic с переносом данных (см. ниже).
+5. Если менялись строки интерфейса — регенерирована секция `strings` пакета
    (скрипт `scripts_dev/update_pack_strings.py`).
-5. Если менялась структура данных или поведение — обновлены README.md и WORK_NOTES.md.
+6. Если менялась структура данных или поведение — обновлены README.md и WORK_NOTES.md.
 
 ## Инвариант 1: пакет предметной области (white-label)
 

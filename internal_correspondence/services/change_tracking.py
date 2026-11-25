@@ -1,6 +1,5 @@
 """Сервис отслеживания изменений сущностей (delta-tracking)."""
 
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
 

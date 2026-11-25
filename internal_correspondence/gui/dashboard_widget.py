@@ -44,7 +44,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from internal_correspondence.core.constants import Role
+from internal_correspondence.core.constants import EvaluationValue, Role
+from internal_correspondence.core.enum_registry import pack_enum_display
 from internal_correspondence.reports.dashboard_service import (
     DashboardData,
     DashboardFilter,
@@ -86,12 +87,25 @@ _CHART_COLORS = (
     "#5D6D7E",
 )
 
-_EVALUATION_COLORS = {
-    "Б": "#C0392B",
-    "И": "#E67E22",
-    "П": "#A9C43A",
-    "В": "#2E8B57",
-}
+# Цвета оценок по семантическому значению EvaluationValue (порядок весов),
+# а не по краткому коду пакета — коды в white-label пакете могут отличаться
+_EVALUATION_COLORS_BY_VALUE = (
+    "#C0392B",  # 0 — бесполезно
+    "#E67E22",  # 1 — интересно
+    "#A9C43A",  # 2 — полезно
+    "#2E8B57",  # 3 — важно
+)
+
+
+def _evaluation_color(code: str, fallback_index: int) -> QColor:
+    """Цвет оценки по краткому коду пакета (через значение перечисления)."""
+    for member in EvaluationValue:
+        if pack_enum_display("evaluation_value", int(member)) == code:
+            value = int(member)
+            if 0 <= value < len(_EVALUATION_COLORS_BY_VALUE):
+                return QColor(_EVALUATION_COLORS_BY_VALUE[value])
+            break
+    return QColor(_CHART_COLORS[fallback_index % len(_CHART_COLORS)])
 
 _RANKING_CHILD_COLORS = (
     "#123B5C",
@@ -1054,9 +1068,7 @@ class DashboardWidget(QWidget):
             values = [0] * len(data.evaluation_counts)
             values[index] = count
             bar_set.append(values)
-            bar_set.setColor(
-                QColor(_EVALUATION_COLORS.get(label, _CHART_COLORS[index]))
-            )
+            bar_set.setColor(_evaluation_color(label, index))
             series.append(bar_set)
         series.setBarWidth(0.72)
         chart.addSeries(series)
