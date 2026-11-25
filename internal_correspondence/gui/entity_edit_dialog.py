@@ -17,11 +17,16 @@
 автоматически: для роли «филиал» филиал фиксирован (редактор не
 отображается), для роли «головной офис» — отображается редактируемый
 выпадающий список филиалов (ручной ввод данных при сбое обмена).
+С флагом ``branch_in_extra`` список филиалов размещается среди
+дополнительных полей, раскрываемых кнопкой «Больше»; обязательность
+сохраняется (незаполненное обязательное поле показывается даже
+в свёрнутом виде), а подчёркивание уникальности снимается — филиал
+не является уникальным полем документа.
 """
 
 from typing import Any, Callable, Dict, List, Optional, Sequence, Type, Union
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
@@ -59,6 +64,9 @@ class EntityEditDialog(QDialog):
         extra_fields: Дополнительные поля, скрытые под кнопкой «Больше».
         role: Роль приложения (Role.BRANCH.value / Role.HEAD_OFFICE.value).
         fixed_branch_id: Филиал, фиксированный для роли «филиал».
+        branch_in_extra: Выбор филиала для роли «головной офис» размещает
+            среди дополнительных полей (под кнопкой «Больше»); поле
+            остаётся обязательным, но без подчёркивания уникальности.
         visibility_driver: Имя поля, от значения которого зависят
             правила видимости (обычно «type»).
         visibility_rules: Словарь «имя поля → предикат от значения
@@ -74,6 +82,7 @@ class EntityEditDialog(QDialog):
         extra_fields: Optional[Sequence[FieldSpec]] = None,
         role: Optional[str] = None,
         fixed_branch_id: Optional[str] = None,
+        branch_in_extra: bool = False,
         visibility_driver: Optional[str] = None,
         visibility_rules: Optional[Dict[str, Callable[[Any], bool]]] = None,
         parent=None,
@@ -85,6 +94,7 @@ class EntityEditDialog(QDialog):
         self.entity = entity
         self.role = role
         self.fixed_branch_id = fixed_branch_id
+        self._branch_in_extra = branch_in_extra
         self.visibility_driver = visibility_driver
         self.visibility_rules = dict(visibility_rules or {})
 
@@ -110,11 +120,15 @@ class EntityEditDialog(QDialog):
         specs_extra = list(extra_fields or [])
 
         self._build_layout()
-        self._build_branch_row()
+        if not self._branch_in_extra:
+            self._build_branch_row()
         for spec in specs_main:
             self._add_field(spec, is_extra=False)
         for spec in specs_extra:
             self._add_field(spec, is_extra=True)
+        if self._branch_in_extra:
+            # Филиал в режиме «Больше» размещается после дополнительных полей
+            self._build_branch_row()
         self._setup_visibility_driver()
         self._load_values()
         self._update_more_button()
@@ -175,7 +189,11 @@ class EntityEditDialog(QDialog):
         element = create_element(self.model_class.branch_id, self.session, parent=self)
         element.editor.setMinimumWidth(300)
         self._branch_element = element
-        self._add_field(element, is_extra=False)
+        if self._branch_in_extra:
+            # Филиал входит в составной уникальный индекс документа,
+            # но сам по себе не уникален — подчёркивание не показываем
+            element.set_unique(False)
+        self._add_field(element, is_extra=self._branch_in_extra)
 
     def _add_field(self, spec: FieldSpec, is_extra: bool) -> None:
         """Добавляет строку «метка — редактор» в сетку диалога."""
@@ -236,22 +254,37 @@ class EntityEditDialog(QDialog):
         self._fit_to_content()
 
     def _fit_to_content(self) -> None:
-        """Подгоняет высоту диалога под содержимое, чтобы все поля были видны без прокрутки.
+        """Подгоняет размер диалога под содержимое, чтобы все поля были видны без прокрутки.
 
         Полоса прокрутки остаётся только как запасной вариант, когда
         содержимое выше доступной области экрана.
         """
         self.layout().activate()
         content_hint = self._scroll.widget().sizeHint()
-        margins = self.layout().contentsMargins()
-        height = (
-            content_hint.height()
-            + margins.top()
-            + margins.bottom()
-            + 2 * self._scroll.frameWidth()
-        )
+        # «Обвязка» (поля layout, рамка и отступы области прокрутки)
+        # вычисляется по фактической геометрии — она зависит от стиля
+        # и точнее любых предположений про margins/frame.
+        viewport = self._scroll.viewport()
+        chrome_h = self.height() - viewport.height()
+        chrome_w = self.width() - viewport.width()
+        height = content_hint.height() + chrome_h
+        width = content_hint.width() + chrome_w
         available = QApplication.desktop().availableGeometry(self)
-        self.resize(self.width(), min(height, available.height()))
+        self.resize(
+            min(max(self.width(), width), available.width()),
+            min(height, available.height()),
+        )
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        """После показа повторяет подгонку по реальным (после стилей) размерам.
+
+        До показа подсказки размеров не учитывают оформление приложения,
+        поэтому начальная подгонка в конструкторе занижает высоту; даже
+        в showEvent дочерние виджеты ещё не «полированы» стилем — подгонка
+        откладывается на следующий виток цикла событий.
+        """
+        super().showEvent(event)
+        QTimer.singleShot(0, self._fit_to_content)
 
     def _apply_visibility(self) -> None:
         """Применяет правила видимости полей от значения драйвера."""

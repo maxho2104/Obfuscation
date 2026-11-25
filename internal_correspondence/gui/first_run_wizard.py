@@ -3,7 +3,6 @@
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QComboBox,
     QFileDialog,

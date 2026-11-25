@@ -1,8 +1,7 @@
 """Универсальный редактор справочников."""
 
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Callable, List, Optional, Type
 
-from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QDialog,

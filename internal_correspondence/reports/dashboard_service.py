@@ -6,12 +6,10 @@
 
 from __future__ import annotations
 
-import calendar
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from decimal import Decimal
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import OperationalError

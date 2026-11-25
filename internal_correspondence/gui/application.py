@@ -496,11 +496,41 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self.db_manager = db_manager
         self._settings_manager = settings_manager or SettingsManager()
         self.app_dir = Path(app_dir) if app_dir is not None else Path(__file__).resolve().parent.parent.parent
-        self.setWindowTitle(STRINGS.app_title)
+        self.setWindowTitle(self._window_title_text())
         self.setMinimumSize(1024, 768)
         self._setup_ui()
         self._setup_menu()
         self._restore_ui_state()
+
+    def _window_title_text(self) -> str:
+        """Заголовок окна: название приложения и организация пользователя."""
+        organization = self._organization_label()
+        if not organization:
+            return STRINGS.app_title
+        return STRINGS.window_title_with_org.format(
+            app_title=STRINGS.app_title,
+            organization=organization,
+        )
+
+    def _organization_label(self) -> str:
+        """Метка организации: «Головной офис» или наименование филиала."""
+        if self.settings.role == Role.HEAD_OFFICE.value:
+            return STRINGS.role_head_office
+        branch_id = (self.settings.branch_id or "").strip()
+        if not branch_id:
+            return ""
+        session = self.db_manager.get_session()
+        try:
+            branch = session.get(Branch, branch_id)
+        finally:
+            session.close()
+        if branch is None:
+            return branch_id
+        return (
+            (branch.short_name or "").strip()
+            or (branch.name or "").strip()
+            or branch_id
+        )
 
     def _setup_ui(self) -> None:
         """Инициализирует интерфейс главного окна с вкладками."""
@@ -832,9 +862,38 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
 
         self.setup_custom_title_bar(
             menubar,
-            STRINGS.app_title,
+            self.windowTitle(),
             _window_control_labels(),
+            self._organization_title(),
         )
+
+    def _organization_title(self) -> str:
+        """Возвращает подпись роли или выбранного филиала для шапки."""
+        if self.settings.role == Role.HEAD_OFFICE.value:
+            return STRINGS.role_head_office
+
+        branch_id = str(self.settings.branch_id or "").strip()
+        if not branch_id:
+            return STRINGS.role_branch
+
+        session = self.db_manager.get_session()
+        try:
+            branch = session.get(Branch, branch_id)
+            if branch is not None and branch.name.strip():
+                return f"{branch.id} — {branch.name.strip()}"
+        except Exception:  # pylint: disable=broad-except
+            logger.warning(
+                "Не удалось получить наименование филиала %s для шапки",
+                branch_id,
+                exc_info=True,
+            )
+        finally:
+            session.close()
+        return branch_id
+
+    def _refresh_organization_title(self) -> None:
+        """Обновляет центральную подпись главной шапки."""
+        self.window_context_title.set_context(self._organization_title())
 
     def _files_dock_action_toggled(self, checked: bool) -> None:
         """Включает или отключает док прикреплённых файлов из меню."""
@@ -858,8 +917,25 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         """Добавляет пункт меню для редактора справочника."""
         action = QAction(entity_label(model_class, plural=True), self)
         action.triggered.connect(
-            lambda: ReferenceEditorDialog(
-                self.db_manager.get_session(),
+            lambda: self._open_reference_editor(
+                model_class, service_class, columns, dialog_factory, editable
+            )
+        )
+        menu.addAction(action)
+
+    def _open_reference_editor(
+        self,
+        model_class,
+        service_class,
+        columns,
+        dialog_factory,
+        editable: bool,
+    ) -> None:
+        """Открывает редактор справочника с сессией, закрываемой в любом случае."""
+        session = self.db_manager.get_session()
+        try:
+            ReferenceEditorDialog(
+                session,
                 model_class,
                 service_class,
                 columns,
@@ -867,8 +943,8 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
                 read_only=not editable,
                 parent=self,
             ).exec_()
-        )
-        menu.addAction(action)
+        finally:
+            session.close()
 
     def _open_settings(self) -> None:
         """Открывает диалог настроек."""
@@ -876,6 +952,7 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         if dialog.exec_() == SettingsDialog.Accepted:
             settings_manager = SettingsManager()
             settings_manager.save(self.settings)
+            self._refresh_organization_title()
             QMessageBox.information(
                 self,
                 STRINGS.dialog_settings_title,
@@ -1057,18 +1134,21 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
 
     def _set_theme(self, theme_key: str) -> None:
         """Применяет тему оформления и сохраняет выбор в настройках."""
-        if self.settings.theme == theme_key:
+        if (
+            self.settings.theme == theme_key
+            and current_theme().key == theme_key
+        ):
             return
-        self.settings.theme = theme_key
-        apply_theme(QApplication.instance(), theme_key)
+        theme = apply_theme(QApplication.instance(), theme_key)
         self.window_controls.refresh_icons()
-        self._settings_manager.save(self.settings)
         # Перекрашиваем строки таблиц и графики
         self.materials_tab.refresh()
         self.telegram_tab.refresh()
         self.tasks_tab.apply_theme()
         self.statistics_tab.apply_theme()
         self.dashboard_tab.apply_theme()
+        self.settings.theme = theme.key
+        self._settings_manager.save(self.settings)
 
     def _export(self) -> None:
         """Формирует экспортные ZIP-архивы (в отдельном потоке)."""
@@ -1530,8 +1610,9 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         if not is_head_office and not branch_id:
             QMessageBox.warning(self, STRINGS.title_oshm, STRINGS.msg_no_branch_selected)
             return
+        session = self.db_manager.get_session()
         dialog = OSHMDialog(
-            self.db_manager.get_session(),
+            session,
             branch_id=branch_id or None,
             role=self.settings.role,
             storage_root=self.settings.storage_path_obj(),
@@ -1543,7 +1624,10 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         dialog.details_panel.statistics_requested.connect(
             lambda node: self._on_oshm_statistics(dialog, node)
         )
-        dialog.exec_()
+        try:
+            dialog.exec_()
+        finally:
+            session.close()
         if self._oshm_statistics_node is not None:
             self.tabs.setCurrentWidget(self.statistics_tab)
             self.statistics_tab.show_element(self._oshm_statistics_node)

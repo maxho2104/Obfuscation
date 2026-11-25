@@ -30,7 +30,6 @@ from internal_correspondence.orm.models import (
     ScientificMaterial,
     ScientificTask,
     Telegram,
-    WorkingGroup,
 )
 from internal_correspondence.utils.string_resources import STRINGS
 
@@ -428,7 +427,6 @@ class ReportDataService:
             for item in previous_telegrams
             if item.type == TelegramType.RESULTS_REPORT
         ]
-        current_reported = self._reported_count(current_telegrams)
         previous_reported = self._reported_count(previous_telegrams)
         current_thematic_reported = self._reported_count(thematic_current)
         previous_thematic_reported = self._reported_count(thematic_previous)

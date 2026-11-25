@@ -39,8 +39,8 @@ from internal_correspondence.services.task_distribution_service import (
     NODE_EMPLOYEE,
     NODE_WORKGROUP,
 )
-from tests import seed_branch, seed_reference
-from tests.seed_branch import (
+from tests.seed_data import seed_branch_2, seed_reference_1
+from tests.seed_data.seed_branch_2 import (
     BranchSeedError,
     _distribute_branch_tasks,
     _load_reference_data,
@@ -62,7 +62,7 @@ def _ensure_references(tmp_path: Path, branches: int = 1) -> None:
         with db.get_session() as session:
             if session.query(Branch).count():
                 return
-            seed_reference.create_reference_data(
+            seed_reference_1.create_reference_data(
                 session,
                 Faker("ru_RU"),
                 Namespace(
@@ -86,7 +86,7 @@ def _run_seed(tmp_path: Path, extra: List[str]) -> None:
         "--db-url", f"sqlite:///{(tmp_path / 'seed.db').as_posix()}",
         "--storage", (tmp_path / "storage").as_posix(),
     ] + extra
-    assert seed_branch.main(argv) == 0
+    assert seed_branch_2.main(argv) == 0
 
 
 def _open_db(tmp_path: Path) -> DatabaseManager:

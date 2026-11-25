@@ -595,10 +595,10 @@ def test_details_panel_hide_button(qt_app, db_manager, oshm_data) -> None:
     dept_a = oshm_data["dept_a"]
     item = _find_node(dialog, dialog.tree_structure, ("department", str(dept_a.id)))
     dialog._show_details(item, dialog.tree_structure)
-    assert not dialog.details_panel.isHidden()
+    assert not dialog._panel_scroll.isHidden()
 
     dialog.details_panel.hide_btn.click()
-    assert dialog.details_panel.isHidden()
+    assert dialog._panel_scroll.isHidden()
     dialog.deleteLater()
 
 
@@ -684,11 +684,11 @@ def test_details_panel_hidden_after_delete(
     emp2 = oshm_data["emp2"]
     item = _find_node(dialog, dialog.tree_structure, ("employee", str(emp2.id)))
     dialog._show_details(item, dialog.tree_structure)
-    assert not dialog.details_panel.isHidden()
+    assert not dialog._panel_scroll.isHidden()
 
     item.setSelected(True)
     dialog._activate_tree(dialog.tree_structure)
     dialog._delete_selected()
 
-    assert dialog.details_panel.isHidden()
+    assert dialog._panel_scroll.isHidden()
     dialog.deleteLater()

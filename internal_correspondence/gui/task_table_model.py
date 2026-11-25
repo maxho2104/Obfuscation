@@ -1,7 +1,7 @@
 """Модель таблицы научных задач для модуля распределения."""
 
 from datetime import date
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, List, Optional, Sequence, Set, Tuple
 
 from PyQt5.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt
 from PyQt5.QtGui import QBrush

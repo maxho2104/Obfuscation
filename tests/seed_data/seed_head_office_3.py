@@ -22,7 +22,7 @@
 (с проставленным входящим номером).
 
 Пример запуска:
-    python -m tests.seed_head_office --seed 42
+    python -m tests.seed_data.seed_head_office_3 --seed 42
 """
 
 import argparse
@@ -32,7 +32,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 

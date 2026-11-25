@@ -15,7 +15,7 @@ from internal_correspondence.orm.models import (
     Telegram,
 )
 from internal_correspondence.services.change_tracking import register_change_tracking
-from tests import seed_branch, seed_head_office, seed_reference
+from tests.seed_data import seed_head_office_3, seed_branch_2, seed_reference_1
 
 
 def _seed_branch(tmp_path: Path) -> None:
@@ -24,7 +24,7 @@ def _seed_branch(tmp_path: Path) -> None:
     db = DatabaseManager(f"sqlite:///{(tmp_path / 'seed.db').as_posix()}")
     db.create_tables()
     with db.get_session() as session:
-        seed_reference.create_reference_data(
+        seed_reference_1.create_reference_data(
             session,
             Faker("ru_RU"),
             Namespace(
@@ -38,7 +38,7 @@ def _seed_branch(tmp_path: Path) -> None:
         )
         session.commit()
     db.close()
-    assert seed_branch.main(
+    assert seed_branch_2.main(
         [
             "--db-url", f"sqlite:///{(tmp_path / 'seed.db').as_posix()}",
             "--storage", (tmp_path / "storage").as_posix(),
@@ -53,7 +53,7 @@ def _seed_branch(tmp_path: Path) -> None:
 
 
 def _seed_head_office(tmp_path: Path) -> None:
-    assert seed_head_office.main(
+    assert seed_head_office_3.main(
         [
             "--db-url", f"sqlite:///{(tmp_path / 'seed.db').as_posix()}",
             "--storage", (tmp_path / "storage").as_posix(),
@@ -164,5 +164,5 @@ def test_telegram_report_addresses_filled(
 def test_second_run_skips_registered_documents(tmp_path: Path) -> None:
     _seed_branch(tmp_path)
     _seed_head_office(tmp_path)
-    with pytest.raises(seed_head_office.HeadOfficeSeedError):
+    with pytest.raises(seed_head_office_3.HeadOfficeSeedError):
         _seed_head_office(tmp_path)

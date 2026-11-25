@@ -26,8 +26,8 @@
 при нескольких — скрипт сообщит перечень и завершится ошибкой.
 
 Примеры запуска:
-    python -m tests.seed_branch
-    python -m tests.seed_branch --from 2026-09-01 --to 2026-09-30 \
+    python -m tests.seed_data.seed_branch_2
+    python -m tests.seed_data.seed_branch_2 --from 2026-09-01 --to 2026-09-30 \
         --materials-per-day 2-4 --telegrams-per-day 1-2 --with-files
 """
 
@@ -38,7 +38,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 

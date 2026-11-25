@@ -17,7 +17,8 @@ from typing import List, Optional, Tuple
 from uuid import UUID
 
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPainter, QPixmap
+from PyQt5.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -601,9 +602,9 @@ class ElementDetailsPanel(QWidget):
         period = self.period_selector.current_period()
         if period is None:
             return
-        stats = self._stats_service.period_stats(node_type, node_id, period)
-        previous = self._stats_service.period_stats(
-            node_type, node_id, shift_period_year(period, -1)
+        # Один проход по БД на оба периода (текущий и прошлогодний)
+        stats, previous = self._stats_service.period_stats_pair(
+            node_type, node_id, period
         )
         # Коэффициент эффективности — средняя оценка за период (только цифра)
         self.coef_value.setText(
@@ -838,7 +839,6 @@ class ElementDetailsPanel(QWidget):
         self._tasks_node = (NODE_WORKGROUP, str(workgroup.id))
         if workgroup.department_id:
             self._tasks_parent = (NODE_DEPARTMENT, str(workgroup.department_id))
-        return True
         return True
 
     def _show_employee(self, node_id: str) -> bool:

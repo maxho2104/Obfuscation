@@ -1,13 +1,13 @@
 """Вкладка распределения научных задач по иерархии организации."""
 
-from datetime import date
 from pathlib import Path
-from typing import List, Optional, Sequence, Set, Tuple
+from typing import List, Optional, Sequence
 
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QBrush, QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -174,12 +174,11 @@ class TaskDistributionWidget(QWidget):
         top.addWidget(self.period_combo)
         top.addStretch(1)
 
-        self.distributed_button = QToolButton()
-        self.distributed_button.setCheckable(True)
-        self.distributed_button.setText(STRINGS.task_hide_distributed)
-        self.distributed_button.setToolTip(STRINGS.task_distributed_tooltip)
-        self.distributed_button.toggled.connect(self._on_distributed_toggled)
-        top.addWidget(self.distributed_button)
+        self.distributed_check = QCheckBox(STRINGS.task_show_distributed_check)
+        self.distributed_check.setChecked(True)
+        self.distributed_check.setToolTip(STRINGS.task_distributed_tooltip)
+        self.distributed_check.toggled.connect(self._on_distributed_toggled)
+        top.addWidget(self.distributed_check)
 
         # Кнопка перехода в режим управления задачами: подсвечена, чтобы
         # её было видно в режиме распределения.
@@ -619,7 +618,7 @@ class TaskDistributionWidget(QWidget):
             for task in right_tasks
             if self.service.is_undistributed(task, node)
         }
-        if self.distributed_button.isChecked():
+        if not self.distributed_check.isChecked():
             # Оставляем только задачи, которые ещё не распределены ниже:
             # в средней таблице — не переданы потомкам вышестоящего узла,
             # в правой — не переданы потомкам выбранного узла.
@@ -631,11 +630,12 @@ class TaskDistributionWidget(QWidget):
             ]
         self.middle_model.set_tasks(middle_tasks, middle_undistributed)
         self.right_model.set_tasks(right_tasks, right_undistributed)
+        hide_distributed = not self.distributed_check.isChecked()
         self._update_empty_status(
-            self.middle_status, len(middle_tasks), self.distributed_button.isChecked()
+            self.middle_status, len(middle_tasks), hide_distributed
         )
         self._update_empty_status(
-            self.right_status, len(right_tasks), self.distributed_button.isChecked()
+            self.right_status, len(right_tasks), hide_distributed
         )
         if parent_key is None:
             self.right_status.setVisible(False)
@@ -657,12 +657,7 @@ class TaskDistributionWidget(QWidget):
         label.setVisible(True)
 
     def _on_distributed_toggled(self, checked: bool) -> None:
-        """Переключает режим «показать/скрыть распределённые задачи»."""
-        self.distributed_button.setText(
-            STRINGS.task_show_distributed
-            if checked
-            else STRINGS.task_hide_distributed
-        )
+        """Переключает отображение распределённых задач."""
         self._refresh_tables()
 
     # ------------------------------------------------------------------
@@ -676,8 +671,8 @@ class TaskDistributionWidget(QWidget):
         self.stack.setCurrentWidget(
             self.management_widget if checked else self.distribution_page
         )
-        # Фильтр «скрыть распределённые» относится к режиму распределения
-        self.distributed_button.setVisible(not checked)
+        # Фильтр распределённых относится к режиму распределения
+        self.distributed_check.setVisible(not checked)
         self.manage_button.setToolTip(
             STRINGS.task_manage_hint if checked else STRINGS.task_manage_tooltip
         )

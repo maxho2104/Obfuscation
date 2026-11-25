@@ -30,7 +30,7 @@ from internal_correspondence.core.constants import (
 )
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.gui.dashboard_widget import (
-    _EVALUATION_COLORS,
+    _evaluation_color,
     DashboardWidget,
     KpiCard,
 )
@@ -272,9 +272,8 @@ def test_widget_renders_kpi_and_charts(dashboard_data, qt_app):
     assert isinstance(evaluation_series[0], QStackedBarSeries)
     assert len(evaluation_series[0].barSets()) == len(widget.data.evaluation_counts)
     first_code = widget.data.evaluation_counts[0][0]
-    assert evaluation_series[0].barSets()[0].color().name() == _EVALUATION_COLORS[
-        first_code
-    ].lower()
+    expected = _evaluation_color(first_code, 0)
+    assert evaluation_series[0].barSets()[0].color().name() == expected.name()
     assert widget.evaluations_view.chart().title() == STRINGS.dashboard_chart_evaluations
     assert widget.ranking_view.chart().series()
     assert widget.ranking_view.chart().title() == STRINGS.dashboard_chart_ranking

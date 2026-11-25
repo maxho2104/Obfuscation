@@ -38,7 +38,6 @@ from internal_correspondence.orm.models import (
     FileRecord,
     ReportAddress,
     ScientificMaterial,
-    ScientificTask,
     Source,
     Telegram,
     WorkGroupMembership,

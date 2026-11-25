@@ -11,18 +11,12 @@ from faker import Faker
 
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.orm.models import (
-    AcademicTitle,
     AddedTask,
-    Branch,
-    Consumer,
-    Country,
-    Leader,
     ScientificTask,
-    TerritorialUnit,
 )
 from internal_correspondence.services.change_tracking import register_change_tracking
 from internal_correspondence.services.task_distribution_service import NODE_BRANCH
-from tests.seed_reference import build_task_periods, create_reference_data
+from tests.seed_data.seed_reference_1 import build_task_periods, create_reference_data
 
 
 def _args(**overrides) -> Namespace:
