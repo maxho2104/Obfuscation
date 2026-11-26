@@ -290,17 +290,13 @@ def _create_leaders(count: int) -> List[Leader]:
 
 def _create_sources(fake: Faker, count: int) -> List[Source]:
     """Создаёт справочник источников научных материалов."""
-    source_types = [
-        SourceType.EXPERIMENTAL_EQUIPMENT.value,
-        SourceType.SCIENTIFIC_WORK.value,
-    ]
     sources: List[Source] = []
     for index in range(1, count + 1):
         sources.append(
             Source(
                 id=uuid.uuid4(),
                 index=f"SRC-{index:03d}",
-                type=random.choice(source_types),
+                type=random.choice(list(SourceType)),
                 comment=fake.sentence(nb_words=8)[:200],
             )
         )

@@ -54,6 +54,7 @@ M2M_OPERATORS: List[Tuple[str, str]] = [("in", STRINGS.filter_op_m2m_in)]
 # фильтруются мультивыбором связанных записей, а не текстовыми условиями
 M2M_COLUMN_NAMES = {
     "countries",
+    "sources",
     "tasks",
     "tasks_display",
     "employees",

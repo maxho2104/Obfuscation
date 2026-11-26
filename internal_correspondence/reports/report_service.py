@@ -329,15 +329,15 @@ class ReportDataService:
             if item.type
             in (MaterialType.PRODUCT_SAMPLE, MaterialType.TECHNICAL_DOCUMENT)
         ]
-        current_experimental = [
+        current_instrumental = [
             item
             for item in current_materials
-            if any(source.type == SourceType.EXPERIMENTAL_EQUIPMENT for source in item.sources)
+            if any(source.type == SourceType.INSTRUMENTAL for source in item.sources)
         ]
-        previous_experimental = [
+        previous_instrumental = [
             item
             for item in previous_materials
-            if any(source.type == SourceType.EXPERIMENTAL_EQUIPMENT for source in item.sources)
+            if any(source.type == SourceType.INSTRUMENTAL for source in item.sources)
         ]
         current_evaluated = self._evaluated_count(current_materials)
         previous_evaluated = self._evaluated_count(previous_materials)
@@ -372,8 +372,8 @@ class ReportDataService:
             "main_materials_trend": self._change_description(
                 len(current_main), len(previous_main)
             ),
-            "experimental_difference": (
-                len(current_experimental) - len(previous_experimental)
+            "instrumental_difference": (
+                len(current_instrumental) - len(previous_instrumental)
             ),
             "evaluations_trend": self._change_description(
                 current_evaluated, previous_evaluated

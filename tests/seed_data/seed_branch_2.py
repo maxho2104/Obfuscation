@@ -52,6 +52,9 @@ from internal_correspondence.core.constants import (  # noqa: E402
     TelegramType,
 )
 from internal_correspondence.core.database import DatabaseManager  # noqa: E402
+from internal_correspondence.core.enum_registry import (  # noqa: E402
+    pack_enum_display,
+)
 from internal_correspondence.orm.models import (  # noqa: E402
     AcademicTitle,
     AddedTask,
@@ -477,25 +480,28 @@ def _create_sources(
 ) -> List[Source]:
     """Создаёт источники филиала с UUID-идентификаторами и индексами.
 
-    Индекс уникален в сети: порядковый номер филиала задаёт старшие
-    разряды («SRC-2NNNN» для BR-002), порядковый номер источника —
+    Индекс — «<сокращённое наименование типа><пять цифр>» (например,
+    «И21001»): порядковый номер филиала задаёт старшие разряды числовой
+    части (для индекса филиала «21-2-21»), порядковый номер источника —
     младшие. Так источники разных филиалов не конфликтуют в базе
-    головного офиса.
+    головного офиса. Тип выбирается случайно из всех значений перечисления.
     """
-    branch_seq = int(branch.id.rsplit("-", 1)[1])
-    return [
-        Source(
-            id=new_uuid(),
-            index=f"SRC-{branch_seq * 10000 + existing + offset:05d}",
-            type=(
-                SourceType.EXPERIMENTAL_EQUIPMENT.value
-                if fake.boolean()
-                else SourceType.SCIENTIFIC_WORK.value
-            ),
-            comment=fake.sentence(nb_words=8)[:200],
+    branch_seq = int(branch.id.split("-")[0])
+    sources: List[Source] = []
+    for offset in range(1, count + 1):
+        source_type = random.choice(list(SourceType))
+        sources.append(
+            Source(
+                id=new_uuid(),
+                index=(
+                    f"{pack_enum_display('source_type', int(source_type))}"
+                    f"{branch_seq * 1000 + existing + offset:05d}"
+                ),
+                type=source_type,
+                comment=fake.sentence(nb_words=8)[:200],
+            )
         )
-        for offset in range(1, count + 1)
-    ]
+    return sources
 
 
 def _align_counters(session: Session, counters: Dict[str, YearlyCounter]) -> None:
