@@ -402,7 +402,16 @@ QLabel#windowContextTitle {
 QWidget#dialogTitleBar {
     background-color: {{SURFACE}};
     border: 0;
-    border-bottom: 1px solid {{BORDER}};
+}
+
+QWidget#dialogTitleSeparator {
+    background-color: {{ACCENT}};
+    border: 0;
+}
+
+QWidget#dialogWindowFrame {
+    background-color: {{ACCENT}};
+    border: 0;
 }
 
 QLabel#dialogWindowTitle {

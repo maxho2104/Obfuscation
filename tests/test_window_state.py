@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
 
 import pytest
-from PyQt5.QtCore import QByteArray, QEvent, QPoint, QPointF, Qt
+from PyQt5.QtCore import QByteArray, QEvent, QPoint, QPointF, QRect, Qt
 from PyQt5.QtGui import QMouseEvent
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import (
@@ -20,6 +20,7 @@ from PyQt5.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QVBoxLayout,
+    QWidget,
     QWizard,
 )
 
@@ -34,6 +35,7 @@ from internal_correspondence.gui.application import (
     _window_control_labels,
 )
 from internal_correspondence.gui.custom_title_bar import (
+    DIALOG_WINDOW_FRAME_NAME,
     DialogTitleBar,
     DialogTitleBarController,
     DialogTitleBarInstaller,
@@ -41,6 +43,7 @@ from internal_correspondence.gui.custom_title_bar import (
     WIZARD_CUSTOM_TITLE_BAR_PROPERTY,
     _QtResizeHandler,
     install_dialog_title_bars,
+    make_progress_dialog_frameless,
 )
 from internal_correspondence.gui.first_run_wizard import (
     FIRST_RUN_PAGE_TITLE_SPACER,
@@ -139,6 +142,7 @@ def test_main_window_uses_custom_title_bar(
     window = MainWindow(settings, db, manager)
 
     assert window.windowFlags() & Qt.FramelessWindowHint
+    assert window.findChild(QWidget, DIALOG_WINDOW_FRAME_NAME) is None
     assert window.menuBar().objectName() == "mainMenuBar"
     assert window.menuBar().height() == 46
     assert window.windowTitle() == STRINGS.app_title
@@ -442,10 +446,32 @@ def test_regular_dialog_receives_custom_title_bar(
     assert controller.title_bar.objectName() == "dialogTitleBar"
     assert controller.title_bar.title_label.text() == "Проверка шапки"
     assert controller.title_bar.width() == dialog.width()
+    assert controller.window_frame.objectName() == DIALOG_WINDOW_FRAME_NAME
+    assert len(controller.window_frame.edges) == 4
+    assert all(
+        edge.testAttribute(Qt.WA_TransparentForMouseEvents)
+        for edge in controller.window_frame.edges
+    )
+    assert all(edge.width() > 0 for edge in controller.window_frame.edges)
+    assert all(edge.height() > 0 for edge in controller.window_frame.edges)
     assert all(
         not button.icon().isNull()
         for button in controller.window_controls.buttons
     )
+
+    dialog.resize(dialog.width() + 80, dialog.height() + 40)
+    qt_app.processEvents()
+    top, bottom, left, right = controller.window_frame.edges
+    thickness = controller.window_frame.THICKNESS
+    assert top.geometry() == QRect(0, 0, dialog.width(), thickness)
+    assert bottom.geometry() == QRect(
+        0,
+        dialog.height() - thickness,
+        dialog.width(),
+        thickness,
+    )
+    assert left.geometry().left() == 0
+    assert right.geometry().right() == dialog.rect().right()
     dialog.close()
 
 
@@ -504,13 +530,25 @@ def test_first_run_wizard_receives_custom_title_bar(
     wizard.close()
 
 
-@pytest.mark.parametrize("dialog_class", [QProgressDialog, QFileDialog])
-def test_progress_and_file_dialogs_keep_system_title_bar(
-    dialog_class,
+def test_progress_dialogs_are_frameless_without_custom_title_bar(
     qt_app: QApplication,
 ) -> None:
-    """Прогресс и выбор файлов никогда не получают кастомную шапку."""
-    dialog = dialog_class()
+    """Любой прогресс-диалог не имеет ни системной, ни кастомной шапки."""
+    dialog = QProgressDialog()
+    assert not DialogTitleBarInstaller._should_install(dialog, "windows")
+    assert not DialogTitleBarInstaller._should_install(dialog, "offscreen")
+
+    dialog.show()
+    qt_app.processEvents()
+    assert getattr(dialog, "_custom_title_bar_controller", None) is None
+    assert dialog.windowFlags() & Qt.FramelessWindowHint
+    assert make_progress_dialog_frameless(dialog) is dialog
+    dialog.close()
+
+
+def test_file_dialog_keeps_system_title_bar(qt_app: QApplication) -> None:
+    """Выбор файлов сохраняет системную шапку и нативное оформление."""
+    dialog = QFileDialog()
     assert not DialogTitleBarInstaller._should_install(dialog, "windows")
     assert not DialogTitleBarInstaller._should_install(dialog, "offscreen")
 
@@ -608,6 +646,7 @@ def test_report_progress_dialog_is_modal_and_cannot_be_cancelled(
     assert dialog.minimum() == 0
     assert dialog.maximum() == 0
     assert dialog.windowModality() == Qt.ApplicationModal
+    assert dialog.windowFlags() & Qt.FramelessWindowHint
     assert dialog.findChildren(QPushButton) == []
     dialog.close()
     window.close()
@@ -625,6 +664,7 @@ def test_report_progress_dialog_is_visible_while_report_is_rendered(
     window.show()
     qt_app.processEvents()
     observed = {"visible": False}
+    events = []
 
     class FakeReportDialog:
         """Принятый диалог с фиксированным месячным периодом."""
@@ -695,12 +735,18 @@ def test_report_progress_dialog_is_visible_while_report_is_rendered(
     monkeypatch.setattr(
         application_module.QMessageBox,
         "information",
-        staticmethod(lambda *_args, **_kwargs: None),
+        staticmethod(lambda *_args, **_kwargs: events.append("message")),
+    )
+    monkeypatch.setattr(
+        application_module,
+        "reveal_file_in_system_manager",
+        lambda path: events.append(("reveal", path)) or True,
     )
 
     window._generate_report()
 
     assert observed["visible"]
+    assert events == ["message", ("reveal", output_path)]
     window.close()
 
 

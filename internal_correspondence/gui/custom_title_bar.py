@@ -29,6 +29,9 @@ from PyQt5.QtWidgets import (
 ICONS_DIR = Path(__file__).resolve().parent / "icons"
 TITLE_BAR_CONTENT_GAP_PROPERTY = "customTitleBarContentGap"
 WIZARD_CUSTOM_TITLE_BAR_PROPERTY = "customTitleBarWizardReady"
+DIALOG_WINDOW_FRAME_NAME = "dialogWindowFrame"
+DIALOG_TITLE_SEPARATOR_NAME = "dialogTitleSeparator"
+FRAMELESS_PROGRESS_PROPERTY = "framelessProgressDialogConfigured"
 
 
 @dataclass(frozen=True)
@@ -614,6 +617,70 @@ class DialogTitleBar(QWidget):
         layout.addWidget(self.title_label, 1)
         layout.addWidget(self.window_controls)
 
+        self.separator = QWidget(self)
+        self.separator.setObjectName(DIALOG_TITLE_SEPARATOR_NAME)
+        self.separator.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    def resizeEvent(self, event: QEvent) -> None:  # noqa: N802
+        """Удерживает разделитель вдоль нижнего края шапки."""
+        super().resizeEvent(event)
+        self.separator.setGeometry(0, self.height() - 1, self.width(), 1)
+        self.separator.raise_()
+
+    def refresh_style(self) -> None:
+        """Обновляет фон шапки и цвет нижнего разделителя."""
+        for widget in (self, self.separator):
+            style = widget.style()
+            style.unpolish(widget)
+            style.polish(widget)
+            widget.update()
+
+
+class DialogWindowFrame(QObject):
+    """Рисует рамку вторичного окна четырьмя тонкими виджетами."""
+
+    THICKNESS = 1
+
+    def __init__(self, dialog: QDialog) -> None:
+        super().__init__(dialog)
+        self.setObjectName(DIALOG_WINDOW_FRAME_NAME)
+        self.edges = tuple(self._make_edge(dialog) for _ in range(4))
+
+    @staticmethod
+    def _make_edge(dialog: QDialog) -> QWidget:
+        edge = QWidget(dialog)
+        edge.setObjectName(DIALOG_WINDOW_FRAME_NAME)
+        edge.setAttribute(Qt.WA_TransparentForMouseEvents)
+        return edge
+
+    def sync_geometry(self, rect: QRect) -> None:
+        """Располагает полосы точно по внешним краям окна."""
+        thickness = self.THICKNESS
+        width = max(0, rect.width())
+        height = max(0, rect.height())
+        middle_height = max(0, height - 2 * thickness)
+        geometries = (
+            QRect(0, 0, width, thickness),
+            QRect(0, max(0, height - thickness), width, thickness),
+            QRect(0, thickness, thickness, middle_height),
+            QRect(max(0, width - thickness), thickness, thickness, middle_height),
+        )
+        for edge, geometry in zip(self.edges, geometries):
+            edge.setGeometry(geometry)
+
+    def raise_(self) -> None:
+        """Поднимает полосы над содержимым, не перекрывая его середину."""
+        for edge in self.edges:
+            edge.raise_()
+
+    def refresh_style(self) -> None:
+        """Принудительно обновляет тематический цвет всех сторон рамки."""
+        for edge in self.edges:
+            style = edge.style()
+            style.unpolish(edge)
+            style.polish(edge)
+            edge.update()
+
 
 class DialogTitleBarController(QObject):
     """Встраивает шапку поверх содержимого одного ``QDialog``."""
@@ -633,6 +700,7 @@ class DialogTitleBarController(QObject):
         dialog.setWindowFlags(dialog.windowFlags() | Qt.FramelessWindowHint)
         self.title_bar = DialogTitleBar(dialog, labels)
         self.window_controls = self.title_bar.window_controls
+        self.window_frame = DialogWindowFrame(dialog)
 
         self._drag_handler = WindowDragHandler(dialog)
         self._drag_handler.watch(self.title_bar, self.title_bar.title_label)
@@ -684,6 +752,7 @@ class DialogTitleBarController(QObject):
             return 0
 
     def _sync_title_bar(self) -> None:
+        self.window_frame.sync_geometry(self._dialog.rect())
         self.title_bar.setGeometry(
             0,
             0,
@@ -695,6 +764,7 @@ class DialogTitleBarController(QObject):
             self._dialog.isMaximized()
         )
         self.title_bar.raise_()
+        self.window_frame.raise_()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
         if watched is not self._dialog:
@@ -711,6 +781,8 @@ class DialogTitleBarController(QObject):
             self._sync_title_bar()
         if event.type() in (QEvent.PaletteChange, QEvent.StyleChange):
             self.window_controls.refresh_icons()
+            self.title_bar.refresh_style()
+            self.window_frame.refresh_style()
         return False
 
 
@@ -741,8 +813,8 @@ class DialogTitleBarInstaller(QObject):
         app = QApplication.instance()
         if app is None and platform_name is None:
             return False
-        # Прогресс должен сохранять обычную системную рамку, а файловый диалог
-        # открывается нативным средством ОС и не оформляется приложением.
+        # Прогресс имеет собственное безрамочное оформление без кастомной шапки,
+        # а файловый диалог открывается нативным средством ОС.
         if isinstance(dialog, (QProgressDialog, QFileDialog)):
             return False
         # QWizard игнорирует contents margins, поэтому кастомная шапка
@@ -763,6 +835,12 @@ class DialogTitleBarInstaller(QObject):
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
         if (
+            event.type() == QEvent.Polish
+            and isinstance(watched, QProgressDialog)
+        ):
+            make_progress_dialog_frameless(watched)
+            return False
+        if (
             event.type() in (QEvent.Polish, QEvent.Show)
             and isinstance(watched, QDialog)
             and getattr(watched, "_custom_title_bar_controller", None) is None
@@ -775,6 +853,17 @@ class DialogTitleBarInstaller(QObject):
             )
             watched._custom_title_bar_controller = controller
         return False
+
+
+def make_progress_dialog_frameless(
+    dialog: QProgressDialog,
+) -> QProgressDialog:
+    """Убирает системную и кастомную шапки у прогресс-диалога."""
+    if not dialog.property(FRAMELESS_PROGRESS_PROPERTY):
+        dialog.setProperty(FRAMELESS_PROGRESS_PROPERTY, True)
+        dialog.setProperty("skipCustomTitleBar", True)
+        dialog.setWindowFlag(Qt.FramelessWindowHint, True)
+    return dialog
 
 
 def install_dialog_title_bars(

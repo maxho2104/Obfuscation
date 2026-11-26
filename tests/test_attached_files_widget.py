@@ -8,19 +8,20 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtCore import Qt
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QLabel, QMessageBox
 
 from internal_correspondence.core.constants import MaterialType
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.core.domain_pack import dir_name
+from internal_correspondence.gui import attached_files_widget as attached_module
 from internal_correspondence.gui.attached_files_widget import (
     AttachedFilesWidget,
     CopyFilesWorker,
     CopyProgressLabel,
     _elide_path,
     _explorer_select_command,
+    reveal_file_in_system_manager,
 )
 from internal_correspondence.orm.models import (
     Branch,
@@ -317,6 +318,24 @@ def test_explorer_select_command_keeps_key_outside_quotes() -> None:
     )
     assert command == r'explorer /select,"C:\Users\user name\Storage\file.txt"'
     assert command.startswith('explorer /select,"')
+
+
+def test_reveal_file_uses_windows_explorer_select(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """В Windows системный проводник открывается с выделенным файлом."""
+    output = tmp_path / "ready report.docx"
+    commands = []
+    monkeypatch.setattr(
+        attached_module,
+        "os",
+        type("WindowsOs", (), {"name": "nt"})(),
+    )
+    monkeypatch.setattr(attached_module.subprocess, "Popen", commands.append)
+
+    assert reveal_file_in_system_manager(output)
+    assert commands == [_explorer_select_command(output)]
 
 
 def test_copy_worker_reports_byte_progress(env, qapp, tmp_path: Path) -> None:

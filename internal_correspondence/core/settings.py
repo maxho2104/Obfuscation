@@ -150,3 +150,8 @@ class SettingsManager:
         with open(self.config_path, "w", encoding="utf-8") as f:
             self._config.write(f)
 
+    def delete(self) -> None:
+        """Удаляет настройки, чтобы следующий запуск снова открыл мастер."""
+        self.config_path.unlink(missing_ok=True)
+        self._config.clear()
+
