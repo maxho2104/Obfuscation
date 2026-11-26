@@ -35,6 +35,9 @@ from PyQt5.QtWidgets import (
 from sqlalchemy.orm import Session
 
 from internal_correspondence.core.logging_config import get_logger
+from internal_correspondence.gui.custom_title_bar import (
+    make_progress_dialog_frameless,
+)
 from internal_correspondence.orm.labels import entity_label
 from internal_correspondence.orm.models import (
     FileRecord,
@@ -172,6 +175,23 @@ def _explorer_select_command(path: Path) -> str:
     папка по умолчанию (Документы).
     """
     return f'explorer /select,"{path}"'
+
+
+def reveal_file_in_system_manager(path: Path) -> bool:
+    """Открывает системный файловый менеджер в расположении файла.
+
+    В Windows файл сразу выделяется в проводнике. В других системах, а также
+    при ошибке запуска проводника, открывается содержащий файл каталог.
+    """
+    file_path = Path(path)
+    folder = file_path.parent
+    if os.name == "nt":
+        try:
+            subprocess.Popen(_explorer_select_command(file_path))
+            return True
+        except OSError:
+            pass
+    return QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
 
 class FileListWidget(QListWidget):
@@ -525,7 +545,7 @@ class AttachedFilesWidget(QDockWidget):
 
     def _run_copy_thread(self, pairs: List[tuple]) -> None:
         """Запускает копирование в отдельном потоке с прогресс-диалогом."""
-        progress = QProgressDialog(self)
+        progress = make_progress_dialog_frameless(QProgressDialog(self))
         progress.setWindowTitle(STRINGS.tooltip_add_files)
         progress.setWindowModality(Qt.WindowModal)
         total = sum(_safe_file_size(source) for source, _target in pairs)
@@ -692,11 +712,4 @@ class AttachedFilesWidget(QDockWidget):
                 STRINGS.tooltip_file_missing.format(path=path),
             )
             return
-        if os.name == "nt":
-            # Windows: проводник с выделенным файлом
-            try:
-                subprocess.Popen(_explorer_select_command(path))
-            except OSError:
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
-        else:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        reveal_file_in_system_manager(path)

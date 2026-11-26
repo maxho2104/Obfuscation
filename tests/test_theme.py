@@ -7,9 +7,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PyQt5.QtCore import QEvent
 from PyQt5.QtGui import QPalette
-from PyQt5.QtWidgets import QApplication, QWidget
+from PyQt5.QtWidgets import QApplication, QDialog, QWidget
 
 from internal_correspondence.core.settings import AppSettings, SettingsManager
+from internal_correspondence.gui.custom_title_bar import (
+    DialogTitleBarController,
+    WindowControlLabels,
+)
 from internal_correspondence.gui.theme import THEMES, apply_theme, current_theme
 
 
@@ -105,6 +109,8 @@ def test_custom_title_bar_is_styled_by_both_themes() -> None:
         assert "QLabel#windowTitle" in stylesheet
         assert "QLabel#windowContextTitle" in stylesheet
         assert "QWidget#dialogTitleBar" in stylesheet
+        assert "QWidget#dialogTitleSeparator" in stylesheet
+        assert "QWidget#dialogWindowFrame" in stylesheet
         assert "QLabel#dialogWindowTitle" in stylesheet
         assert "QToolButton#windowMinimizeButton" in stylesheet
         assert "QToolButton#windowMaximizeButton" in stylesheet
@@ -119,12 +125,50 @@ def test_custom_title_bar_is_styled_by_both_themes() -> None:
         dialog_title_rule = stylesheet.split(
             "QLabel#dialogWindowTitle", 1
         )[1].split("}", 1)[0]
+        dialog_frame_rule = stylesheet.split(
+            "QWidget#dialogWindowFrame", 1
+        )[1].split("}", 1)[0]
         assert "font-size: 13px" in main_title_rule
         assert "font-size: 13px" in context_title_rule
         assert "font-size: 14px" in dialog_title_rule
+        assert "border: 0" in dialog_frame_rule
+        assert "background-color" in dialog_frame_rule
+        assert theme.qss_colors["ACCENT"] in dialog_frame_rule
 
     assert THEMES["light"].qss_colors["TITLE_TEXT"] == "#9A6B00"
     assert THEMES["dark"].qss_colors["TITLE_TEXT"] == "#D8B45A"
+
+
+def test_dialog_frame_and_title_separator_follow_theme(
+    qt_app: QApplication,
+) -> None:
+    """Рамка и низ шапки реально перекрашиваются при переключении темы."""
+    dialog = QDialog()
+    dialog.resize(360, 220)
+    controller = DialogTitleBarController(
+        dialog,
+        WindowControlLabels("Minimize", "Maximize", "Restore", "Close"),
+    )
+    dialog.show()
+
+    rendered_colors = {}
+    for theme_key in ("light", "dark"):
+        theme = apply_theme(qt_app, theme_key)
+        qt_app.processEvents()
+        edge_image = controller.window_frame.edges[0].grab().toImage()
+        separator_image = controller.title_bar.separator.grab().toImage()
+        edge_color = edge_image.pixelColor(0, 0).name().upper()
+        separator_color = separator_image.pixelColor(0, 0).name().upper()
+        expected = theme.qss_colors["ACCENT"].upper()
+        assert edge_color == expected
+        assert separator_color == expected
+        rendered_colors[theme_key] = edge_color
+
+    assert rendered_colors["light"] != rendered_colors["dark"]
+    assert controller.window_frame.THICKNESS == 1
+
+    dialog.close()
+    apply_theme(qt_app, "light")
 
 
 def test_all_combo_boxes_use_themed_down_arrow() -> None:

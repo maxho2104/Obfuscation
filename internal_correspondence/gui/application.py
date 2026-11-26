@@ -39,11 +39,21 @@ from internal_correspondence.core.domain_pack import (
 )
 from internal_correspondence.core.logging_config import configure_logging, get_logger
 from internal_correspondence.core.settings import AppSettings, SettingsManager
-from internal_correspondence.gui.attached_files_widget import AttachedFilesWidget
+from internal_correspondence.gui.attached_files_widget import (
+    AttachedFilesWidget,
+    reveal_file_in_system_manager,
+)
+from internal_correspondence.gui.authorization_dialog import (
+    run_authorization_dialog,
+)
+from internal_correspondence.gui.combo_box_behavior import (
+    install_combo_box_popup_behavior,
+)
 from internal_correspondence.gui.custom_title_bar import (
     FramelessWindowMixin,
     WindowControlLabels,
     install_dialog_title_bars,
+    make_progress_dialog_frameless,
 )
 from internal_correspondence.gui.document_list_widget import DocumentListWidget
 from internal_correspondence.gui.evaluation_import_dialog import EvaluationImportDialog
@@ -141,7 +151,7 @@ def _window_control_labels() -> WindowControlLabels:
 
 def _create_report_progress_dialog(parent: QWidget) -> QProgressDialog:
     """Создаёт модальный индикатор формирования отчёта без кнопки отмены."""
-    dialog = QProgressDialog(parent)
+    dialog = make_progress_dialog_frameless(QProgressDialog(parent))
     dialog.setWindowTitle(STRINGS.title_generate_report)
     dialog.setLabelText(STRINGS.report_progress_creating)
     dialog.setRange(0, 0)
@@ -1178,6 +1188,7 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
             100,
             self,
         )
+        make_progress_dialog_frameless(progress)
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(0)
         progress.setValue(0)
@@ -1307,6 +1318,7 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
             100,
             self,
         )
+        make_progress_dialog_frameless(progress)
         progress.setWindowModality(Qt.WindowModal)
         progress.setMinimumDuration(0)
         progress.setValue(0)
@@ -1545,6 +1557,11 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
                 STRINGS.title_generate_report,
                 STRINGS.report_msg_done.format(output=output),
             )
+            if not reveal_file_in_system_manager(output):
+                logger.warning(
+                    "Не удалось открыть расположение сформированного отчёта %s",
+                    output,
+                )
 
     def _export_domain_pack(self) -> None:
         """Выгружает активный пакет предметной области в JSON-файл."""
@@ -1638,6 +1655,19 @@ def _load_or_create_settings(
     return settings, initial_import
 
 
+def _authorize_or_reset_settings(app_dir: Path) -> bool:
+    """Проверяет заглушку входа и сбрасывает первый запуск при отмене."""
+    if run_authorization_dialog():
+        return True
+
+    settings_manager = SettingsManager(app_dir)
+    try:
+        settings_manager.delete()
+    except OSError:
+        logger.exception("Не удалось удалить настройки после отмены авторизации")
+    return False
+
+
 def run_application(argv: List[str]) -> int:
     """Инициализирует и запускает приложение."""
     QApplication.setAttribute(Qt.AA_DontUseNativeDialogs, False)
@@ -1653,6 +1683,7 @@ def run_application(argv: List[str]) -> int:
     # Светлая тема оформляет в том числе мастер первого запуска; после чтения
     # настроек ниже она заменяется сохранённой темой пользователя.
     apply_theme(app, "light")
+    install_combo_box_popup_behavior(app)
     install_dialog_title_bars(app, _window_control_labels)
 
     settings, initial_import = _load_or_create_settings(app_dir)
@@ -1670,6 +1701,9 @@ def run_application(argv: List[str]) -> int:
             STRINGS.msg_pack_load_error.format(path=settings.domain_pack, error=exc),
         )
     reload_strings()
+
+    if not _authorize_or_reset_settings(app_dir):
+        return 0
 
     register_change_tracking()
 
