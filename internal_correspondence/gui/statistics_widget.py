@@ -233,8 +233,10 @@ class StatisticsWidget(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.horizontalHeader().setStretchLastSection(True)
-        # Выделение строки подсвечивает её элемент на диаграмме
-        self._chart_highlight: Dict[str, Callable[[bool], None]] = {}
+        # Выделение строки подсвечивает её элементы на диаграмме; под одним
+        # ключом может быть несколько элементов (например, сотрудник входит
+        # в несколько групп подкатегории), поэтому по ключу — список колбэков
+        self._chart_highlight: Dict[str, List[Callable[[bool], None]]] = {}
         # Указатель C++ элемента диаграммы -> ключ строки (для кликов)
         self._bar_keys: Dict[int, str] = {}
         self._line_keys: Dict[int, str] = {}
@@ -576,6 +578,16 @@ class StatisticsWidget(QWidget):
     # Подсветка выделенной строки на диаграмме
     # ------------------------------------------------------------------
 
+    def _register_highlight(
+        self, key: str, apply_highlight: Callable[[bool], None]
+    ) -> None:
+        """Запоминает подсветку элемента диаграммы по ключу строки таблицы.
+
+        Один ключ может отвечать нескольким элементам диаграммы (сотрудник
+        встречается в нескольких группах подкатегории) — подсвечиваются все.
+        """
+        self._chart_highlight.setdefault(key, []).append(apply_highlight)
+
     def _sync_chart_highlight(self, *_args) -> None:
         """Подсвечивает элементы диаграммы, соответствующие выделенным строкам."""
         if not self._chart_highlight:
@@ -593,8 +605,9 @@ class StatisticsWidget(QWidget):
             targets = set(selected_keys)
             for key in selected_keys:
                 targets.update(self._chart_target_keys(key))
-        for key, apply_highlight in self._chart_highlight.items():
-            apply_highlight(key in targets)
+        for key, apply_highlights in self._chart_highlight.items():
+            for apply_highlight in apply_highlights:
+                apply_highlight(key in targets)
 
     def _select_row_by_key(self, key: str) -> None:
         """Выделяет в таблице строку с указанным ключом (клик по диаграмме).
@@ -719,7 +732,7 @@ class StatisticsWidget(QWidget):
         for label, row, color, _group in series_data:
             bar_set = QBarSet(label)
             bar_set.setColor(color)
-            self._chart_highlight[row.key] = self._bar_highlight(bar_set, color)
+            self._register_highlight(row.key, self._bar_highlight(bar_set, color))
             self._bar_keys[sip.unwrapinstance(bar_set)] = row.key
             for index in month_indices:
                 value = row.values[index]
@@ -763,7 +776,7 @@ class StatisticsWidget(QWidget):
             series.setName(label)
             series.setColor(color)
             series.setPen(QPen(color, 3))  # толщина линии
-            self._chart_highlight[row.key] = self._line_highlight(series)
+            self._register_highlight(row.key, self._line_highlight(series))
             self._line_keys[sip.unwrapinstance(series)] = row.key
             series.clicked.connect(self._on_line_clicked)
             for position, index in enumerate(month_indices):
@@ -816,7 +829,7 @@ class StatisticsWidget(QWidget):
             slice_ = series.append(label, row.total)
             slice_.setColor(color)
             slice_.setLabelVisible(True)
-            self._chart_highlight[row.key] = self._slice_highlight(slice_)
+            self._register_highlight(row.key, self._slice_highlight(slice_))
             self._slice_keys[sip.unwrapinstance(slice_)] = row.key
         series.clicked.connect(self._on_pie_clicked)
         chart.addSeries(series)
@@ -843,7 +856,7 @@ class StatisticsWidget(QWidget):
                     continue
                 slice_ = inner.append(row.label, row.total)
                 slice_.setColor(group_color)
-                self._chart_highlight[row.key] = self._slice_highlight(slice_)
+                self._register_highlight(row.key, self._slice_highlight(slice_))
                 self._slice_keys[sip.unwrapinstance(slice_)] = row.key
             else:
                 color = _member_color(group_color, member_index)
@@ -858,7 +871,7 @@ class StatisticsWidget(QWidget):
                 slice_.setColor(color)
                 slice_.setLabelVisible(True)
                 slice_.setLabelPosition(QPieSlice.LabelOutside)
-                self._chart_highlight[row.key] = self._slice_highlight(slice_)
+                self._register_highlight(row.key, self._slice_highlight(slice_))
                 self._slice_keys[sip.unwrapinstance(slice_)] = row.key
 
         # Геометрия колец: pieSize/holeSize — доли от минимального размера
