@@ -3514,6 +3514,42 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 
 ---
 
+## 2026-11-26 — Импорт оценок: «Закрыть» после успеха открывает оценочные листы
+
+### Запрос пользователя
+После успешного завершения импорта на 4-м шаге нажатие кнопки «Закрыть» должно
+закрывать окно импорта и открывать окно с оценочными листами. Меняется поведение
+только этой кнопки.
+
+### Изменения
+- `gui/evaluation_import_dialog.py`:
+  - кнопка «Закрыть» сохранена в атрибуте `self.close_button` и подключена к новому
+    обработчику `_on_close()` вместо `reject`;
+  - `_on_close()` вызывает `accept()` (и выставляет флаг `_lists_requested`), только
+    если `_import_completed()`: результат есть, это не пробный прогон
+    (`not self._result.dry_run`) и текущая страница — результат (`stack.currentIndex() == 3`);
+    во всех остальных случаях поведение прежнее — `reject()`;
+  - новый метод `shows_evaluation_lists()` отдаёт флаг «после закрытия открыть журналы».
+- `gui/application.py`: `_import_evaluations()` после обновления вкладок проверяет
+  `dialog.shows_evaluation_lists()` и вызывает `_open_evaluation_lists()`.
+- `tests/test_evaluation_import_dialog.py`: четыре новых теста —
+  `test_close_after_successful_import_requests_lists` (Accepted + флаг),
+  `test_close_without_import_stays_rejected`, `test_close_after_dry_run_stays_rejected`,
+  `test_close_on_earlier_step_stays_rejected`.
+- `README.md`: в разделе «Импорт оценок из текстового файла» добавлен пункт 6 о новом
+  поведении кнопки «Закрыть».
+
+### Проверка
+- `pytest tests/test_evaluation_import_dialog.py -q` (offscreen) — 11 passed.
+- `pytest tests/test_evaluation_lists_dialog.py tests/test_text_import.py -q` — 18 passed.
+- Импорт `internal_correspondence.gui.application` — успешно.
+- `pyflakes` (установлен в `.venv`, версия 4.1.0) для изменённых файлов — без замечаний.
+- `pytest tests -q` (`QT_QPA_PLATFORM=offscreen`, полный прогон) — 539 passed, одно
+  известное предупреждение zipfile (`Duplicate name: 'docProps/core.xml'`).
+
+### Отложено
+- Нет. Коммит не выполняется без указания пользователя.
+
 ## 2026-11-26 — Индекс филиала в сидирующем скрипте ГО — формат «dd-d-dd»
 
 ### Изменения

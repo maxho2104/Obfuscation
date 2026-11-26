@@ -1482,6 +1482,8 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self.telegram_tab.refresh()
         self.statistics_tab.refresh()
         self.dashboard_tab.refresh()
+        if dialog.shows_evaluation_lists():
+            self._open_evaluation_lists()
 
     def _open_evaluation_lists(self) -> None:
         """Открывает просмотр журналов импорта оценок (только чтение)."""
