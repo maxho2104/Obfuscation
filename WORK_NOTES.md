@@ -3550,3 +3550,148 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 ### Отложено
 - Нет. Коммит не выполняется без указания пользователя.
 
+## 2026-11-26 — Индекс филиала в сидирующем скрипте ГО — формат «dd-d-dd»
+
+### Изменения
+- `tests/seed_data/seed_reference_1.py`: `Branch.id` (метка «Индекс») теперь
+  формируется как «dd-d-dd» со всеми цифрами от 1 до 9 — новая функция
+  `build_branch_index(unit_number, branch_number)` («11-1-11», «12-1-12»,
+  «21-2-21»…); было `BR-NNN`. В `main()` добавлена валидация: единиц и
+  филиалов в единице — не более 9 (однозначные разряды индекса).
+- `tests/seed_data/seed_branch_2.py`: `_create_sources` берёт порядковый номер
+  филиала из первой части нового индекса; множитель смещён с 10000 на 1000,
+  чтобы индекс источника оставаться `SRC-` + 5 цифр (максимум «SRC-99999»).
+- `tests/test_full_cycle.py`: константы `BRANCHES` обновлены под новые
+  индексы («11-1-11», «21-2-21», «31-3-31»).
+- `tests/test_seed_reference.py`: новый тест `test_branch_indexes_match_digit_format`
+  (формат `[1-9]{2}-[1-9]-[1-9]{2}`, уникальность индексов).
+
+### Проверка
+- `.venv/Scripts/python.exe -m pytest tests/test_seed_reference.py tests/test_seed_branch.py -q` — 23 passed.
+- `.venv/Scripts/python.exe -m pytest tests/test_full_cycle.py tests/test_seed_head_office.py -q` — 10 passed.
+- Полный прогон `pytest tests -q` — см. ниже.
+
+---
+
+## 2026-11-26 — Колонка и редактор «Источники» для материалов и телеграмм
+
+### Изменения
+- `orm/models.py`: связям `ScientificMaterial.sources` и `Telegram.sources`
+  добавлены метки `info={"label": "Источники"}`; у `Source` появился метод
+  `display_name()` (индекс источника для списков выбора).
+- `core/domain_pack.default.json`, `domain_pack.json`: секции `entities`
+  зеркалят новые метки полей `sources` (ScientificMaterial, Telegram).
+- `gui/application.py`: форматтер `_format_sources` (индексы через запятую,
+  по алфавиту) и колонка «Источники» (`sources`, width=110, фильтр N→N)
+  сразу после «Страны» в `material_columns()` и `telegram_columns()`
+  (обе роли). Обмен ZIP источники по документам уже учитывал
+  (`branch_import.source_keep`), схема БД не менялась.
+- `gui/document_dialogs.py`: виджет источников (`ManyToManyEditElement`,
+  необязательный) ниже виджета стран: в роли «филиал» — в основных полях,
+  в роли «головной офис» — в дополнительных под кнопкой «Больше».
+- `gui/filter_model.py`: `sources` добавлено в `M2M_COLUMN_NAMES`
+  (мультивыбор связанных записей, UUID-ключи поддерживались).
+- Тесты: `tests/test_edit_dialog.py` (+3: размещение/видимость виджета
+  источников в диалогах материала и телеграммы для обеих ролей, сбор
+  значений и отображение индексов), `tests/test_document_table_model.py`
+  (+2: порядок колонки «Источники» после «Страны» для обеих ролей,
+  форматирование ячейки).
+
+### Проверка
+- `pytest tests/test_edit_dialog.py tests/test_document_table_model.py tests/test_entity_labels.py tests/test_domain_pack.py -q` — 88 passed.
+- Импорт `internal_correspondence.gui.application`, pyflakes по изменённым
+  файлам — чисто.
+- Полный прогон `pytest tests -q` — см. итог ниже (дата-сессия 2026-11-26).
+
+---
+
+## 2026-11-26 — Новая классификация типов источников (SourceType 0–4)
+
+### Изменения
+- `core/constants.py`: `SourceType` — ANALYTICAL=0, INSTRUMENTAL=1,
+  DIFFERENTIATED=2, VERIFICATION=3, MASS_MEDIA=4 (вместо ЭО/НТ).
+- `core/domain_pack.default.json`, `domain_pack.json`: перечисление
+  `source_type` — коды/метки «А», «И», «Д», «П», «СМИ»
+  (Аналитический, Инструментальный, Дифференцированный, Проверочный,
+  Средства массовой информации). Схема БД не менялась (в БД — целые значения).
+- `tests/seed_data/seed_branch_2.py`: `_create_sources` — индекс источника
+  формируется как «<сокращённое наименование типа><пять цифр>»
+  (например, «И21001»; числовая часть — прежняя: филиал × 1000 + номер);
+  тип выбирается случайно из всех пяти значений.
+- `reports/report_service.py`: метрика «материалы с экспериментальным
+  оборудованием» переведена на INSTRUMENTAL; ключ контекста шаблона
+  `experimental_difference` → `instrumental_difference`.
+- `scripts_dev/build_report_templates.py`: фраза месячного шаблона —
+  «материалам, полученным инструментальным способом»; шаблоны
+  `reports/templates/*.docx` пересобраны скриптом.
+- `tests/seed_data.py` (прежний однофазный генератор): тип источника —
+  случайный из всех значений перечисления.
+- Тесты: `test_domain_pack.py` (коды/метки source_type), `test_seed_branch.py`
+  (формат индекса `(А|И|Д|П|СМИ)\d{5}`), `test_statistics_service.py` (метки
+  источников), `test_edit_dialog.py`, `test_document_table_model.py` (новые
+  члены enum).
+- README.md: список значений типа источника приведён к новой классификации.
+
+### Не трогал (история)
+- Миграция `alembic/versions/f7db15e6b8c9_enum_codes_to_int.py` и
+  `scripts_dev/upgrade_real_db.py` отображают легаси-строки «ЭО»/«НТ» в 0/1 —
+  это исторические данные; семантика 0/1 в новой базе иная (Аналитический /
+  Инструментальный), при переносе старых БД значения типов источников
+  потребуют ручной разметки.
+
+### Проверка
+- `pytest tests/test_seed_branch.py tests/test_domain_pack.py tests/test_statistics_service.py tests/test_report_service.py tests/test_edit_dialog.py tests/test_document_table_model.py -q` — 110 passed (1 известное DOCX-предупреждение).
+- Полный прогон `pytest tests -q` — итог см. ниже.
+
+---
+
+## 2026-11-26 — Скрипт добавления порций документов филиала (seed_branch_add_4)
+
+### Изменения
+- `tests/seed_data/seed_branch_add_4.py` (новый): добавляет научные материалы
+  и телеграммы периодом со дня после крайней даты исходящих документов филиала
+  в базе (max по материалам и телеграммам) по дату `--to` (по умолчанию —
+  сегодня). В отличие от `seed_branch_2`: не создаёт ОШС, не распределяет
+  задачи, не создаёт источники — документы ссылаются на имеющиеся записи;
+  участники берутся из действующей ОШС. Нумерация продолжает годовые
+  счётчики (`_align_counters`), реквизиты разрешительных документов — по
+  прежним правилам. Генераторы (`_create_material`, `_create_telegram`,
+  `_pick_participants`, `_load_reference_data`, `_resolve_branch`) переиспользованы
+  из `seed_branch_2`. Аргументы: `--db-url`, `--storage`, `--to`,
+  `--materials-per-day`, `--telegrams-per-day`, `--seed`, `--with-files`
+  (нет `--from`, `--clear` и параметров структуры/источников).
+  Ошибки BranchSeedError: нет ОШС, нет документов, `--to` раньше
+  производного начала периода.
+- `tests/test_seed_branch.py`: +3 теста — продолжение периода и нумерации
+  от крайней даты без дублирования ОШС/источников; отказ без ОШС и без
+  документов; отказ при `--to` раньше производного начала.
+
+### Проверка
+- `pytest tests/test_seed_branch.py -q` — 19 passed.
+- pyflakes и импорт модуля — чисто; полный прогон — итог ниже.
+
+---
+
+## 2026-11-26 — Запоминание геометрии диалогов документов
+
+### Изменения
+- `core/settings.py`: новые поля `material_dialog_geometry` и
+  `telegram_dialog_geometry` (Base64 от `QByteArray.saveGeometry`), общая
+  секция INI «Application»; запись в файл — существующим `_save_ui_state`
+  при завершении работы программы, чтение — при старте (`SettingsManager`).
+- `gui/document_dialogs.py`: helpers `_geometry_to_string`/`_restore_geometry`
+  и примесь `_DialogGeometryMixin` (восстановление в `__init__` через
+  `_init_geometry`, сохранение в `closeEvent`). `MaterialEditDialog` и
+  `TelegramEditDialog` принимают необязательный `settings: AppSettings`;
+  без него диалоги работают без запоминания (тесты, другие вызовы).
+- `gui/document_list_widget.py`: параметр `settings`, передаётся в диалоги
+  создания/редактирования; `gui/application.py` передаёт `self.settings`
+  обеим вкладкам. Значения копятся в объекте настроек главного окна и
+  попадают в INI при выходе (как геометрия главного окна).
+- `tests/test_edit_dialog.py`: +3 теста — запоминание/восстановление
+  геометрии материала, раздельное хранение материалов/телеграмм, работа
+  без настроек.
+
+### Проверка
+- `pytest tests/test_edit_dialog.py -q` — 30 passed.
+- pyflakes и импорт `gui.application` — чисто; полный прогон — итог ниже.

@@ -109,7 +109,7 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
         Source(
             id=uuid.uuid4(),
             index="S1",
-            type=SourceType.SCIENTIFIC_WORK,
+            type=SourceType.ANALYTICAL,
             comment="Первый",
         )
     )
@@ -117,7 +117,7 @@ def statistics_setup(db_manager: DatabaseManager) -> dict:
         Source(
             id=uuid.uuid4(),
             index="S2",
-            type=SourceType.EXPERIMENTAL_EQUIPMENT,
+            type=SourceType.INSTRUMENTAL,
             comment=None,
         )
     )
@@ -306,7 +306,7 @@ def test_consumer_and_task_and_source_counts(
     assert task.rows[0].total == 2
 
     sources = service.calculate(_query(criterion=CRITERION_SOURCE))
-    assert [row.label for row in sources.rows] == ["Научный труд (Первый)", "Экспериментальное оборудование"]
+    assert [row.label for row in sources.rows] == ["Аналитический (Первый)", "Инструментальный"]
     assert [row.total for row in sources.rows] == [1, 1]
 
 

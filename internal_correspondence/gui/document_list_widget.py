@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
 
 from internal_correspondence.core.constants import Role
 from internal_correspondence.core.logging_config import get_logger
+from internal_correspondence.core.settings import AppSettings
 from internal_correspondence.gui.document_dialogs import (
     MaterialEditDialog,
     TelegramEditDialog,
@@ -64,6 +65,7 @@ class DocumentListWidget(QWidget):
         columns: List[ColumnDef],
         branch_id: Optional[str],
         role: Optional[str] = None,
+        settings: Optional[AppSettings] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -73,6 +75,7 @@ class DocumentListWidget(QWidget):
         self.columns = columns
         self.branch_id = branch_id
         self.role = role
+        self.settings = settings
         self.is_material = model_class == ScientificMaterial
         self.service = (
             ScientificMaterialService(session, storage_root)
@@ -470,6 +473,7 @@ class DocumentListWidget(QWidget):
                 self.session,
                 branch_id=self.branch_id,
                 role=self.role,
+                settings=self.settings,
                 parent=self,
             )
             if self.is_material
@@ -477,6 +481,7 @@ class DocumentListWidget(QWidget):
                 self.session,
                 branch_id=self.branch_id,
                 role=self.role,
+                settings=self.settings,
                 parent=self,
             )
         )
@@ -505,6 +510,7 @@ class DocumentListWidget(QWidget):
                 material=item,
                 branch_id=item.branch_id,
                 role=self.role,
+                settings=self.settings,
                 parent=self,
             )
             if self.is_material
@@ -513,6 +519,7 @@ class DocumentListWidget(QWidget):
                 telegram=item,
                 branch_id=item.branch_id,
                 role=self.role,
+                settings=self.settings,
                 parent=self,
             )
         )

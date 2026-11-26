@@ -3,6 +3,7 @@
 import os
 from datetime import date
 from pathlib import Path
+from typing import List
 
 import pytest
 
@@ -561,4 +562,168 @@ def test_countries_optional_for_head_office(qapp, base_data) -> None:
         )
         countries = dialog.element("countries")
         assert countries is None or not countries.is_required()
+        dialog.close()
+
+
+# ---------------------------------------------------------------------------
+# Источники: ниже стран, в филиале сразу, в ГО — под кнопкой «Больше»
+# ---------------------------------------------------------------------------
+
+
+def _row_names(dialog, extra: bool) -> List[str]:
+    """Возвращает имена полей строк диалога с заданной принадлежностью к «Больше»."""
+    return [
+        row["element"].field_name
+        for row in dialog._rows  # pylint: disable=protected-access
+        if row["is_extra"] == extra
+    ]
+
+
+def test_sources_element_in_material_dialog(qapp, base_data) -> None:
+    """Материал: источники под странами; в филиале видны, в ГО — под «Больше»."""
+    with base_data.get_session() as session:
+        branch_dialog = MaterialEditDialog(
+            session, branch_id="F1", role=Role.BRANCH.value
+        )
+        sources = branch_dialog.element("sources")
+        assert sources is not None
+        assert not sources.is_required()
+        assert not sources.isHidden()
+        main_names = _row_names(branch_dialog, extra=False)
+        assert main_names.index("sources") == main_names.index("countries") + 1
+        branch_dialog.close()
+
+        office_dialog = MaterialEditDialog(
+            session, branch_id=None, role=Role.HEAD_OFFICE.value
+        )
+        office_sources = office_dialog.element("sources")
+        assert office_sources is not None
+        assert not office_sources.is_required()
+        assert office_sources.isHidden()
+        extra_names = _row_names(office_dialog, extra=True)
+        assert extra_names.index("sources") == extra_names.index("countries") + 1
+        office_dialog.more_button.click()
+        assert not office_sources.isHidden()
+        office_dialog.close()
+
+
+def test_sources_element_in_telegram_dialog(qapp, base_data) -> None:
+    """Телеграмма: источники под странами; в филиале видны, в ГО — под «Больше»."""
+    with base_data.get_session() as session:
+        branch_dialog = TelegramEditDialog(
+            session, branch_id="F1", role=Role.BRANCH.value
+        )
+        sources = branch_dialog.element("sources")
+        assert sources is not None
+        assert not sources.isHidden()
+        main_names = _row_names(branch_dialog, extra=False)
+        assert main_names.index("sources") == main_names.index("countries") + 1
+        branch_dialog.close()
+
+        office_dialog = TelegramEditDialog(
+            session, branch_id=None, role=Role.HEAD_OFFICE.value
+        )
+        office_sources = office_dialog.element("sources")
+        assert office_sources is not None
+        assert office_sources.isHidden()
+        extra_names = _row_names(office_dialog, extra=True)
+        assert extra_names.index("sources") == extra_names.index("countries") + 1
+        office_dialog.more_button.click()
+        assert not office_sources.isHidden()
+        office_dialog.close()
+
+
+def test_sources_element_collects_and_displays_index(qapp, base_data) -> None:
+    """Элемент источников отдаёт выбранные записи и показывает их индексы."""
+    from internal_correspondence.core.constants import SourceType
+    from internal_correspondence.gui.edit_elements import ManyToManyEditElement
+    from internal_correspondence.orm.models import Source
+
+    with base_data.get_session() as session:
+        first = Source(index="SRC-2", type=SourceType.ANALYTICAL)
+        second = Source(index="SRC-1", type=SourceType.INSTRUMENTAL)
+        element = ManyToManyEditElement(ScientificMaterial.sources, session)
+        element.set_value([first, second])
+        texts = [
+            element.list_widget.item(row).text()
+            for row in range(element.list_widget.count())
+        ]
+        assert texts == ["SRC-1", "SRC-2"]
+        target = {}
+        element.collect_data(target)
+        assert target["sources"] == [first, second]
+        element.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# Запоминание геометрии диалогов (настройки приложения)
+# ---------------------------------------------------------------------------
+
+
+def _geometry_base64(dialog) -> str:
+    """Сериализует геометрию диалога так же, как это делает код продукта."""
+    return dialog.saveGeometry().toBase64().data().decode("ascii")
+
+
+def test_dialog_geometry_remembered_and_restored(qapp, base_data) -> None:
+    """Геометрия материала запоминается при закрытии и восстанавливается."""
+    from internal_correspondence.core.settings import AppSettings
+
+    with base_data.get_session() as session:
+        settings = AppSettings()
+        dialog = MaterialEditDialog(
+            session, branch_id="F1", role=Role.BRANCH.value, settings=settings
+        )
+        dialog.resize(420, 320)
+        dialog.show()
+        qapp.processEvents()
+        dialog.close()
+        saved = settings.material_dialog_geometry
+        assert saved
+        assert settings.telegram_dialog_geometry == ""
+
+        restored = MaterialEditDialog(
+            session, branch_id="F1", role=Role.BRANCH.value, settings=settings
+        )
+        restored.show()
+        qapp.processEvents()
+        assert _geometry_base64(restored) == saved
+        restored.close()
+
+
+def test_dialog_geometry_stored_per_document_type(qapp, base_data) -> None:
+    """Геометрия материалов и телеграмм запоминается раздельно."""
+    from internal_correspondence.core.settings import AppSettings
+
+    with base_data.get_session() as session:
+        settings = AppSettings()
+        material = MaterialEditDialog(
+            session, branch_id="F1", role=Role.BRANCH.value, settings=settings
+        )
+        material.resize(460, 340)
+        material.show()
+        qapp.processEvents()
+        material.close()
+        material_geometry = settings.material_dialog_geometry
+
+        telegram = TelegramEditDialog(
+            session, branch_id="F1", role=Role.BRANCH.value, settings=settings
+        )
+        telegram.resize(400, 300)
+        telegram.show()
+        qapp.processEvents()
+        telegram.close()
+        assert settings.telegram_dialog_geometry
+        assert settings.telegram_dialog_geometry != material_geometry
+        # Геометрия материала не перезаписана диалогом телеграммы.
+        assert settings.material_dialog_geometry == material_geometry
+
+
+def test_dialog_geometry_ignored_without_settings(qapp, base_data) -> None:
+    """Без настроек диалог закрывается без запоминания геометрии."""
+    with base_data.get_session() as session:
+        dialog = MaterialEditDialog(session, branch_id="F1", role=Role.BRANCH.value)
+        dialog.resize(420, 320)
+        dialog.show()
+        qapp.processEvents()
         dialog.close()

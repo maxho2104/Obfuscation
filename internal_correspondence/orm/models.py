@@ -434,6 +434,10 @@ class Source(Base, ChangeTrackedMixin):
     )
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, info={"label": "Комментарий"})
 
+    def display_name(self) -> str:
+        """Возвращает условное обозначение источника для списков и комбобоксов."""
+        return self.index
+
     materials: Mapped[List["ScientificMaterial"]] = relationship(
         "ScientificMaterial",
         secondary=material_source_association,
@@ -1080,6 +1084,7 @@ class ScientificMaterial(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationM
         "Source",
         secondary=material_source_association,
         back_populates="materials",
+        info={"label": "Источники"},
     )
     countries: Mapped[List["Country"]] = relationship(
         "Country",
@@ -1182,6 +1187,7 @@ class Telegram(Base, ChangeTrackedMixin, ParticipantMixin, EvaluationMixin):
         "Source",
         secondary=telegram_source_association,
         back_populates="telegrams",
+        info={"label": "Источники"},
     )
     countries: Mapped[List["Country"]] = relationship(
         "Country",
