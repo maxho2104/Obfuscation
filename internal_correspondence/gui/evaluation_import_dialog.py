@@ -50,12 +50,17 @@ class EvaluationImportDialog(QDialog):
         self.importer = Importer(config, engine)
         self._duplicate_actions: Dict[int, str] = {}
         self._result = None
+        self._lists_requested = False
         self._build_ui()
         self._apply_initial_geometry()
         self._reload_schemes()
         self._update_nav()
 
     # -- построение ---------------------------------------------------------
+    def shows_evaluation_lists(self) -> bool:
+        """Нужно ли после закрытия мастера открыть журналы оценочных листов."""
+        return self._lists_requested
+
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         self.step_label = QLabel()
@@ -72,13 +77,35 @@ class EvaluationImportDialog(QDialog):
         self.back_button.clicked.connect(self._go_back)
         self.next_button = QPushButton(STRINGS.import_next)
         self.next_button.clicked.connect(self._go_next)
-        close_button = QPushButton(STRINGS.import_close)
-        close_button.clicked.connect(self.reject)
+        self.close_button = QPushButton(STRINGS.import_close)
+        self.close_button.clicked.connect(self._on_close)
         nav.addWidget(self.back_button)
         nav.addStretch(1)
-        nav.addWidget(close_button)
+        nav.addWidget(self.close_button)
         nav.addWidget(self.next_button)
         layout.addLayout(nav)
+
+    def _on_close(self) -> None:
+        """Закрывает мастер; после успешного импорта запрашивает журналы.
+
+        На шаге результата (индекс 3) успешно завершённый импорт (не пробный)
+        открывает после закрытия окно оценочных листов — для этого диалог
+        завершается кодом ``QDialog.Accepted``; во всех остальных случаях
+        поведение прежнее (``reject``).
+        """
+        if self._import_completed():
+            self._lists_requested = True
+            self.accept()
+            return
+        self.reject()
+
+    def _import_completed(self) -> bool:
+        """Успешный (не пробный) импорт показан на шаге результата."""
+        return (
+            self._result is not None
+            and not self._result.dry_run
+            and self.stack.currentIndex() == 3
+        )
 
     def _apply_initial_geometry(self) -> None:
         """Размещает окно по центру экрана размером 40% x 40%."""

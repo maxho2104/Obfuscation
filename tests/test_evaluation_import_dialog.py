@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QDialog
 
 from internal_correspondence.gui.evaluation_import_dialog import (
     EvaluationImportDialog,
@@ -21,6 +21,8 @@ from internal_correspondence.orm.base import Base
 from internal_correspondence.text_import import ImporterConfig
 from internal_correspondence.text_import.models import (
     FieldSpec,
+    ImportCounts,
+    ImportResult,
     LayoutScheme,
     MatchPreview,
     MatchResult,
@@ -244,6 +246,69 @@ def test_preview_is_split_and_refreshes_after_correction(
         dialog.problems_table.setCurrentCell(0, 0)
         dialog._correct_row()
         assert dialog.preview_table.item(0, 6).text() == "01.02.2026"
+    finally:
+        dialog.importer.close()
+        dialog.close()
+
+
+def _success_result(dry_run: bool = False) -> ImportResult:
+    return ImportResult(
+        log_id=0 if dry_run else 7,
+        year=2026,
+        counts=ImportCounts(imported=2, matched=2, evaluations_received=2),
+        dry_run=dry_run,
+    )
+
+
+def _dialog_at(tmp_path: Path, index: int, result) -> EvaluationImportDialog:
+    engine = create_engine(f"sqlite:///{tmp_path / 'db.sqlite'}")
+    Base.metadata.create_all(engine)
+    dialog = EvaluationImportDialog(_config(tmp_path), engine)
+    dialog._result = result
+    dialog.stack.setCurrentIndex(index)
+    return dialog
+
+
+def test_close_after_successful_import_requests_lists(app, tmp_path: Path) -> None:
+    dialog = _dialog_at(tmp_path, 3, _success_result())
+    try:
+        assert dialog.shows_evaluation_lists() is False
+        dialog._on_close()
+        assert dialog.result() == QDialog.Accepted
+        assert dialog.shows_evaluation_lists() is True
+    finally:
+        dialog.importer.close()
+        dialog.close()
+
+
+def test_close_without_import_stays_rejected(app, tmp_path: Path) -> None:
+    dialog = _dialog_at(tmp_path, 0, None)
+    try:
+        dialog._on_close()
+        assert dialog.result() == QDialog.Rejected
+        assert dialog.shows_evaluation_lists() is False
+    finally:
+        dialog.importer.close()
+        dialog.close()
+
+
+def test_close_after_dry_run_stays_rejected(app, tmp_path: Path) -> None:
+    dialog = _dialog_at(tmp_path, 3, _success_result(dry_run=True))
+    try:
+        dialog._on_close()
+        assert dialog.result() == QDialog.Rejected
+        assert dialog.shows_evaluation_lists() is False
+    finally:
+        dialog.importer.close()
+        dialog.close()
+
+
+def test_close_on_earlier_step_stays_rejected(app, tmp_path: Path) -> None:
+    dialog = _dialog_at(tmp_path, 2, _success_result())
+    try:
+        dialog._on_close()
+        assert dialog.result() == QDialog.Rejected
+        assert dialog.shows_evaluation_lists() is False
     finally:
         dialog.importer.close()
         dialog.close()
