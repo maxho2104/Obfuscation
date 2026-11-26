@@ -161,8 +161,8 @@ class AddFilterDialog(QDialog):
         self.int_edit = QSpinBox()
         self.int_edit.setRange(-2_000_000_000, 2_000_000_000)
         self.bool_combo = QComboBox()
-        self.bool_combo.addItem("Да", "true")
-        self.bool_combo.addItem("Нет", "false")
+        self.bool_combo.addItem(STRINGS.value_yes, "true")
+        self.bool_combo.addItem(STRINGS.value_no, "false")
         self.enum_list = QListWidget()
         self.enum_list.setMaximumHeight(150)
 

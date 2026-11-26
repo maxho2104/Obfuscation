@@ -9,6 +9,8 @@ from PyQt5.QtCore import QEvent, QObject
 from PyQt5.QtGui import QColor, QPalette
 from PyQt5.QtWidgets import QAbstractScrollArea, QApplication, QWidget
 
+from internal_correspondence.utils.string_resources import STRINGS
+
 _QSS_PATH = Path(__file__).with_name("application.qss")
 _ICON_PATH = Path(__file__).with_name("icons")
 _QSS_TOKEN = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
@@ -189,7 +191,7 @@ def _disabled(colors: Mapping[str, str]) -> Dict[str, QColor]:
 
 LIGHT_THEME = Theme(
     key="light",
-    label="Светлая тема",
+    label=STRINGS.theme_light_label,
     stripe=QColor(LIGHT_COLORS["SURFACE_ALT"]),
     modified_row=QColor("#FFF0C2"),
     no_incoming_row=QColor("#E3EDF7"),
@@ -200,7 +202,7 @@ LIGHT_THEME = Theme(
 
 DARK_THEME = Theme(
     key="dark",
-    label="Тёмная тема",
+    label=STRINGS.theme_dark_label,
     stripe=QColor(DARK_COLORS["SURFACE_ALT"]),
     modified_row=QColor("#7E6434"),
     unassigned_row=QColor("#5A2A3A"),

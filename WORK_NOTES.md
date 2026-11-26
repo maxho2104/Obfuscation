@@ -3704,3 +3704,14 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 - Новое из main (~2,7 тыс. строк): «ОШС: оформление карточки элемента и квадратные диаграммы» (переработка панели сведений и виджета диаграмм — наш код адаптирован), источники и правки сидирования, сохранение геометрии диалогов материалов/телеграмм, импорт оценок («Закрыть» после успеха открывает оценочные листы), фазовый генератор `seed_branch_add_4`.
 - Новых миграций и зависимостей нет; наши доработки (оптимизация `period_stats_pair`, прокрутка панели, редактор пакета) сохранены — все тесты проходят.
 - `pytest tests`: **551/551 passed**; импорт GUI — OK.
+
+
+### Дополнение (2026-11-26) — довынос строк в пакет (backlog ревью)
+- `first_run_wizard.py`: выносятся радио-метки, группы параметров, подписи полей (где нет готовых ключей — новые: `wizard_sqlite_local`, `wizard_postgresql_server`, `wizard_sqlite_params`, `wizard_postgresql_params`, `label_database`, `wizard_select_sqlite_file`, `dialog_db_file`, `msg_db_file_exists`, `label_storage_path`, `wizard_select_storage`, `wizard_branch_placeholder`, `label_branch_for_role`); «Обзор...» — существующий `button_browse`.
+- `reference_editor.py`: кнопки — существующие `button_add/edit/delete/refresh`; новые `filter_label`, `filter_placeholder`, `button_prev`, `button_next`, `page_label`, `title_delete_confirm`, `msg_delete_record_confirm`, `msg_ref_create/update/delete_error` (шаблоны с `{error}`).
+- `filter_dialog.py`: «Да»/«Нет» — существующие `value_yes`/`value_no`.
+- `employee_picker.py`: новые `picker_employees_title`, `picker_participating_group`, `picker_add_participating`, `picker_remove_participating`.
+- `theme.py`: подписи тем — новые `theme_light_label`, `theme_dark_label`.
+- `table_model`, `document_dialogs`, `reference_dialogs`, `evaluation_delegate`, `i18n`, `filter_model`, `settings_dialog` — захардкоженных UI-строк нет (проверено AST-сканом аргументов вызовов).
+- Замечено: переработка карточки ОШС в main убрала функцию печати панели (кнопки и обработчика нет) — импорты QPrinter/QPrintDialog/QPainter удалены как висячие; если печать нужна обратно — отдельная задача.
+- Секция `strings` пакета регенерирована (602 ключа). `pytest tests`: **551/551 passed**; pyflakes — чист.

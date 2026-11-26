@@ -81,41 +81,41 @@ class DatabasePage(QWizardPage):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        self.sqlite_radio = QRadioButton("SQLite (локальный файл)")
+        self.sqlite_radio = QRadioButton(STRINGS.wizard_sqlite_local)
         self.sqlite_radio.setChecked(True)
-        self.postgresql_radio = QRadioButton("PostgreSQL (сервер)")
+        self.postgresql_radio = QRadioButton(STRINGS.wizard_postgresql_server)
 
         layout.addWidget(self.sqlite_radio)
         layout.addWidget(self.postgresql_radio)
 
         # SQLite group
-        self.sqlite_group = QGroupBox("Параметры SQLite")
+        self.sqlite_group = QGroupBox(STRINGS.wizard_sqlite_params)
         sqlite_layout = QGridLayout(self.sqlite_group)
-        sqlite_layout.addWidget(QLabel("Файл базы данных:"), 0, 0)
+        sqlite_layout.addWidget(QLabel(STRINGS.label_db_file), 0, 0)
         self.sqlite_path = QLineEdit()
         self.sqlite_path.setPlaceholderText("internal_correspondence.db")
         sqlite_layout.addWidget(self.sqlite_path, 0, 1)
-        self.sqlite_browse = QPushButton("Обзор...")
+        self.sqlite_browse = QPushButton(STRINGS.button_browse)
         self.sqlite_browse.clicked.connect(self._browse_sqlite)
         sqlite_layout.addWidget(self.sqlite_browse, 0, 2)
         layout.addWidget(self.sqlite_group)
 
         # PostgreSQL group
-        self.postgresql_group = QGroupBox("Параметры PostgreSQL")
+        self.postgresql_group = QGroupBox(STRINGS.wizard_postgresql_params)
         pg_layout = QGridLayout(self.postgresql_group)
-        pg_layout.addWidget(QLabel("Хост:"), 0, 0)
+        pg_layout.addWidget(QLabel(STRINGS.label_host), 0, 0)
         self.pg_host = QLineEdit("localhost")
         pg_layout.addWidget(self.pg_host, 0, 1)
-        pg_layout.addWidget(QLabel("Порт:"), 1, 0)
+        pg_layout.addWidget(QLabel(STRINGS.label_port), 1, 0)
         self.pg_port = QLineEdit("5432")
         pg_layout.addWidget(self.pg_port, 1, 1)
-        pg_layout.addWidget(QLabel("База данных:"), 2, 0)
+        pg_layout.addWidget(QLabel(STRINGS.label_database), 2, 0)
         self.pg_database = QLineEdit()
         pg_layout.addWidget(self.pg_database, 2, 1)
-        pg_layout.addWidget(QLabel("Пользователь:"), 3, 0)
+        pg_layout.addWidget(QLabel(STRINGS.label_user), 3, 0)
         self.pg_user = QLineEdit()
         pg_layout.addWidget(self.pg_user, 3, 1)
-        pg_layout.addWidget(QLabel("Пароль:"), 4, 0)
+        pg_layout.addWidget(QLabel(STRINGS.label_password), 4, 0)
         self.pg_password = QLineEdit()
         self.pg_password.setEchoMode(QLineEdit.Password)
         pg_layout.addWidget(self.pg_password, 4, 1)
@@ -138,7 +138,7 @@ class DatabasePage(QWizardPage):
     def _browse_sqlite(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Выберите файл базы данных SQLite",
+            STRINGS.wizard_select_sqlite_file,
             self.sqlite_path.text().strip(),
             "SQLite (*.db *.sqlite *.sqlite3)",
             options=QFileDialog.DontConfirmOverwrite,
@@ -149,8 +149,8 @@ class DatabasePage(QWizardPage):
         if Path(path).exists():
             reply = QMessageBox.question(
                 self,
-                "Файл базы данных",
-                f"Файл базы данных уже существует:\n{path}\n\nИспользовать этот файл?",
+                STRINGS.dialog_db_file,
+                STRINGS.msg_db_file_exists.format(path=path),
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.Yes,
             )
@@ -189,16 +189,16 @@ class StoragePage(QWizardPage):
 
     def _setup_ui(self) -> None:
         layout = QGridLayout(self)
-        layout.addWidget(QLabel("Путь к хранилищу:"), 0, 0)
+        layout.addWidget(QLabel(STRINGS.label_storage_path), 0, 0)
         self.path_edit = QLineEdit()
         layout.addWidget(self.path_edit, 0, 1)
-        self.browse_btn = QPushButton("Обзор...")
+        self.browse_btn = QPushButton(STRINGS.button_browse)
         self.browse_btn.clicked.connect(self._browse)
         layout.addWidget(self.browse_btn, 0, 2)
         self.registerField("storage_path", self.path_edit)
 
     def _browse(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Выберите директорию хранилища")
+        path = QFileDialog.getExistingDirectory(self, STRINGS.wizard_select_storage)
         if path:
             self.path_edit.setText(path)
 
@@ -229,8 +229,8 @@ class RolePage(QWizardPage):
 
         self.branch_combo = QComboBox()
         self.branch_combo.setEditable(True)
-        self.branch_combo.setPlaceholderText("Выберите или введите индекс филиала")
-        layout.addWidget(QLabel("Филиал (для роли 'Филиал'):"))
+        self.branch_combo.setPlaceholderText(STRINGS.wizard_branch_placeholder)
+        layout.addWidget(QLabel(STRINGS.label_branch_for_role))
         layout.addWidget(self.branch_combo)
 
         # Первоначальная загрузка из архива головного офиса: доступна

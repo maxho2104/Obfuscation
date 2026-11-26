@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
 )
 
 from internal_correspondence.orm.models import Department, Employee
+from internal_correspondence.utils.string_resources import STRINGS
 
 
 class EmployeePickerDialog(QDialog):
@@ -33,7 +34,7 @@ class EmployeePickerDialog(QDialog):
         self.branch_id = branch_id
         self.excluded_ids: Set = {employee_id for employee_id in (excluded_ids or [])}
         self._employees: List[Employee] = []
-        self.setWindowTitle("Выбор сотрудников")
+        self.setWindowTitle(STRINGS.picker_employees_title)
         self.setMinimumSize(500, 400)
         self._setup_ui()
         self._load_employees()
@@ -97,7 +98,7 @@ class ParticipatingEmployeesWidget(QGroupBox):
     """Список причастных сотрудников с кнопками добавления и удаления."""
 
     def __init__(self, session, branch_id: Optional[str], parent=None) -> None:
-        super().__init__("Причастные сотрудники", parent)
+        super().__init__(STRINGS.picker_participating_group, parent)
         self.session = session
         self.branch_id = branch_id
         self._employees: List[Employee] = []
@@ -114,12 +115,12 @@ class ParticipatingEmployeesWidget(QGroupBox):
         buttons = QHBoxLayout()
         self.add_btn = QPushButton("+")
         self.add_btn.setProperty("role", "compact")
-        self.add_btn.setToolTip("Добавить причастных сотрудников")
+        self.add_btn.setToolTip(STRINGS.picker_add_participating)
         self.add_btn.clicked.connect(self._add_employees)
 
         self.remove_btn = QPushButton("-")
         self.remove_btn.setProperty("role", "compact")
-        self.remove_btn.setToolTip("Удалить выбранных сотрудников")
+        self.remove_btn.setToolTip(STRINGS.picker_remove_participating)
         self.remove_btn.clicked.connect(self._remove_employees)
 
         buttons.addWidget(self.add_btn)
