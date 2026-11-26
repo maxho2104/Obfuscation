@@ -4028,3 +4028,24 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 ### Проверка
 - `pytest tests/test_oshm_avatar_stats.py tests/test_oshm_dialog.py -q` —
   46 passed; pyflakes — чисто; импорт `gui.application` — OK.
+
+
+---
+
+## Слияние с main (2026-11-26) — PR #29
+- Локальные доработки ОШС закоммичены (`439c78a`), затем подтянут `origin/main`
+  (`961b334`, PR #29 из lo0v777); конфликт только в `WORK_NOTES.md` — обе
+  стороны дописывали записи, объединены без потерь (все заголовки уникальны).
+- Новое из main (~1 тыс. строк): заглушка авторизации перед главным окном
+  (с удалением `settings.ini` при отмене), единое поведение выпадающих списков
+  (`combo_box_behavior.py`), акцентная рамка вторичных окон и увеличенные
+  кастомные шапки (`custom_title_bar.py`, `application.qss`), безрамочные
+  прогресс-диалоги, открытие расположения сформированного отчёта после «ОК»
+  (общая функция показа файла в проводнике вынесена в `attached_files_widget.py`).
+- Пересечений по коду с нашими правками ОШС нет: из общего — только импорт
+  `_explorer_select_command` в `oshm_details_panel.py` (функция сохранена).
+- Проверка: `pytest` по затронутым файлам (`test_oshm_avatar_stats`,
+  `test_oshm_dialog`, `test_attached_files_widget`, `test_authorization_dialog`,
+  `test_combo_box_behavior`, `test_window_state`, `test_theme`) — 142 passed;
+  импорт GUI и pyflakes — чисто.
+- Ветка `alex_develop` не запушена — push по указанию пользователя.
