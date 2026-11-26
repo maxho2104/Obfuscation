@@ -82,6 +82,12 @@ class AppSettings:
     imported_files_dock_floating: str = "false"
     imported_files_dock_geometry: str = ""
 
+    # Геометрия диалогов редактирования документов (QByteArray.saveGeometry
+    # в Base64); запоминается при закрытии диалога, в INI попадает при
+    # завершении работы программы (см. gui/document_dialogs.py)
+    material_dialog_geometry: str = ""
+    telegram_dialog_geometry: str = ""
+
     # Срок хранения записей Change (в днях); <= 0 — бессрочно
     changes_retention_days: int = DEFAULT_CHANGES_RETENTION_DAYS
 

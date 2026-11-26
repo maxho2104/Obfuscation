@@ -72,7 +72,7 @@ class TestDefaultPack:
         pack = default_domain_pack()
         assert pack.label("material_type", "ДОК") == "Документ"
         assert pack.label("telegram_type", "ОХР") == "О ходе работ"
-        assert pack.label("source_type", "НТ") == "Научный труд"
+        assert pack.label("source_type", "СМИ") == "Средства массовой информации"
         assert pack.label("scientific_task_type", "ОЗ") == "Основная задача"
         assert pack.label("telegram_report_type", "СДР") == "Срочно доложено руководителю"
 
@@ -165,7 +165,7 @@ class TestRegistry:
             "П": "Полезно",
             "В": "Важно",
         }
-        assert enum_codes("source_type") == ["ЭО", "НТ"]
+        assert enum_codes("source_type") == ["А", "И", "Д", "П", "СМИ"]
         assert enum_weight("evaluation_value", "П") == 2
         assert enum_code_of("telegram_type", "thematic") == "Т"
 

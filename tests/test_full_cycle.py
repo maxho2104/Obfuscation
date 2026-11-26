@@ -39,9 +39,9 @@ from tests.seed_data import seed_head_office_3, seed_branch_2
 from tests.seed_data.seed_reference_1 import create_reference_data
 
 BRANCHES: List[Tuple[str, str]] = [
-    ("BR-001", "Ф-1"),
-    ("BR-002", "Ф-2"),
-    ("BR-003", "Ф-3"),
+    ("11-1-11", "Ф-1"),
+    ("21-2-21", "Ф-2"),
+    ("31-3-31", "Ф-3"),
 ]
 PERIOD = ("2026-09-01", "2026-09-10")
 

@@ -1,6 +1,7 @@
 """Тесты скрипта справочных данных головного офиса (seed_reference)."""
 
 import random
+import re
 from argparse import Namespace
 from collections import Counter
 from datetime import date
@@ -12,6 +13,7 @@ from faker import Faker
 from internal_correspondence.core.database import DatabaseManager
 from internal_correspondence.orm.models import (
     AddedTask,
+    Branch,
     ScientificTask,
 )
 from internal_correspondence.services.change_tracking import register_change_tracking
@@ -77,6 +79,16 @@ def test_create_reference_data_counts(session) -> None:
     assert stats["consumers"] == 10
     assert stats["leaders"] == 5
     assert stats["tasks"] == 240
+
+
+def test_branch_indexes_match_digit_format(session) -> None:
+    """Индексы филиалов — «dd-d-dd» с цифрами от 1 до 9, без повторов."""
+    create_reference_data(session, Faker("ru_RU"), _args())
+    branches = session.query(Branch).all()
+    assert len(branches) == 10
+    pattern = re.compile(r"^[1-9]{2}-[1-9]-[1-9]{2}$")
+    assert all(pattern.fullmatch(branch.id) for branch in branches)
+    assert len({branch.id for branch in branches}) == len(branches)
 
 
 def test_tasks_have_branch_assignments_with_overlaps(session) -> None:

@@ -39,7 +39,7 @@ from internal_correspondence.services.task_distribution_service import (
     NODE_EMPLOYEE,
     NODE_WORKGROUP,
 )
-from tests.seed_data import seed_branch_2, seed_reference_1
+from tests.seed_data import seed_branch_2, seed_branch_add_4, seed_reference_1
 from tests.seed_data.seed_branch_2 import (
     BranchSeedError,
     _distribute_branch_tasks,
@@ -248,7 +248,9 @@ def test_sources_have_uuid_and_unique_index(tmp_path: Path) -> None:
             assert all(isinstance(source.id, uuid.UUID) for source in sources)
             indexes = [source.index for source in sources]
             assert len(indexes) == len(set(indexes))
-            assert all(re.fullmatch(r"SRC-\d{5}", idx) for idx in indexes)
+            assert all(
+                re.fullmatch(r"(А|И|Д|П|СМИ)\d{5}", idx) for idx in indexes
+            )
     finally:
         db.close()
 
@@ -549,3 +551,147 @@ def test_generated_structure_guarantees_distributability(tmp_path: Path) -> None
                     ), f"у группы {group.name} нет действующего участника"
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Скрипт добавления порций документов (seed_branch_add_4)
+# ---------------------------------------------------------------------------
+
+
+def _run_add(tmp_path: Path, extra: List[str]) -> None:
+    """Запускает seed_branch_add_4 с базой и хранилищем во временном каталоге."""
+    argv = [
+        "--db-url", f"sqlite:///{(tmp_path / 'seed.db').as_posix()}",
+        "--storage", (tmp_path / "storage").as_posix(),
+    ] + extra
+    assert seed_branch_add_4.main(argv) == 0
+
+
+def test_add_continues_from_latest_document_date(tmp_path: Path) -> None:
+    """Добавление начинается со дня после крайней даты документов в базе."""
+    _run_seed(
+        tmp_path,
+        [
+            "--from", "2026-09-01",
+            "--to", "2026-09-02",
+            "--materials-per-day", "1-1",
+            "--telegrams-per-day", "1-1",
+            "--sources", "3",
+            "--seed", "42",
+        ],
+    )
+    db = _open_db(tmp_path)
+    try:
+        with db.get_session() as session:
+            departments_before = session.query(Department).count()
+            sources_before = session.query(Source).count()
+    finally:
+        db.close()
+
+    _run_add(
+        tmp_path,
+        [
+            "--to", "2026-09-04",
+            "--materials-per-day", "1-1",
+            "--telegrams-per-day", "1-1",
+            "--seed", "7",
+        ],
+    )
+
+    db = _open_db(tmp_path)
+    try:
+        with db.get_session() as session:
+            # ОШС и источники не создаются заново.
+            assert session.query(Department).count() == departments_before
+            assert session.query(Source).count() == sources_before
+            materials = session.query(ScientificMaterial).all()
+            telegrams = session.query(Telegram).all()
+            assert len(materials) == 4
+            assert len(telegrams) == 4
+            # Документы покрывают оба периода без разрыва и наложения.
+            assert {m.outgoing_date for m in materials} == {
+                date(2026, 9, 1),
+                date(2026, 9, 2),
+                date(2026, 9, 3),
+                date(2026, 9, 4),
+            }
+            # Нумерация продолжает годовые счётчики.
+            new_materials = [
+                m
+                for m in materials
+                if m.outgoing_date > date(2026, 9, 2)
+            ]
+            assert sorted(m.outgoing_number for m in new_materials) == [
+                "ИСХ-00003",
+                "ИСХ-00004",
+            ]
+            new_telegrams = [
+                t for t in telegrams if t.outgoing_date > date(2026, 9, 2)
+            ]
+            assert sorted(t.outgoing_number for t in new_telegrams) == [
+                "ТЛГ-00003",
+                "ТЛГ-00004",
+            ]
+            # Новые документы ссылаются на имеющиеся источники филиала.
+            assert all(len(m.sources) <= 2 for m in new_materials)
+    finally:
+        db.close()
+
+
+def test_add_requires_structure_and_documents(tmp_path: Path) -> None:
+    """Без ОШС или документов скрипт отказывает с понятной ошибкой."""
+    _ensure_references(tmp_path, branches=1)
+    with pytest.raises(BranchSeedError, match="организационно-штатной структуры"):
+        seed_branch_add_4.main(
+            [
+                "--db-url", f"sqlite:///{(tmp_path / 'seed.db').as_posix()}",
+                "--storage", (tmp_path / "storage").as_posix(),
+                "--to", "2026-09-05",
+                "--seed", "1",
+            ]
+        )
+
+    # Структура без документов: начало периода не определить.
+    _run_seed(
+        tmp_path,
+        [
+            "--from", "2026-09-01",
+            "--to", "2026-09-02",
+            "--materials-per-day", "0-0",
+            "--telegrams-per-day", "0-0",
+            "--sources", "0",
+            "--seed", "2",
+        ],
+    )
+    with pytest.raises(BranchSeedError, match="нет документов"):
+        seed_branch_add_4.main(
+            [
+                "--db-url", f"sqlite:///{(tmp_path / 'seed.db').as_posix()}",
+                "--storage", (tmp_path / "storage").as_posix(),
+                "--to", "2026-09-05",
+                "--seed", "1",
+            ]
+        )
+
+
+def test_add_rejects_end_before_derived_start(tmp_path: Path) -> None:
+    """Дата --to раньше производного начала периода — ошибка."""
+    _run_seed(
+        tmp_path,
+        [
+            "--from", "2026-09-01",
+            "--to", "2026-09-02",
+            "--materials-per-day", "1-1",
+            "--telegrams-per-day", "0-0",
+            "--seed", "3",
+        ],
+    )
+    with pytest.raises(BranchSeedError, match="не раньше"):
+        seed_branch_add_4.main(
+            [
+                "--db-url", f"sqlite:///{(tmp_path / 'seed.db').as_posix()}",
+                "--storage", (tmp_path / "storage").as_posix(),
+                "--to", "2026-09-02",
+                "--seed", "1",
+            ]
+        )

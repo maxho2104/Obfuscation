@@ -182,8 +182,8 @@ def build_monthly_template() -> Path:
         "При этом количество представленных технических документов и образцов "
         "продукции свидетельствует о {{ monthly.technical_products_trend }}, "
         "разработанных по ОЗ – о {{ monthly.main_materials_trend }}. Разница по "
-        "материалам, полученным с помощью экспериментального оборудования, "
-        "составила {{ monthly.experimental_difference }}.",
+        "материалам, полученным инструментальным способом, "
+        "составила {{ monthly.instrumental_difference }}.",
     )
     _write_paragraph(
         paragraphs[12],

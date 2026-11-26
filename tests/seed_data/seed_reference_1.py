@@ -7,7 +7,8 @@
 
 Состав данных:
 
-- 5 территориальных единиц, по 2 филиала в каждой;
+- 5 территориальных единиц, по 2 филиала в каждой (индексы филиалов —
+  в формате «dd-d-dd», все цифры от 1 до 9);
 - 30–40 стран, 4 научных звания, 10 потребителей, 5 руководителей;
 - 240 научных задач: треть — с 01.01.2025 по 31.12.2025, треть —
   с 01.01.2026 по 31.12.2026, 1/6 — с 01.10.2025 по 30.09.2026,
@@ -91,6 +92,17 @@ class ReferenceSeedError(Exception):
     """Ошибка наполнения базы справочными данными головного офиса."""
 
 
+def build_branch_index(unit_number: int, branch_number: int) -> str:
+    """Индекс филиала вида «dd-d-dd»; все цифры — от 1 до 9 (без нулей).
+
+    Первые «dd» и последние «dd» — номер территориальной единицы и номер
+    филиала в ней (две цифры), средняя «d» — номер территориальной единицы.
+    Номера единиц и филиалов в единице должны быть однозначными (1-9).
+    """
+    pair = f"{unit_number}{branch_number}"
+    return f"{pair}-{unit_number}-{pair}"
+
+
 def build_task_periods(
     total: int, specs: Sequence[Tuple[date, Optional[date], int]] = TASK_PERIOD_SPECS,
 ) -> List[Tuple[date, Optional[date]]]:
@@ -171,21 +183,19 @@ def create_reference_data(
     session.add_all(units)
 
     branches: List[Branch] = []
-    branch_index = 1
-    for unit in units:
-        for _ in range(args.branches_per_unit):
+    for unit_number, unit in enumerate(units, start=1):
+        for branch_number in range(1, args.branches_per_unit + 1):
             company = (
                 fake.company().replace("«", "").replace("»", "").replace('"', "").strip()
             )
             branches.append(
                 Branch(
-                    id=f"BR-{branch_index:03d}",
+                    id=build_branch_index(unit_number, branch_number),
                     name=f"Филиал «{company}»",
-                    short_name=f"Ф-{branch_index}",
+                    short_name=f"Ф-{len(branches) + 1}",
                     territorial_unit_id=unit.id,
                 )
             )
-            branch_index += 1
     session.add_all(branches)
 
     used_codes = set()
@@ -304,6 +314,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.units < 1 or args.branches_per_unit < 1:
         parser.error("Территориальные единицы и филиалы должны быть в количестве >= 1")
+    if args.units > 9 or args.branches_per_unit > 9:
+        parser.error(
+            "Индекс филиала «dd-d-dd» однозначен: единиц и филиалов в единице — не более 9"
+        )
     if args.tasks < 1:
         parser.error("Количество научных задач должно быть >= 1")
 

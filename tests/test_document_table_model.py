@@ -165,3 +165,33 @@ def test_date_columns_displayed_as_dd_mm_yyyy(documents, qapp) -> None:
             if model.item_at(row).incoming_number is None
         )
         assert model.index(without_incoming, 1).data(Qt.DisplayRole) == ""
+
+
+def test_sources_column_after_countries_for_both_roles() -> None:
+    """Колонка «Источники» следует сразу за «Странами» в таблицах документов."""
+    from internal_correspondence.core.constants import Role
+    from internal_correspondence.gui import application
+
+    for columns in (
+        application.material_columns(),
+        application.material_columns(Role.HEAD_OFFICE.value),
+        application.telegram_columns(),
+        application.telegram_columns(Role.HEAD_OFFICE.value),
+    ):
+        names = [column.name for column in columns]
+        assert "sources" in names, names
+        assert names.index("sources") == names.index("countries") + 1, names
+
+
+def test_sources_column_displays_sorted_indexes(documents, qapp) -> None:
+    """Ячейка источников перечисляет их индексы в алфавитном порядке."""
+    import uuid
+
+    from internal_correspondence.core.constants import SourceType
+    from internal_correspondence.gui.application import _format_sources
+    from internal_correspondence.orm.models import Source
+
+    first = Source(id=uuid.uuid4(), index="SRC-10", type=SourceType.ANALYTICAL)
+    second = Source(id=uuid.uuid4(), index="SRC-2", type=SourceType.ANALYTICAL)
+    assert _format_sources([first, second]) == "SRC-10, SRC-2"
+    assert _format_sources([]) == ""

@@ -120,14 +120,29 @@
       "label": "Тип источника",
       "values": [
         {
-          "key": "experimental_equipment",
-          "code": "ЭО",
-          "label": "Экспериментальное оборудование"
+          "key": "analytical",
+          "code": "А",
+          "label": "Аналитический"
         },
         {
-          "key": "scientific_work",
-          "code": "НТ",
-          "label": "Научный труд"
+          "key": "instrumental",
+          "code": "И",
+          "label": "Инструментальный"
+        },
+        {
+          "key": "differentiated",
+          "code": "Д",
+          "label": "Дифференцированный"
+        },
+        {
+          "key": "verification",
+          "code": "П",
+          "label": "Проверочный"
+        },
+        {
+          "key": "mass_media",
+          "code": "СМИ",
+          "label": "Средства массовой информации"
         }
       ]
     },
@@ -542,6 +557,9 @@
         "countries": {
           "label": "Страны"
         },
+        "sources": {
+          "label": "Источники"
+        },
         "consumer_id": {
           "label": "Потребитель"
         },
@@ -619,6 +637,9 @@
         },
         "countries": {
           "label": "Страны"
+        },
+        "sources": {
+          "label": "Источники"
         },
         "branch_id": {
           "label": "Филиал"
