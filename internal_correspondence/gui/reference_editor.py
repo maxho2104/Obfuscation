@@ -22,6 +22,7 @@ from internal_correspondence.gui.table_model import ColumnDef, SqlAlchemyTableMo
 from internal_correspondence.orm.base import Base
 from internal_correspondence.orm.labels import entity_label
 from internal_correspondence.services.base_service import BaseService
+from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("reference_editor")
 
@@ -54,10 +55,10 @@ class ReferenceEditorWidget(QWidget):
         layout.setSpacing(10)
 
         toolbar = QHBoxLayout()
-        self.add_btn = QPushButton("Добавить")
-        self.edit_btn = QPushButton("Изменить")
-        self.delete_btn = QPushButton("Удалить")
-        self.refresh_btn = QPushButton("Обновить")
+        self.add_btn = QPushButton(STRINGS.button_add)
+        self.edit_btn = QPushButton(STRINGS.button_edit)
+        self.delete_btn = QPushButton(STRINGS.button_delete)
+        self.refresh_btn = QPushButton(STRINGS.button_refresh)
         self.add_btn.setProperty("role", "primary")
         self.delete_btn.setProperty("role", "danger")
 
@@ -70,9 +71,9 @@ class ReferenceEditorWidget(QWidget):
         toolbar.addWidget(self.edit_btn)
         toolbar.addWidget(self.delete_btn)
         toolbar.addStretch()
-        toolbar.addWidget(QLabel("Фильтр:"))
+        toolbar.addWidget(QLabel(STRINGS.filter_label))
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("Фильтр...")
+        self.filter_edit.setPlaceholderText(STRINGS.filter_placeholder)
         self.filter_edit.textChanged.connect(self._on_filter_changed)
         toolbar.addWidget(self.filter_edit)
         toolbar.addWidget(self.refresh_btn)
@@ -88,9 +89,9 @@ class ReferenceEditorWidget(QWidget):
         layout.addWidget(self.table)
 
         pagination = QHBoxLayout()
-        self.prev_btn = QPushButton("< Назад")
-        self.next_btn = QPushButton("Вперёд >")
-        self.page_label = QLabel("Страница 1 / 1")
+        self.prev_btn = QPushButton(STRINGS.button_prev)
+        self.next_btn = QPushButton(STRINGS.button_next)
+        self.page_label = QLabel(STRINGS.page_label.format(current=1, total=1))
         self.prev_btn.clicked.connect(self._prev_page)
         self.next_btn.clicked.connect(self._next_page)
         pagination.addWidget(self.prev_btn)
@@ -121,7 +122,9 @@ class ReferenceEditorWidget(QWidget):
     def _update_pagination(self) -> None:
         total_pages = self.table_model.total_pages()
         current_page = self.table_model.page()
-        self.page_label.setText(f"Страница {current_page} / {total_pages}")
+        self.page_label.setText(
+            STRINGS.page_label.format(current=current_page, total=total_pages)
+        )
         self.prev_btn.setEnabled(current_page > 1)
         self.next_btn.setEnabled(current_page < total_pages)
 
@@ -150,7 +153,10 @@ class ReferenceEditorWidget(QWidget):
             self._refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка создания записи справочника")
-            QMessageBox.critical(self, "Ошибка", f"Не удалось создать запись:\n{exc}")
+            QMessageBox.critical(
+                self, STRINGS.title_error,
+                STRINGS.msg_ref_create_error.format(error=exc),
+            )
             self.session.rollback()
 
     def _edit(self) -> None:
@@ -167,7 +173,10 @@ class ReferenceEditorWidget(QWidget):
             self._refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка обновления записи справочника")
-            QMessageBox.critical(self, "Ошибка", f"Не удалось обновить запись:\n{exc}")
+            QMessageBox.critical(
+                self, STRINGS.title_error,
+                STRINGS.msg_ref_update_error.format(error=exc),
+            )
             self.session.rollback()
 
     def _delete(self) -> None:
@@ -176,8 +185,8 @@ class ReferenceEditorWidget(QWidget):
             return
         reply = QMessageBox.question(
             self,
-            "Подтверждение удаления",
-            "Удалить выбранную запись?",
+            STRINGS.title_delete_confirm,
+            STRINGS.msg_delete_record_confirm,
         )
         if reply != QMessageBox.Yes:
             return
@@ -187,7 +196,10 @@ class ReferenceEditorWidget(QWidget):
             self._refresh()
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Ошибка удаления записи справочника")
-            QMessageBox.critical(self, "Ошибка", f"Не удалось удалить запись:\n{exc}")
+            QMessageBox.critical(
+                self, STRINGS.title_error,
+                STRINGS.msg_ref_delete_error.format(error=exc),
+            )
             self.session.rollback()
 
 

@@ -3514,7 +3514,6 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 
 ---
 
-<<<<<<< HEAD
 ## 2026-11-26 — Полное отображение выпадающих списков
 
 ### Изменения
@@ -3754,7 +3753,9 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 ### Отложено
 - Удаление трёх ранее существовавших неиспользуемых импортов в
   `gui/oshm_details_panel.py` не входит в эту доработку.
-=======
+
+---
+
 ## 2026-11-26 — Импорт оценок: «Закрыть» после успеха открывает оценочные листы
 
 ### Запрос пользователя
@@ -3936,4 +3937,115 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 ### Проверка
 - `pytest tests/test_edit_dialog.py -q` — 30 passed.
 - pyflakes и импорт `gui.application` — чисто; полный прогон — итог ниже.
->>>>>>> origin/main
+
+
+---
+
+## Слияние с main (2026-11-26) — PR #22–#28
+- Подтянут `origin/main` (`1264d51`): fast-forward, конфликтов нет (наши коммиты вошли в main через PR #24/#25).
+- Новое из main (~2,7 тыс. строк): «ОШС: оформление карточки элемента и квадратные диаграммы» (переработка панели сведений и виджета диаграмм — наш код адаптирован), источники и правки сидирования, сохранение геометрии диалогов материалов/телеграмм, импорт оценок («Закрыть» после успеха открывает оценочные листы), фазовый генератор `seed_branch_add_4`.
+- Новых миграций и зависимостей нет; наши доработки (оптимизация `period_stats_pair`, прокрутка панели, редактор пакета) сохранены — все тесты проходят.
+- `pytest tests`: **551/551 passed**; импорт GUI — OK.
+
+
+### Дополнение (2026-11-26) — довынос строк в пакет (backlog ревью)
+- `first_run_wizard.py`: выносятся радио-метки, группы параметров, подписи полей (где нет готовых ключей — новые: `wizard_sqlite_local`, `wizard_postgresql_server`, `wizard_sqlite_params`, `wizard_postgresql_params`, `label_database`, `wizard_select_sqlite_file`, `dialog_db_file`, `msg_db_file_exists`, `label_storage_path`, `wizard_select_storage`, `wizard_branch_placeholder`, `label_branch_for_role`); «Обзор...» — существующий `button_browse`.
+- `reference_editor.py`: кнопки — существующие `button_add/edit/delete/refresh`; новые `filter_label`, `filter_placeholder`, `button_prev`, `button_next`, `page_label`, `title_delete_confirm`, `msg_delete_record_confirm`, `msg_ref_create/update/delete_error` (шаблоны с `{error}`).
+- `filter_dialog.py`: «Да»/«Нет» — существующие `value_yes`/`value_no`.
+- `employee_picker.py`: новые `picker_employees_title`, `picker_participating_group`, `picker_add_participating`, `picker_remove_participating`.
+- `theme.py`: подписи тем — новые `theme_light_label`, `theme_dark_label`.
+- `table_model`, `document_dialogs`, `reference_dialogs`, `evaluation_delegate`, `i18n`, `filter_model`, `settings_dialog` — захардкоженных UI-строк нет (проверено AST-сканом аргументов вызовов).
+- Замечено: переработка карточки ОШС в main убрала функцию печати панели (кнопки и обработчика нет) — импорты QPrinter/QPrintDialog/QPainter удалены как висячие; если печать нужна обратно — отдельная задача.
+- Секция `strings` пакета регенерирована (602 ключа). `pytest tests`: **551/551 passed**; pyflakes — чист.
+
+
+---
+
+## 2026-11-26 — Диалог ОШС: фиксированная левая половина
+
+### Изменено
+- `internal_correspondence/gui/oshm_dialog.py`:
+  - левая половина (деревья) зафиксирована: разделитель отключён
+    (`main_splitter.handle(1).setEnabled(False)`), начальные размеры сплиттера
+    заданы как `setSizes([384, 640])` — прежняя фактическая ширина левой части
+    при минимальном окне (замерена скриптом на старой версии из HEAD);
+  - минимальная ширина окна увеличена на 70 px: `setMinimumSize(1040, 640)` →
+    `setMinimumSize(1110, 640)`; весь прирост уходит панели сведений
+    (640 → 710 px при минимальном окне), левая часть не меняется.
+- Нюанс: `setFixedWidth()` на виджете внутри `QSplitter` не сработал — сплиттер
+  перераспределил ширину сам; зафиксировано отключением разделителя + начальными
+  размерами при stretch-факторах (0, 1).
+
+### Проверка
+- Замер геометрии offscreen-скриптом (временный, удалён): старая версия при
+  min-окне 1040 — левая 384 px; новая при 1110 — левая 384 px, панель 710 px;
+  при окне 1400 левая остаётся 384 px.
+- `pytest tests/test_oshm_dialog.py tests/test_oshm_avatar_stats.py -q` — 44 passed;
+  pyflakes — чисто.
+
+
+---
+
+## 2026-11-26 — Коэффициент эффективности в заголовке таблицы оценок
+
+### Изменено
+- `internal_correspondence/gui/oshm_details_panel.py`:
+  - подпись «Коэффициент эффективности» убрана из полей карточки
+    (`coef_label`, `_add_coefficient_row`, `_coef_row_added` удалены);
+  - значение коэффициента перенесено над таблицей оценок — в одну строку
+    с подписью таблицы: `QGroupBox` оценок теперь без заголовка, внутри
+    строка «подпись таблицы (жирная) + значение коэффициента справа»;
+  - подсветка значения цветом по величине (`_set_coefficient`, константы
+    `COEF_COLOR_LOW/MID/HIGH`): < 1 — красный `#e53935`, 1–2 — оранжевый
+    `#fb8c00`, ≥ 2 — зелёный `#43a047` (веса оценок 0–3); без оценок —
+    прочерк без цвета;
+  - выгрузка карточки в DOCX не менялась: строка коэффициента по-прежнему
+    пишется с подписью `oshm_coefficient`.
+- `tests/test_oshm_avatar_stats.py`: тесты панели обновлены — коэффициент
+  в заголовке блока оценок, отсутствие подписи в полях, пороги подсветки.
+
+### Проверка
+- `pytest tests/test_oshm_avatar_stats.py tests/test_oshm_dialog.py -q` —
+  44 passed; pyflakes — чисто.
+
+
+---
+
+## 2026-11-26 — «Сохранить» карточку: открытие папки с файлом
+
+### Изменено
+- `internal_correspondence/gui/oshm_details_panel.py`:
+  - после успешной выгрузки карточки в DOCX (`_save_panel`) открывается папка
+    с созданным файлом — новый метод `_reveal_saved_file`;
+  - в Windows папка открывается проводником с выделенным файлом
+    (`explorer /select,"…"` — переиспользован `_explorer_select_command` из
+    `gui/attached_files_widget.py`, как в виджетах вложений); при ошибке или
+    на другой ОС — папка через `QDesktopServices.openUrl`.
+- `tests/test_oshm_avatar_stats.py`: +2 теста — `_save_panel` вызывает
+  открытие папки с сохранённым путём; `_reveal_saved_file` использует
+  проводник с выделенным файлом (Windows) / `openUrl` (остальные ОС).
+
+### Проверка
+- `pytest tests/test_oshm_avatar_stats.py tests/test_oshm_dialog.py -q` —
+  46 passed; pyflakes — чисто; импорт `gui.application` — OK.
+
+
+---
+
+## Слияние с main (2026-11-26) — PR #29
+- Локальные доработки ОШС закоммичены (`439c78a`), затем подтянут `origin/main`
+  (`961b334`, PR #29 из lo0v777); конфликт только в `WORK_NOTES.md` — обе
+  стороны дописывали записи, объединены без потерь (все заголовки уникальны).
+- Новое из main (~1 тыс. строк): заглушка авторизации перед главным окном
+  (с удалением `settings.ini` при отмене), единое поведение выпадающих списков
+  (`combo_box_behavior.py`), акцентная рамка вторичных окон и увеличенные
+  кастомные шапки (`custom_title_bar.py`, `application.qss`), безрамочные
+  прогресс-диалоги, открытие расположения сформированного отчёта после «ОК»
+  (общая функция показа файла в проводнике вынесена в `attached_files_widget.py`).
+- Пересечений по коду с нашими правками ОШС нет: из общего — только импорт
+  `_explorer_select_command` в `oshm_details_panel.py` (функция сохранена).
+- Проверка: `pytest` по затронутым файлам (`test_oshm_avatar_stats`,
+  `test_oshm_dialog`, `test_attached_files_widget`, `test_authorization_dialog`,
+  `test_combo_box_behavior`, `test_window_state`, `test_theme`) — 142 passed;
+  импорт GUI и pyflakes — чисто.
+- Ветка `alex_develop` не запушена — push по указанию пользователя.

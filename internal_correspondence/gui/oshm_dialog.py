@@ -132,7 +132,7 @@ class OSHMDialog(QDialog):
         self._storage_root = storage_root
         self._active_tree: Optional[OSHMTreeWidget] = None
         self.setWindowTitle(self._window_title())
-        self.setMinimumSize(1040, 640)
+        self.setMinimumSize(1110, 640)
         self._setup_ui()
         self._load_data()
 
@@ -198,12 +198,15 @@ class OSHMDialog(QDialog):
         panel_scroll.setFrameShape(QScrollArea.NoFrame)
         panel_scroll.setWidget(self.details_panel)
         main_splitter.addWidget(panel_scroll)
-        main_splitter.setSizes([700, 620])
+        # Левая половина прежней ширины (384 px), весь прирост окна — панели
+        main_splitter.setSizes([384, 640])
         main_splitter.setChildrenCollapsible(False)
-        # Деревья сохраняют ширину, панель сведений забирает прирост окна:
-        # диаграммы увеличиваются вместе с ней
+        # Левая половина (деревья) зафиксирована: разделитель не двигается,
+        # прирост окна целиком уходит панели сведений, диаграммы увеличиваются
+        # вместе с ней
         main_splitter.setStretchFactor(0, 0)
         main_splitter.setStretchFactor(1, 1)
+        main_splitter.handle(1).setEnabled(False)
         splitter.setMinimumWidth(360)
         panel_scroll.setMinimumWidth(640)
         layout.addWidget(main_splitter)
