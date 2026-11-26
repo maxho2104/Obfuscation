@@ -11,18 +11,24 @@ IntEnum, не коды пакета предметной области).
 полей, раскрываемых кнопкой «Больше» (``branch_in_extra``); обязательность
 сохраняется.
 
+Положение и геометрия диалогов запоминаются при закрытии и восстанавливаются
+при последующем открытии: значения пишутся в объект настроек (при вызове
+с ``settings``) и попадают в INI-файл при завершении работы программы.
+
 Прикрепление файлов к документам выполняется док-виджетом файлов
 (см. ``gui/application.py``), а не диалогами редактирования.
 """
 
 from typing import Callable, List, Optional
 
+from PyQt5.QtCore import QByteArray
 from sqlalchemy.orm import Session
 
 from internal_correspondence.core.constants import (
     MaterialType,
     Role,
 )
+from internal_correspondence.core.settings import AppSettings
 from internal_correspondence.gui.edit_elements import (
     ManyToManyEditElement,
     NumberDateEditElement,
@@ -31,6 +37,46 @@ from internal_correspondence.gui.edit_elements import (
 from internal_correspondence.gui.entity_edit_dialog import EntityEditDialog, FieldSpec
 from internal_correspondence.orm import models as models_mod
 from internal_correspondence.utils.string_resources import STRINGS
+
+
+def _geometry_to_string(dialog) -> str:
+    """Сериализует геометрию диалога (QByteArray.saveGeometry в Base64)."""
+    return dialog.saveGeometry().toBase64().data().decode("ascii")
+
+
+def _restore_geometry(dialog, raw: str) -> None:
+    """Применяет сохранённую геометрию; пустое или битое значение игнорируется."""
+    if not raw:
+        return
+    dialog.restoreGeometry(QByteArray.fromBase64(raw.encode("ascii")))
+
+
+class _DialogGeometryMixin:
+    """Запоминание геометрии диалога: в настройки при закрытии, из настроек при создании.
+
+    Атрибуты, которые заполняет наследник: ``_app_settings`` (объект
+    настроек приложения или None — без запоминания) и ``_geometry_attr``
+    (имя поля AppSettings с Base64-геометрией).
+    """
+
+    _app_settings: Optional[AppSettings]
+    _geometry_attr: str
+
+    def _init_geometry(self) -> None:
+        """Восстанавливает геометрию из настроек (если настройки переданы)."""
+        if self._app_settings is None:
+            return
+        _restore_geometry(self, getattr(self._app_settings, self._geometry_attr))
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        """Сохраняет геометрию в настройки; запись в INI — при выходе из программы."""
+        if self._app_settings is not None:
+            setattr(
+                self._app_settings,
+                self._geometry_attr,
+                _geometry_to_string(self),
+            )
+        super().closeEvent(event)
 
 
 def _type_in(*types) -> Callable:
@@ -44,7 +90,7 @@ _SAMPLE_OR_DOC = _type_in(MaterialType.PRODUCT_SAMPLE, MaterialType.TECHNICAL_DO
 _SAMPLE_ONLY = _type_in(MaterialType.PRODUCT_SAMPLE)
 
 
-class MaterialEditDialog(EntityEditDialog):
+class MaterialEditDialog(_DialogGeometryMixin, EntityEditDialog):
     """Диалог создания/редактирования научного материала.
 
     Args:
@@ -53,7 +99,12 @@ class MaterialEditDialog(EntityEditDialog):
         material: Редактируемый материал (None — создание).
         branch_id: Филиал документа (фиксированный для роли «филиал»).
         role: Роль приложения (Role.BRANCH.value / Role.HEAD_OFFICE.value).
+        settings: Настройки приложения; при передаче геометрия диалога
+            запоминается при закрытии и восстанавливается при создании
+            (в INI записывается при завершении работы программы).
     """
+
+    _geometry_attr = "material_dialog_geometry"
 
     def __init__(
         self,
@@ -62,11 +113,13 @@ class MaterialEditDialog(EntityEditDialog):
         material: Optional[models_mod.ScientificMaterial] = None,
         branch_id: Optional[str] = None,
         role: Optional[str] = None,
+        settings: Optional[AppSettings] = None,
         parent=None,
     ) -> None:
         is_branch = role == Role.BRANCH.value
         branch_id = branch_id or (material.branch_id if material else None)
         main_fields, extra_fields = self._field_specs(session, is_branch, branch_id)
+        self._app_settings = settings
         super().__init__(
             session,
             models_mod.ScientificMaterial,
@@ -85,6 +138,7 @@ class MaterialEditDialog(EntityEditDialog):
             },
             parent=parent,
         )
+        self._init_geometry()
 
     @staticmethod
     def _field_specs(
@@ -121,6 +175,10 @@ class MaterialEditDialog(EntityEditDialog):
             session,
             required=is_branch,
         )
+        sources = ManyToManyEditElement(
+            m.ScientificMaterial.sources,
+            session,
+        )
 
         branch_main: List[FieldSpec] = [
             outgoing,
@@ -132,6 +190,7 @@ class MaterialEditDialog(EntityEditDialog):
             m.ScientificMaterial.name,
             m.ScientificMaterial.tasks,
             countries,
+            sources,
             m.ScientificMaterial.consumer_id,
             employees,
             m.ScientificMaterial.comment,
@@ -153,6 +212,7 @@ class MaterialEditDialog(EntityEditDialog):
             m.ScientificMaterial.name,
             m.ScientificMaterial.tasks,
             m.ScientificMaterial.countries,
+            m.ScientificMaterial.sources,
         ]
         return (
             (branch_main, branch_extra)
@@ -161,12 +221,15 @@ class MaterialEditDialog(EntityEditDialog):
         )
 
 
-class TelegramEditDialog(EntityEditDialog):
+class TelegramEditDialog(_DialogGeometryMixin, EntityEditDialog):
     """Диалог создания/редактирования телеграммы.
 
     Состав полей зависит от роли приложения; «Исходящий номер и дата» —
-    обязательные к заполнению.
+    обязательные к заполнению. При передаче ``settings`` геометрия диалога
+    запоминается при закрытии и восстанавливается при создании.
     """
+
+    _geometry_attr = "telegram_dialog_geometry"
 
     def __init__(
         self,
@@ -175,9 +238,11 @@ class TelegramEditDialog(EntityEditDialog):
         telegram: Optional[models_mod.Telegram] = None,
         branch_id: Optional[str] = None,
         role: Optional[str] = None,
+        settings: Optional[AppSettings] = None,
         parent=None,
     ) -> None:
         m = models_mod
+        self._app_settings = settings
         is_branch = role == Role.BRANCH.value
         outgoing = NumberDateEditElement(
             m.Telegram.outgoing_number,
@@ -206,6 +271,10 @@ class TelegramEditDialog(EntityEditDialog):
             session,
             required=is_branch,
         )
+        sources = ManyToManyEditElement(
+            m.Telegram.sources,
+            session,
+        )
 
         branch_main: List[FieldSpec] = [
             outgoing,
@@ -213,6 +282,7 @@ class TelegramEditDialog(EntityEditDialog):
             m.Telegram.name,
             m.Telegram.tasks,
             countries,
+            sources,
             report_addresses,
             employees,
             m.Telegram.comment,
@@ -231,6 +301,7 @@ class TelegramEditDialog(EntityEditDialog):
             m.Telegram.name,
             m.Telegram.tasks,
             m.Telegram.countries,
+            m.Telegram.sources,
             m.Telegram.comment,
         ]
         super().__init__(
@@ -244,6 +315,7 @@ class TelegramEditDialog(EntityEditDialog):
             branch_in_extra=True,
             parent=parent,
         )
+        self._init_geometry()
 
 
 def _branch_employees_query(branch_id: Optional[str]) -> Optional[Callable]:

@@ -266,6 +266,18 @@ def _format_countries(countries) -> str:
     return ", ".join(names)
 
 
+def _format_sources(sources) -> str:
+    """Форматирует список источников данных для ячейки таблицы.
+
+    Значения перечисляются в алфавитном порядке индексов.
+    """
+    indexes = sorted(
+        (source.index for source in sources or []),
+        key=str.casefold,
+    )
+    return ", ".join(indexes)
+
+
 def _format_addresses(addresses) -> str:
     """Форматирует адресацию доклада («ИД+» через запятую)."""
     from internal_correspondence.gui.edit_elements import format_report_addresses
@@ -295,6 +307,12 @@ def material_columns(role: Optional[str] = None) -> List[ColumnDef]:
             width=150,
             formatter=_format_countries,
             filter_target=Country,
+        ),
+        ColumnDef(
+            "sources",
+            width=110,
+            formatter=_format_sources,
+            filter_target=Source,
         ),
         ColumnDef("consumer.short_name", width=120),
     ]
@@ -359,6 +377,12 @@ def telegram_columns(role: Optional[str] = None) -> List[ColumnDef]:
             width=150,
             formatter=_format_countries,
             filter_target=Country,
+        ),
+        ColumnDef(
+            "sources",
+            width=110,
+            formatter=_format_sources,
+            filter_target=Source,
         ),
         ColumnDef(
             "report_addresses",
@@ -521,6 +545,7 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
             material_columns(self.settings.role),
             self.settings.branch_id,
             role=self.settings.role,
+            settings=self.settings,
         )
         self.telegram_tab = DocumentListWidget(
             self.db_manager.get_session(),
@@ -529,6 +554,7 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
             telegram_columns(self.settings.role),
             self.settings.branch_id,
             role=self.settings.role,
+            settings=self.settings,
         )
         self.statistics_tab = StatisticsWidget(
             self.db_manager.get_session(),

@@ -79,8 +79,11 @@ class ReportType(IntEnum):
 class SourceType(IntEnum):
     """Тип источника научного материала."""
 
-    EXPERIMENTAL_EQUIPMENT = 0
-    SCIENTIFIC_WORK = 1
+    ANALYTICAL = 0
+    INSTRUMENTAL = 1
+    DIFFERENTIATED = 2
+    VERIFICATION = 3
+    MASS_MEDIA = 4
 
 
 # Имя INI-файла настроек
