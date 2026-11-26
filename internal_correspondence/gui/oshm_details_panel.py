@@ -2,22 +2,24 @@
 
 Выдвигается справа в диалоге ОШС по двойному щелчку на элементе дерева.
 Верхняя часть: аватарка с кнопками под изображением (+ добавить, − удалить),
-наименование элемента, поля данных и коэффициент эффективности, таблица
-оценок за выбранный период. Ниже — задачи элемента и блок сравнения
+наименование элемента, поля данных, таблица оценок за выбранный период
+с коэффициентом эффективности в её заголовке (подсвечен цветом по значению). Ниже — задачи элемента и блок сравнения
 периодов: две трёхкольцевые диаграммы (текущий период и аналогичный период
 прошлого года). Содержимое панели прокручивается, поэтому блоки не
 наползают друг на друга при недостатке высоты. Кнопки действий («Скрыть»,
 «Изменить», «Статистика», «Сохранить») размещает диалог в своём нижнем ряду.
 """
 
+import os
 import re
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
 from uuid import UUID
 
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtCore import Qt, QUrl, pyqtSignal
+from PyQt5.QtGui import QDesktopServices, QPixmap
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -44,6 +46,7 @@ from PyQt5.QtWidgets import (
 from internal_correspondence.core.domain_pack import enum_label
 from internal_correspondence.core.enum_registry import pack_enum_display
 from internal_correspondence.core.logging_config import get_logger
+from internal_correspondence.gui.attached_files_widget import _explorer_select_command
 from internal_correspondence.gui.oshm_element_charts import (
     ElementDonutWidget,
     PeriodSelectorWidget,
@@ -199,6 +202,11 @@ class ElementDetailsPanel(QWidget):
     edit_requested = pyqtSignal(tuple)  # NodeRef
     statistics_requested = pyqtSignal(tuple)  # NodeRef
 
+    # Цвета подсветки коэффициента эффективности (читаются на светлой и тёмной теме)
+    COEF_COLOR_LOW = "#e53935"
+    COEF_COLOR_MID = "#fb8c00"
+    COEF_COLOR_HIGH = "#43a047"
+
     def __init__(
         self,
         session,
@@ -213,8 +221,6 @@ class ElementDetailsPanel(QWidget):
         self._employee: Optional[Employee] = None
         # Пары «подпись — значение» полей карточки (для выгрузки в DOCX)
         self._field_rows: List[Tuple[str, str]] = []
-        # Признак того, что строка коэффициента уже вставлена в карточку
-        self._coef_row_added = False
         # Узел, для которого показывается таблица задач, и его старший
         # элемент (ограничение назначения: задача должна быть у старшего)
         self._tasks_node: Optional[NodeRef] = None
@@ -259,7 +265,7 @@ class ElementDetailsPanel(QWidget):
         self._scroll.setWidget(self._content)
         outer.addWidget(self._scroll)
 
-        # Верхняя строка: аватар | название + коэффициент + поля | оценки
+        # Верхняя строка: аватар | название + поля | оценки с коэффициентом
         top_row = QHBoxLayout()
         top_row.setSpacing(10)
 
@@ -301,9 +307,6 @@ class ElementDetailsPanel(QWidget):
         self.title_label.setWordWrap(True)
         title_row.addWidget(self.title_label, stretch=1)
         center_column.addLayout(title_row)
-        # Коэффициент эффективности показывается отдельным полем под данными
-        # элемента (размер шрифта значения задаётся в _add_coefficient_row)
-        self.coef_value = QLabel()
         self.fields_layout = QFormLayout()
         self.fields_layout.setContentsMargins(0, 0, 0, 0)
         self.fields_layout.setHorizontalSpacing(8)
@@ -313,29 +316,33 @@ class ElementDetailsPanel(QWidget):
         # карточку: при узком окне панель не получает горизонтальную прокрутку
         self.fields_layout.setRowWrapPolicy(QFormLayout.WrapLongRows)
         center_column.addLayout(self.fields_layout)
-        # Коэффициент эффективности показывается отдельной подписью сразу под
-        # данными элемента (для филиала — под «Территориальная единица»)
-        self.coef_label = QLabel(f"{STRINGS.oshm_coefficient}:")
-        self.coef_label.setWordWrap(True)
-        self.coef_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self.coef_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-        self.coef_value = QLabel(EMPTY)
-        # Размер шрифта значения сохранён: на 4 пункта крупнее обычного
-        coef_font = self.coef_value.font()
-        coef_font.setBold(True)
-        coef_font.setPointSize(coef_font.pointSize() + 4)
-        self.coef_value.setFont(coef_font)
-        self.coef_value.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         center_column.addStretch()
         top_row.addLayout(center_column, stretch=1)
 
-        self.eval_group = QGroupBox(STRINGS.oshm_eval_table_title)
+        # Подпись таблицы оценок и коэффициент эффективности — одной строкой
+        # над таблицей (отдельной подписи у коэффициента нет)
+        self.eval_group = QGroupBox()
         # Политика Preferred, а не Fixed: блок может сужаться до своего
         # минимума, поэтому при узком окне панель не уходит в горизонтальную
         # прокрутку
         self.eval_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         eval_layout = QVBoxLayout(self.eval_group)
         eval_layout.setContentsMargins(4, 4, 4, 4)
+        eval_header = QHBoxLayout()
+        eval_title = QLabel(STRINGS.oshm_eval_table_title)
+        eval_title_font = eval_title.font()
+        eval_title_font.setBold(True)
+        eval_title.setFont(eval_title_font)
+        eval_header.addWidget(eval_title, stretch=1)
+        self.coef_value = QLabel(EMPTY)
+        # Размер шрифта значения сохранён: на 4 пункта крупнее обычного
+        coef_font = self.coef_value.font()
+        coef_font.setBold(True)
+        coef_font.setPointSize(coef_font.pointSize() + 4)
+        self.coef_value.setFont(coef_font)
+        self.coef_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        eval_header.addWidget(self.coef_value)
+        eval_layout.addLayout(eval_header)
         self.eval_table = QTableWidget(0, 2)
         self.eval_table.setMinimumWidth(180)
         self.eval_table.setHorizontalHeaderLabels(
@@ -448,8 +455,6 @@ class ElementDetailsPanel(QWidget):
         self._tasks_parent = None
         if not loader():
             return False
-        # Коэффициент эффективности — последней строкой полей карточки
-        self._add_coefficient_row()
         self.current_node = node
         # «Изменить»: людей редактирует только филиал; филиал и корень ГО
         # редактируются в справочниках, а не в этом диалоге
@@ -475,22 +480,27 @@ class ElementDetailsPanel(QWidget):
         # Пары «подпись — значение» дублируются в списке: по ним карточка
         # выгружается в DOCX (текстом, а не изображением)
         self._field_rows = []
-        # Строку коэффициента забираем без удаления виджетов: значение
-        # переиспользуется в следующей карточке
-        if self._coef_row_added:
-            self.fields_layout.takeRow(self.fields_layout.rowCount() - 1)
-            self._coef_row_added = False
         while self.fields_layout.rowCount():
             self.fields_layout.removeRow(0)
 
-    def _add_coefficient_row(self) -> None:
-        """Добавляет в карточку строку «Коэффициент эффективности».
+    def _set_coefficient(self, value: Optional[float]) -> None:
+        """Показывает коэффициент эффективности с подсветкой по значению.
 
-        Строка идёт последней — у филиала сразу под «Территориальная
-        единица». Размер шрифта значения не меняется при перестройке.
+        Веса оценок лежат в диапазоне 0–3, поэтому: ниже 1 — красный,
+        от 1 до 2 — оранжевый, от 2 — зелёный; без оценок — прочерк без цвета.
         """
-        self.fields_layout.addRow(self.coef_label, self.coef_value)
-        self._coef_row_added = True
+        if value is None:
+            self.coef_value.setText(EMPTY)
+            self.coef_value.setStyleSheet("")
+            return
+        self.coef_value.setText(f"{value:.2f}")
+        if value < 1.0:
+            color = self.COEF_COLOR_LOW
+        elif value < 2.0:
+            color = self.COEF_COLOR_MID
+        else:
+            color = self.COEF_COLOR_HIGH
+        self.coef_value.setStyleSheet(f"color: {color};")
 
     def _add_field(self, label: str, value: Optional[str]) -> None:
         text = value or EMPTY
@@ -594,7 +604,7 @@ class ElementDetailsPanel(QWidget):
     def _refresh_stats(self, *_args) -> None:
         """Обновляет коэффициент, таблицу оценок и обе диаграммы."""
         if self._tasks_node is None:
-            self.coef_value.setText(EMPTY)
+            self._set_coefficient(None)
             self.eval_table.setRowCount(0)
             return
         node_type, node_id = self._tasks_node
@@ -606,9 +616,7 @@ class ElementDetailsPanel(QWidget):
             node_type, node_id, period
         )
         # Коэффициент эффективности — средняя оценка за период (только цифра)
-        self.coef_value.setText(
-            f"{stats.avg_weight:.2f}" if stats.avg_weight is not None else EMPTY
-        )
+        self._set_coefficient(stats.avg_weight)
         # Таблица оценок за период
         values = sorted(stats.evaluation_counts)
         self.eval_table.setRowCount(len(values))
@@ -664,6 +672,7 @@ class ElementDetailsPanel(QWidget):
                 STRINGS.oshm_save_error.format(error=error),
             )
             return
+        self._reveal_saved_file(target)
         QMessageBox.information(
             self,
             STRINGS.oshm_save_title,
@@ -674,6 +683,16 @@ class ElementDetailsPanel(QWidget):
         """Наименование карточки (заголовок элемента или общая подпись)."""
         title = self.title_label.text().strip()
         return title or STRINGS.oshm_doc_title
+
+    def _reveal_saved_file(self, path: Path) -> None:
+        """Открывает папку сохранённого файла (в Windows — с выделенным файлом)."""
+        if os.name == "nt":
+            try:
+                subprocess.Popen(_explorer_select_command(path))
+                return
+            except OSError:
+                logger.warning("Не удалось открыть проводник с файлом %s", path)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
 
     def save_docx(self, path: Path) -> Path:
         """Выгружает карточку элемента в DOCX: текстовые блоки и диаграммы.

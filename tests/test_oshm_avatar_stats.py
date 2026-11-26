@@ -301,9 +301,11 @@ def test_details_panel_new_structure(qt_app, db_manager, element_data, tmp_path)
     assert panel.avatar_label.width() == AVATAR_WIDTH
     assert panel.avatar_label.height() == AVATAR_HEIGHT
     assert not panel.avatar_add_btn.isEnabled() is False  # доступна
-    # Коэффициент эффективности — отдельная подпись под данными элемента
+    # Коэффициент эффективности — в заголовке блока оценок, отдельной
+    # подписи у него нет
     assert panel.coef_value is not None
-    assert panel.coef_label.text().startswith("Коэффициент")
+    assert panel.coef_value.parentWidget() is panel.eval_group
+    assert not hasattr(panel, "coef_label")
     # Таблица оценок и две диаграммы на месте; высота таблицы фиксирована
     assert panel.eval_table.columnCount() == 2
     assert panel.eval_table.height() == panel.eval_table.minimumHeight()
@@ -317,8 +319,9 @@ def test_details_panel_new_structure(qt_app, db_manager, element_data, tmp_path)
 
 
 def test_details_panel_coefficient_row(qt_app, db_manager, element_data):
-    """Коэффициент идёт последней строкой полей — под территориальной единицей."""
+    """Коэффициент — над таблицей оценок в одной строке с её подписью, с подсветкой."""
     from internal_correspondence.core.constants import Role
+    from internal_correspondence.utils.string_resources import STRINGS
 
     dialog = OSHMDialog(
         db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
@@ -327,21 +330,33 @@ def test_details_panel_coefficient_row(qt_app, db_manager, element_data):
     dialog._show_details(branch_item, dialog.tree_structure)
 
     panel = dialog.details_panel
+    # Подписи «Коэффициент эффективности» в полях карточки больше нет
     layout = panel.fields_layout
-    last_row = layout.rowCount() - 1
-    label = layout.itemAt(last_row, layout.LabelRole).widget()
-    value = layout.itemAt(last_row, layout.FieldRole).widget()
-    assert label is panel.coef_label
-    assert value is panel.coef_value
-    # Подпись «Коэффициент эффективности» идёт после «Территориальная единица»
-    previous = layout.itemAt(last_row - 1, layout.LabelRole).widget()
-    assert previous.text().startswith("Территориальная единица")
+    for row in range(layout.rowCount()):
+        label = layout.itemAt(row, layout.LabelRole).widget()
+        assert not label.text().startswith("Коэффициент")
+    # Коэффициент стоит в заголовке блока оценок: подпись таблицы + значение
+    eval_layout = panel.eval_group.layout()
+    header = eval_layout.itemAt(0).layout()
+    title_label = header.itemAt(0).widget()
+    assert title_label.text() == STRINGS.oshm_eval_table_title
+    assert header.itemAt(1).widget() is panel.coef_value
     # Размер шрифта значения не уменьшился: крупнее обычного на 4 пункта
-    plain = value.font()
-    assert plain.pointSize() == layout.itemAt(0, layout.FieldRole).widget().font().pointSize() + 4
-    # Повторное открытие карточки не дублирует строку коэффициента
-    dialog._show_details(branch_item, dialog.tree_structure)
-    assert layout.rowCount() == last_row + 1
+    plain = layout.itemAt(0, layout.FieldRole).widget().font()
+    assert panel.coef_value.font().pointSize() == plain.pointSize() + 4
+    # Подсветка по значению: красный ниже 1, оранжевый до 2, зелёный от 2
+    panel._set_coefficient(None)
+    assert panel.coef_value.text() == "—"
+    assert panel.coef_value.styleSheet() == ""
+    panel._set_coefficient(0.5)
+    assert panel.coef_value.text() == "0.50"
+    assert panel.COEF_COLOR_LOW in panel.coef_value.styleSheet()
+    panel._set_coefficient(1.5)
+    assert panel.coef_value.text() == "1.50"
+    assert panel.COEF_COLOR_MID in panel.coef_value.styleSheet()
+    panel._set_coefficient(2.5)
+    assert panel.coef_value.text() == "2.50"
+    assert panel.COEF_COLOR_HIGH in panel.coef_value.styleSheet()
     dialog.deleteLater()
 
 
@@ -371,6 +386,81 @@ def test_details_panel_save_docx(qt_app, db_manager, element_data, tmp_path):
     assert "Коэффициент эффективности" in joined
     assert len(document.inline_shapes) == 2  # две диаграммы
     target.unlink()
+    dialog.deleteLater()
+
+
+def test_details_panel_save_opens_folder(
+    qt_app, db_manager, element_data, tmp_path, monkeypatch
+):
+    """После сохранения карточки открывается папка с созданным файлом."""
+    from internal_correspondence.core.constants import Role
+    from internal_correspondence.gui import oshm_details_panel as panel_module
+
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    branch_item = dialog.tree_structure.topLevelItem(0)
+    dialog._show_details(branch_item, dialog.tree_structure)
+    panel = dialog.details_panel
+
+    target = tmp_path / "card.docx"
+    monkeypatch.setattr(
+        panel_module.QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *_args, **_kwargs: (str(target), "")),
+    )
+    monkeypatch.setattr(
+        panel_module.QMessageBox,
+        "information",
+        staticmethod(lambda *_args, **_kwargs: None),
+    )
+    revealed = []
+    monkeypatch.setattr(panel, "_reveal_saved_file", revealed.append)
+
+    panel._save_panel()
+
+    assert target.exists()
+    assert revealed == [target]
+    dialog.deleteLater()
+
+
+def test_reveal_saved_file_selects_file_in_explorer(
+    qt_app, db_manager, tmp_path, monkeypatch
+):
+    """Папка открывается проводником с выделенным файлом (Windows)."""
+    import os
+
+    from internal_correspondence.core.constants import Role
+    from internal_correspondence.gui import oshm_details_panel as panel_module
+    from internal_correspondence.gui.attached_files_widget import (
+        _explorer_select_command,
+    )
+
+    dialog = OSHMDialog(
+        db_manager.get_session(), branch_id="F1", role=Role.BRANCH.value
+    )
+    panel = dialog.details_panel
+    target = tmp_path / "card.docx"
+
+    popen_calls = []
+    url_calls = []
+    monkeypatch.setattr(
+        panel_module.subprocess, "Popen", lambda cmd: popen_calls.append(cmd)
+    )
+    monkeypatch.setattr(
+        panel_module.QDesktopServices,
+        "openUrl",
+        staticmethod(lambda url: url_calls.append(url)),
+    )
+
+    panel._reveal_saved_file(target)
+
+    if os.name == "nt":
+        assert popen_calls == [_explorer_select_command(target)]
+        assert not url_calls
+    else:
+        assert not popen_calls
+        assert url_calls and url_calls[0].toLocalFile() == str(target.parent)
     dialog.deleteLater()
 
 
