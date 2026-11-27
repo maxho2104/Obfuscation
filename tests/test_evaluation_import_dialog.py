@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import QApplication, QDialog
 
 from internal_correspondence.gui.evaluation_import_dialog import (
     EvaluationImportDialog,
+    RowEditDialog,
     RulesViewerDialog,
     SchemeEditorDialog,
 )
@@ -239,9 +240,26 @@ def test_preview_is_split_and_refreshes_after_correction(
         assert dialog.preview_table.rowCount() == 2
         assert dialog.preview_table.item(0, 6).text() == "99.99.2026"
 
+        corrected = _fixed_line(scheme, values)
+
+        class _FakeRowEditDialog:
+            """Подменяет широкий редактор строки: сразу возвращает исправленный текст."""
+
+            def __init__(self, text, scheme, row_no, parent=None, problem="") -> None:
+                self.text = corrected
+
+            def exec_(self) -> int:
+                return QDialog.Accepted
+
+            def line_text(self) -> str:
+                return self.text
+
+            def deleteLater(self) -> None:
+                pass
+
         monkeypatch.setattr(
-            "internal_correspondence.gui.evaluation_import_dialog.QInputDialog.getText",
-            lambda *args, **kwargs: (_fixed_line(scheme, values), True),
+            "internal_correspondence.gui.evaluation_import_dialog.RowEditDialog",
+            _FakeRowEditDialog,
         )
         dialog.problems_table.setCurrentCell(0, 0)
         dialog._correct_row()
@@ -267,6 +285,124 @@ def _dialog_at(tmp_path: Path, index: int, result) -> EvaluationImportDialog:
     dialog._result = result
     dialog.stack.setCurrentIndex(index)
     return dialog
+
+
+def test_row_edit_dialog_shows_whole_line_and_fields(app) -> None:
+    scheme = _wide_scheme()
+    line = _long_line()
+    dialog = RowEditDialog(line, scheme, 30)
+    try:
+        assert dialog.windowTitle() == STRINGS.import_correct_title
+        assert dialog.line_text() == line
+        assert dialog.fields_table.rowCount() == len(scheme.fields)
+        assert dialog.fields_table.item(0, 2).text() == "11"
+        assert dialog.fields_table.item(len(scheme.fields) - 1, 2).text() == "442501.27"
+        assert dialog.length_label.text() == STRINGS.import_correct_length.format(
+            actual=len(line), expected=139
+        )
+        dialog.show()
+        app.processEvents()
+        # Строка не переносится никогда: её видно целиком либо по ширине окна,
+        # либо горизонтальной прокруткой — обрезанного текста не бывает.
+        assert dialog.editor.lineWrapMode() == dialog.editor.NoWrap
+        metrics = dialog.editor.fontMetrics()
+        needed = metrics.horizontalAdvance("0") * len(line) + 120
+        screen = app.primaryScreen()
+        limit = screen.availableGeometry().width() - 80
+        assert dialog.width() == max(760, min(needed, limit))
+        reachable = dialog.editor.viewport().width() + dialog.editor.horizontalScrollBar().maximum()
+        assert reachable >= min(needed - 60, limit - 60)
+        assert dialog.line_text() == line
+    finally:
+        dialog.close()
+
+
+def test_row_edit_dialog_marks_length_mismatch(app) -> None:
+    scheme = _wide_scheme()
+    short = _long_line()[:120]
+    dialog = RowEditDialog(short, scheme, 7)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert "120" in dialog.length_label.text() and "139" in dialog.length_label.text()
+        assert "#C2414D" in dialog.length_label.styleSheet()
+        statuses = [
+            dialog.fields_table.item(row, 3).text()
+            for row in range(dialog.fields_table.rowCount())
+        ]
+        assert any(status == STRINGS.import_problem_line_length for status in statuses)
+        dialog.editor.setPlainText(short + " " * 19)
+        app.processEvents()
+        assert "139" in dialog.length_label.text()
+        assert dialog.line_text() == short + " " * 19
+    finally:
+        dialog.close()
+
+
+def test_row_edit_dialog_splits_delimited_scheme(app) -> None:
+    scheme = LayoutScheme(
+        name="delimited",
+        mode="delimited",
+        delimiter=";",
+        fields=[FieldSpec("a"), FieldSpec("b"), FieldSpec("c")],
+    )
+    dialog = RowEditDialog("1;2;3", scheme, 2)
+    try:
+        dialog.show()
+        app.processEvents()
+        assert dialog.fields_table.rowCount() == 3
+        assert [dialog.fields_table.item(row, 2).text() for row in range(3)] == ["1", "2", "3"]
+        assert [dialog.fields_table.item(row, 1).text() for row in range(3)] == ["1", "2", "3"]
+        assert not dialog._ruler.isVisible()
+        dialog.editor.setPlainText("1;2")
+        app.processEvents()
+        assert dialog.fields_table.item(2, 2).text() == ""
+    finally:
+        dialog.close()
+
+
+def test_row_edit_dialog_keeps_first_line_only(app) -> None:
+    scheme = _wide_scheme()
+    dialog = RowEditDialog(_long_line(), scheme, 3)
+    try:
+        dialog.editor.setPlainText(_long_line() + "\nвторая")
+        assert "\n" not in dialog.line_text()
+        assert dialog.line_text() == _long_line()
+    finally:
+        dialog.close()
+
+
+def _wide_scheme() -> LayoutScheme:
+    return LayoutScheme(
+        name="evaluation_fixed",
+        mode="fixed",
+        header_mode="none",
+        record_length=139,
+        fields=[
+            FieldSpec("branch_part_1", "string", start=1, length=2),
+            FieldSpec("branch_part_2", "string", start=4, length=1),
+            FieldSpec("branch_part_3", "string", start=6, length=2),
+            FieldSpec("source_type", "string", start=17, length=1),
+            FieldSpec("material_type", "string", start=19, length=1),
+            FieldSpec("outgoing_no", "string", start=21, length=13),
+            FieldSpec("task_code", "string", start=69, length=12),
+            FieldSpec("country", "string", start=82, length=3),
+            FieldSpec("value", "string", start=86, length=3),
+            FieldSpec("quantity", "integer", start=90, length=1),
+            FieldSpec("evaluation_date", "date", start=97, length=10, date_format="DD.MM.YYYY"),
+            FieldSpec("year_month", "string", start=108, length=6),
+            FieldSpec("group", "string", start=115, length=1),
+            FieldSpec("collection", "string", start=117, length=3),
+            FieldSpec("costs", "number", start=131, length=9),
+        ],
+    )
+
+
+def _long_line() -> str:
+    return (
+        "11 1 12         Н С ИСХ-00070                                       "
+        "TASK-0002        И   9      23.02.2026 202602 1               442501.27"
+    )
 
 
 def test_close_after_successful_import_requests_lists(app, tmp_path: Path) -> None:
