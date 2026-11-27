@@ -5,8 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from PyQt5.QtCore import QDate, Qt
-from PyQt5.QtGui import QBrush, QColor, QDesktopServices
+from PyQt5.QtCore import QDate, QPointF, Qt
+from PyQt5.QtGui import (
+    QBrush,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QFontDatabase,
+    QFontMetricsF,
+    QPainter,
+    QPen,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -14,23 +25,27 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QDateEdit,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
-    QInputDialog,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from internal_correspondence.core.domain_pack import enum_label
+from internal_correspondence.gui.theme import current_theme
 from internal_correspondence.text_import import Importer, ImporterConfig
 from internal_correspondence.text_import.errors import ImporterError
 from internal_correspondence.text_import.models import LayoutScheme
@@ -445,14 +460,18 @@ class EvaluationImportDialog(QDialog):
         if report is None:
             return
         current = next((row.raw for row in report.rows if row.row_no == row_no), "")
-        text, ok = QInputDialog.getText(
-            self,
-            STRINGS.import_correct_title,
-            STRINGS.import_correct_prompt.format(row=row_no),
-            text=current,
-        )
-        if not ok:
+        scheme = self.importer.scheme
+        if scheme is None:
             return
+        problem = report.problem_at(row_no)
+        problem_text = self._problem_text(problem.code) if problem is not None else ""
+        dialog = RowEditDialog(current, scheme, row_no, self, problem=problem_text)
+        try:
+            if dialog.exec_() != QDialog.Accepted:
+                return
+            text = dialog.line_text()
+        finally:
+            dialog.deleteLater()
         try:
             self.importer.correct_row(row_no, text)
         except Exception as exc:  # noqa: BLE001
@@ -672,6 +691,306 @@ class EvaluationImportDialog(QDialog):
             self.file_edit.setText(str(path))
             self._load_selected_file()
             event.acceptProposedAction()
+
+
+class RowRuler(QWidget):
+    """Линейка разрядов над редактором строки фиксированной ширины.
+
+    Показывает номера позиций (каждый десятый символ) и засечки начала полей
+    схемы, чтобы оператор правил строку по колонкам, а не «на глаз».
+    """
+
+    DIGIT_STEP = 10
+    HEIGHT = 20
+
+    def __init__(self, editor: QPlainTextEdit, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._editor = editor
+        self._length = 0
+        self._starts: List[int] = []
+        self.setFixedHeight(self.HEIGHT)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setFont(editor.font())
+
+    def set_geometry_hints(self, length: int, starts: List[int]) -> None:
+        """Задаёт длину строки и позиции (с нуля) начал полей схемы."""
+        self._length = max(0, length)
+        self._starts = [value for value in starts if value >= 0]
+        self.update()
+
+    def _char_width(self) -> float:
+        metrics = QFontMetricsF(self.font())
+        return max(1.0, metrics.horizontalAdvance("0"))
+
+    def _origin(self) -> float:
+        """Левый край первого символа в координатах линейки (с учётом прокрутки)."""
+        try:
+            cursor = QTextCursor(self._editor.document())
+            cursor.setPosition(0)
+            rect = self._editor.cursorRect(cursor)
+            point = self._editor.viewport().mapToGlobal(rect.topLeft())
+            return float(self.mapFromGlobal(point).x())
+        except Exception:  # noqa: BLE001 - геометрия недоступна до показа окна
+            return 0.0
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        colors = current_theme().qss_colors
+        muted = QColor(colors.get("TEXT_MUTED", "#66758A"))
+        accent = QColor(colors.get("ACCENT", "#3569D4"))
+        painter = QPainter(self)
+        painter.setFont(self.font())
+        char_width = self._char_width()
+        origin = self._origin()
+        baseline = self.HEIGHT - 6
+        painter.setPen(muted)
+        for position in range(0, max(self._length, 1), self.DIGIT_STEP):
+            x = origin + position * char_width
+            if x < -40 or x > self.width():
+                continue
+            painter.drawText(QPointF(x, baseline), str(position + 1))
+        pen = QPen(accent)
+        pen.setWidthF(1.0)
+        painter.setPen(pen)
+        for start in self._starts:
+            x = origin + start * char_width
+            if x < -10 or x > self.width():
+                continue
+            painter.drawLine(QPointF(x, 2), QPointF(x, self.HEIGHT - 2))
+        painter.end()
+
+
+class RowEditDialog(QDialog):
+    """Широкий редактор проблемной строки: линейка разрядов и разбор по полям."""
+
+    def __init__(
+        self,
+        text: str,
+        scheme: LayoutScheme,
+        row_no: int,
+        parent: Optional[QWidget] = None,
+        problem: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self.scheme = scheme
+        self.row_no = row_no
+        self.setWindowTitle(STRINGS.import_correct_title)
+        self.setObjectName("rowEditDialog")
+        self._build_ui()
+        self.editor.setPlainText(text)
+        self._apply_geometry(text)
+        self._update_state()
+        if problem:
+            self.problem_label.setText(problem)
+        else:
+            self.problem_label.setVisible(False)
+        self.editor.setFocus()
+
+    # -- построение ---------------------------------------------------------
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        self.caption = QLabel(STRINGS.import_correct_prompt.format(row=self.row_no))
+        self.caption.setProperty("role", "muted")
+        layout.addWidget(self.caption)
+
+        self.problem_label = QLabel()
+        self.problem_label.setWordWrap(True)
+        self.problem_label.setStyleSheet(
+            f"color: {current_theme().qss_colors.get('DANGER', '#C2414D')}; font-weight: 600;"
+        )
+        layout.addWidget(self.problem_label)
+
+        self.length_label = QLabel()
+        self.length_label.setWordWrap(True)
+        layout.addWidget(self.length_label)
+
+        hint_text = (
+            STRINGS.import_correct_hint_delimited
+            if self.scheme.mode == "delimited"
+            else STRINGS.import_correct_hint
+        )
+        hint = QLabel(hint_text)
+        hint.setProperty("role", "muted")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.editor = QPlainTextEdit()
+        self.editor.setObjectName("rowEditText")
+        self.editor.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.editor.setTabChangesFocus(True)
+        font = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+        font.setPointSize(11)
+        font.setStyleHint(QFont.Monospace)
+        self.editor.setFont(font)
+        self.editor.setMinimumHeight(72)
+        self.editor.setMaximumHeight(96)
+        self.editor.textChanged.connect(self._update_state)
+        self._ruler = RowRuler(self.editor)
+        self.editor.horizontalScrollBar().valueChanged.connect(lambda _value: self._ruler.update())
+        self._ruler.setVisible(self.scheme.mode != "delimited")
+        layout.addWidget(self._ruler)
+        layout.addWidget(self.editor)
+
+        layout.addWidget(QLabel(STRINGS.import_correct_fields))
+        self.fields_table = QTableWidget(0, 4)
+        self.fields_table.setHorizontalHeaderLabels(
+            [
+                STRINGS.import_field_name,
+                STRINGS.import_field_positions,
+                STRINGS.import_field_value,
+                STRINGS.import_field_status,
+            ]
+        )
+        self.fields_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.fields_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.fields_table.verticalHeader().setVisible(False)
+        header = self.fields_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        layout.addWidget(self.fields_table, 1)
+
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        save = self.buttons.button(QDialogButtonBox.Save)
+        if save is not None:
+            save.setText(STRINGS.button_save)
+            save.setProperty("role", "primary")
+        cancel = self.buttons.button(QDialogButtonBox.Cancel)
+        if cancel is not None:
+            cancel.setText(STRINGS.button_cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+
+    def _apply_geometry(self, text: str) -> None:
+        """Подбирает ширину окна так, чтобы строка была видна целиком."""
+        metrics = QFontMetricsF(self.editor.font())
+        char_width = max(1.0, metrics.horizontalAdvance("0"))
+        expected = self.scheme.line_length
+        length = max(len(text), expected or 0, 60)
+        needed = int(char_width * length) + 120
+        screen = QApplication.primaryScreen()
+        limit = screen.availableGeometry().width() - 80 if screen is not None else 1400
+        width = max(760, min(needed, limit))
+        self.resize(width, 620)
+        self.setMinimumWidth(min(width, 760))
+
+    # -- состояние ----------------------------------------------------------
+    def line_text(self) -> str:
+        """Возвращает отредактированную строку без переводов строк."""
+        return "".join(self.editor.toPlainText().splitlines()[:1])
+
+    def _field_spans(self) -> List[tuple]:
+        """Возвращает тройки (поле, начало, конец) для схемы фиксированной ширины."""
+        spans = []
+        for item in self.scheme.fields:
+            if item.start is None:
+                spans.append((item, None, None))
+            else:
+                begin = item.start - 1
+                end = None if item.length is None else begin + item.length
+                spans.append((item, begin, end))
+        return spans
+
+    def _delimited_values(self, text: str) -> List[str]:
+        """Делит строку по разделителю схемы (для режима «по разделителю»)."""
+        parts = text.split(self.scheme.delimiter) if self.scheme.delimiter else [text]
+        if len(parts) < len(self.scheme.fields):
+            parts.extend([""] * (len(self.scheme.fields) - len(parts)))
+        return parts
+
+    def _update_state(self) -> None:
+        text = self.line_text()
+        expected = self.scheme.line_length
+        if expected:
+            self.length_label.setText(
+                STRINGS.import_correct_length.format(actual=len(text), expected=expected)
+            )
+        else:
+            self.length_label.setText(
+                STRINGS.import_correct_length_unknown.format(actual=len(text))
+            )
+        accent = current_theme().qss_colors.get("DANGER", "#C2414D")
+        if expected and len(text) != expected:
+            self.length_label.setStyleSheet(f"color: {accent}; font-weight: 600;")
+        else:
+            self.length_label.setStyleSheet("")
+        self._fill_fields(text)
+        self._ruler.set_geometry_hints(
+            max(len(text), expected or 0),
+            [begin for _item, begin, _end in self._field_spans() if begin is not None],
+        )
+        self._highlight(text)
+
+    def _fill_fields(self, text: str) -> None:
+        spans = self._field_spans()
+        delimited = self.scheme.mode == "delimited"
+        parts = self._delimited_values(text) if delimited else []
+        self.fields_table.setRowCount(len(spans))
+        for row, (item, begin, end) in enumerate(spans):
+            status = ""
+            if delimited:
+                value = parts[row] if row < len(parts) else ""
+                position = f"{row + 1}"
+                if self.scheme.delimiter not in text:
+                    status = STRINGS.import_problem_field_count
+            else:
+                value = "" if begin is None else text[begin : end if end is not None else len(text)]
+                position = (
+                    "—"
+                    if begin is None
+                    else f"{begin + 1}–{end if end is not None else len(text)}"
+                )
+                if begin is None:
+                    status = STRINGS.import_problem_field_start
+                elif begin >= len(text) or (end is not None and len(text) < end):
+                    status = STRINGS.import_problem_line_length
+            self.fields_table.setItem(row, 0, QTableWidgetItem(item.name))
+            self.fields_table.setItem(row, 1, QTableWidgetItem(position))
+            self.fields_table.setItem(row, 2, QTableWidgetItem(value))
+            self.fields_table.setItem(row, 3, QTableWidgetItem(status))
+
+    def _highlight(self, text: str) -> None:
+        """Подсвечивает границы полей и хвост, выходящий за длину схемы."""
+        theme = current_theme()
+        accent = QColor(theme.qss_colors.get("ACCENT_SOFT", "#E7EFFF"))
+        danger = QColor(theme.qss_colors.get("DANGER_SOFT", "#FFF0F2"))
+        selections = []
+        for index, (_item, begin, end) in enumerate(self._field_spans()):
+            if begin is None:
+                continue
+            stop = len(text) if end is None else min(end, len(text))
+            if begin >= len(text) or stop <= begin:
+                continue
+            selection = QTextEdit.ExtraSelection()
+            cursor = QTextCursor(self.editor.document())
+            cursor.setPosition(begin)
+            cursor.setPosition(stop, QTextCursor.KeepAnchor)
+            fmt = QTextCharFormat()
+            color = QColor(accent)
+            if index % 2:
+                color.setAlpha(90)
+            else:
+                color.setAlpha(150)
+            fmt.setBackground(color)
+            selection.format = fmt
+            selection.cursor = cursor
+            selections.append(selection)
+        expected = self.scheme.line_length
+        if expected and len(text) > expected:
+            selection = QTextEdit.ExtraSelection()
+            cursor = QTextCursor(self.editor.document())
+            cursor.setPosition(expected)
+            cursor.setPosition(len(text), QTextCursor.KeepAnchor)
+            fmt = QTextCharFormat()
+            fmt.setBackground(danger)
+            selection.format = fmt
+            selection.cursor = cursor
+            selections.append(selection)
+        self.editor.setExtraSelections(selections)
 
 
 class SchemeEditorDialog(QDialog):

@@ -492,6 +492,17 @@ class AppStrings:
     import_unreject: str = "Вернуть строку"
     import_correct_title: str = "Исправление строки"
     import_correct_prompt: str = "Строка {row}:"
+    import_correct_length: str = "Длина строки: {actual} символов, по схеме — {expected}"
+    import_correct_length_unknown: str = "Длина строки: {actual} символов"
+    import_correct_fields: str = "Разбор строки по полям схемы"
+    import_correct_hint: str = (
+        "Строка фиксированной ширины: правьте позиции символов, "
+        "следя за линейкой разрядов над текстом."
+    )
+    import_correct_hint_delimited: str = (
+        "Строка с разделителем: правьте значения между разделителями, "
+        "число полей показано в таблице ниже."
+    )
     import_match_status: str = "Статус"
     import_match_reason: str = "Причина"
     import_import: str = "Импортировать"
@@ -522,6 +533,9 @@ class AppStrings:
     import_scheme_remove_field: str = "Удалить поле"
     import_scheme_save: str = "Сохранить схему"
     import_field_name: str = "Имя"
+    import_field_positions: str = "Позиции"
+    import_field_value: str = "Значение"
+    import_field_status: str = "Замечание"
     import_field_type: str = "Тип"
     import_field_start: str = "Начало"
     import_field_length: str = "Длина"
