@@ -652,7 +652,7 @@ class OSHMDialog(QDialog):
         if dialog.exec_() == QDialog.Accepted:
             self._apply(
                 lambda: DepartmentService(self.session).create(dialog.get_data()),
-                "Ошибка добавления отдела",
+                STRINGS.text_oshibka_dobavleniya_otdela,
             )
 
     def _add_workgroup(self) -> None:
@@ -665,7 +665,7 @@ class OSHMDialog(QDialog):
         if dialog.exec_() == QDialog.Accepted:
             self._apply(
                 lambda: WorkingGroupService(self.session).create(dialog.get_data()),
-                "Ошибка добавления рабочей группы",
+                STRINGS.text_oshibka_dobavleniya_rabochey_gruppy,
             )
 
     def _add_employee(self) -> None:
@@ -680,7 +680,7 @@ class OSHMDialog(QDialog):
         if dialog.exec_() == QDialog.Accepted:
             self._apply(
                 lambda: EmployeeService(self.session).create(dialog.get_data()),
-                "Ошибка добавления сотрудника",
+                STRINGS.text_oshibka_dobavleniya_sotrudnika,
             )
 
     # ------------------------------------------------------------------
@@ -777,7 +777,7 @@ class OSHMDialog(QDialog):
                 if obj is not None:
                     service_class(self.session).delete(obj)
 
-        self._apply(do_delete, "Ошибка удаления элемента ОШС")
+        self._apply(do_delete, STRINGS.text_oshibka_udaleniya_elementa_oshs)
 
     def _on_nodes_dropped(
         self,
@@ -807,7 +807,7 @@ class OSHMDialog(QDialog):
                     if workgroup is not None:
                         employee.assign_working_group(workgroup)
 
-        self._apply(do_move, "Ошибка переноса сотрудника")
+        self._apply(do_move, STRINGS.text_oshibka_perenosa_sotrudnika)
 
     def _apply(self, operation, error_message: str) -> None:
         """Выполняет операцию с фиксацией транзакции и обработкой ошибок."""

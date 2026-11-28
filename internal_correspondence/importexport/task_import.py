@@ -19,6 +19,7 @@ from internal_correspondence.services.reference_service import (
     ScientificTaskError,
     ScientificTaskService,
 )
+from internal_correspondence.utils.string_resources import STRINGS
 
 TASK_SHEET_NAME = "Научные задачи"
 TASK_HEADERS = [
@@ -102,10 +103,10 @@ def import_scientific_tasks(
                 "end_date": _as_date(row.get("Конец действия")),
                 "comment": _clean_value(row.get("Комментарий")),
                 "partial_threshold": _as_number(
-                    row.get("Частичное решение"), "Частичное решение", index
+                    row.get("Частичное решение"), STRINGS.task_col_partial, index
                 ),
                 "full_threshold": _as_number(
-                    row.get("Полное решение"), "Полное решение", index
+                    row.get("Полное решение"), STRINGS.task_col_full, index
                 ),
             }
             existing = session.get(ScientificTask, data.get("id") or "")
@@ -118,7 +119,7 @@ def import_scientific_tasks(
             result.task_ids.append(data["id"])
         except ScientificTaskError as error:
             result.skipped += 1
-            result.errors.append(f"Строка {index}: {error}")
+            result.errors.append(STRINGS.text_stroka.format(name_1=index, name_2=error))
 
     return result
 

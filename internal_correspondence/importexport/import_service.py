@@ -38,6 +38,7 @@ from internal_correspondence.services.task_distribution_service import (
     NODE_WORKGROUP,
     TaskDistributionService,
 )
+from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("import_service")
 
@@ -250,14 +251,14 @@ class ImportService:
         }
         if entity_class is None:
             entry["status"] = "error"
-            entry["reason"] = "неизвестная сущность"
+            entry["reason"] = STRINGS.text_neizvestnaya_sushchnost
             return entry
 
         try:
             pk_value = parse_primary_key(pk_key, entity_class)
         except (TypeError, ValueError):
             entry["status"] = "error"
-            entry["reason"] = "некорректный первичный ключ"
+            entry["reason"] = STRINGS.text_nekorrektnyy_pervichnyy_klyuch
             return entry
 
         instance = self.session.get(entity_class, pk_value)
@@ -265,7 +266,7 @@ class ImportService:
             entry["operation"] = "delete"
             if instance is None:
                 entry["status"] = "warning"
-                entry["reason"] = "запись для удаления не найдена — удалять нечего"
+                entry["reason"] = STRINGS.text_zapis_udaleniya_naydena_udalyat
             return entry
 
         entry["operation"] = "update" if instance is not None else "create"
@@ -277,7 +278,7 @@ class ImportService:
             missing_required = self._missing_required_fields(entity_class, fields)
             if missing_required:
                 entry["status"] = "error"
-                entry["reason"] = "пропущены обязательные поля: " + ", ".join(
+                entry["reason"] = STRINGS.text_propushcheny_obyazatelnye_polya + ", ".join(
                     missing_required
                 )
                 return entry
@@ -285,7 +286,7 @@ class ImportService:
         missing_dep = self._missing_dependencies(entity_class, fields, payload)
         if missing_dep:
             entry["status"] = "error"
-            entry["reason"] = "не найдены зависимости: " + ", ".join(missing_dep)
+            entry["reason"] = STRINGS.text_naydeny_zavisimosti + ", ".join(missing_dep)
         return entry
 
     def _missing_required_fields(
@@ -396,7 +397,7 @@ class ImportService:
                 meta = json.load(f)
         except (OSError, json.JSONDecodeError):
             logger.warning("Повреждён meta.json в архиве %s", extract_dir)
-            return ["Файл meta.json повреждён — совместимость пакетов не проверена"]
+            return [STRINGS.text_fayl_meta_json_povrezhden]
 
         pack = get_domain_pack()
         warnings: List[str] = []
@@ -404,14 +405,11 @@ class ImportService:
         source_version = meta.get("pack_version")
         if source_id and source_id != pack.id:
             warnings.append(
-                f"Архив создан с другим пакетом предметной области: "
-                f"'{source_id}' v{source_version} (активен '{pack.id}' v{pack.version}). "
-                f"Значения перечислений могут трактоваться иначе."
+                STRINGS.text_arkhiv_sozdan_drugim_paketom.format(name_1=source_id, name_2=source_version, name_3=pack.id, name_4=pack.version)
             )
         elif source_version and source_version != pack.version:
             warnings.append(
-                f"Версия пакета предметной области в архиве (v{source_version}) "
-                f"отличается от активной (v{pack.version})."
+                STRINGS.text_versiya_paketa_predmetnoy_oblasti.format(name_1=source_version, name_2=pack.version)
             )
         for warning in warnings:
             logger.warning(warning)

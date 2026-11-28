@@ -625,27 +625,27 @@ class TaskDistributionService:
     def can_assign(self, node: DistributionNode) -> Tuple[bool, str]:
         """Проверяет право назначения задачи узлу."""
         if node.node_type == NODE_ORGANIZATION:
-            return False, "Задачи назначаются регионам, а не организации."
+            return False, STRINGS.text_zadachi_naznachayutsya_regionam_organizatsii
         if not node.assignable:
-            return False, "Сотрудник в рабочей группе — справочный узел."
+            return False, STRINGS.text_sotrudnik_rabochey_gruppe_spravochnyy
         if not node.active:
-            return False, "Узел неактивен."
+            return False, STRINGS.text_uzel_neaktiven
         if not self.is_head_office:
             if not self.in_scope(node.key):
-                return False, "Узел вне доступного филиала."
+                return False, STRINGS.text_uzel_vne_dostupnogo_filiala
             if node.node_type == NODE_REGION:
-                return False, "Филиал не назначает задачи региону."
+                return False, STRINGS.text_filial_naznachaet_zadachi_regionu
         return True, ""
 
     def can_unassign(self, node: DistributionNode) -> Tuple[bool, str]:
         """Проверяет право снятия задачи с узла."""
         if not node.assignable:
-            return False, "Сотрудник в рабочей группе — справочный узел."
+            return False, STRINGS.text_sotrudnik_rabochey_gruppe_spravochnyy
         if not self.is_head_office:
             if not self.in_scope(node.key):
-                return False, "Узел вне доступного филиала."
+                return False, STRINGS.text_uzel_vne_dostupnogo_filiala
             if node.node_type in (NODE_REGION, NODE_BRANCH):
-                return False, "Филиал не снимает задачи с региона и филиала."
+                return False, STRINGS.text_filial_snimaet_zadachi_regiona
         return True, ""
 
     def assign(

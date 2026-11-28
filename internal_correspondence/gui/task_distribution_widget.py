@@ -319,13 +319,11 @@ class TaskDistributionWidget(QWidget):
         self.export_button = QToolButton()
         self.export_button.setText(STRINGS.task_export)
         self.export_button.clicked.connect(self._export_tasks)
-        self.export_button.setVisible(self.is_head_office)
         bottom.addWidget(self.export_button)
 
         self.save_distribution_button = QToolButton()
         self.save_distribution_button.setText(STRINGS.task_save_distribution)
         self.save_distribution_button.clicked.connect(self._save_distribution)
-        self.save_distribution_button.setVisible(not self.is_head_office)
         bottom.addWidget(self.save_distribution_button)
 
         # Режим распределения: дерево, две таблицы и нижние кнопки
@@ -334,6 +332,12 @@ class TaskDistributionWidget(QWidget):
         distribution_layout.setContentsMargins(0, 0, 0, 0)
         distribution_layout.addWidget(self.splitter, 1)
         distribution_layout.addLayout(bottom)
+
+        # Видимость кнопок выставляется только теперь, когда у них появился
+        # родитель: у виджета без родителя setVisible(True) открывает отдельное
+        # окно верхнего уровня, и оно мелькает на экране при старте приложения.
+        self.export_button.setVisible(self.is_head_office)
+        self.save_distribution_button.setVisible(not self.is_head_office)
 
         # Режим управления: таблица задач периода с назначениями
         self.management_widget = TaskManagementWidget(

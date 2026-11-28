@@ -140,7 +140,7 @@ class EvaluationAssignDialog(QDialog):
             if evaluation_list.date
             else "—"
         )
-        return f"{evaluation_list.number} от {date_text}"
+        return STRINGS.text_list_label.format(name_1=evaluation_list.number, name_2=date_text)
 
     def selected_list(self) -> Optional[EvaluationList]:
         """Возвращает выбранный существующий список оценок (None — не выбран)."""

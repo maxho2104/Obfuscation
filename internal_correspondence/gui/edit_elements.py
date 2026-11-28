@@ -528,7 +528,7 @@ class ItemsPickerDialog(QDialog):
             if department is not None:
                 text = f"{text} — {department.short_name or department.name}"
             if getattr(instance, "active", True) is False:
-                text = f"{text} (неактивен)"
+                text = STRINGS.text_neaktiven.format(name_1=text)
             return text
         return display_name(instance)
 

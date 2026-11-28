@@ -25,6 +25,7 @@ from internal_correspondence.importexport.branch_scope import (
 from internal_correspondence.orm.models import Branch, Change, FileRecord, MissingRequest
 from internal_correspondence.orm.utils import parse_primary_key, resolve_entity_class
 from internal_correspondence.services.change_tracking import purge_expired_changes
+from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("export_service")
 
@@ -130,7 +131,7 @@ class ExportService:
 
         if output_path is None:
             branch = self.session.get(Branch, self.branch_id) if self.branch_id else None
-            short = branch.short_name if branch is not None else "филиал"
+            short = branch.short_name if branch is not None else STRINGS.text_filial
             output_path = self.export_dir / archive_filename(
                 _export_timestamp(), "от", short
             )
@@ -188,7 +189,7 @@ class ExportService:
                 continue
             file_records = self._collect_files(export_data)
             short = branch.short_name if branch is not None else branch_id
-            output_path = self.export_dir / archive_filename(timestamp, "для", short)
+            output_path = self.export_dir / archive_filename(timestamp, STRINGS.text_export_for_branches, short)
             plans.append((output_path, export_data, file_records, branch_changes))
 
         if not plans:

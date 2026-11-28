@@ -217,14 +217,14 @@ def build_reporting_period(year: int, financial: bool = False) -> ReportingPerio
     """Формирует отчётный год, его полугодия и кварталы."""
     if financial:
         quarters = [
-            Period("I квартал", date(year, 10, 1), date(year, 12, 31)),
-            Period("II квартал", date(year + 1, 1, 1), date(year + 1, 3, 31)),
-            Period("III квартал", date(year + 1, 4, 1), date(year + 1, 6, 30)),
-            Period("IV квартал", date(year + 1, 7, 1), date(year + 1, 9, 30)),
+            Period(STRINGS.text_i_kvartal, date(year, 10, 1), date(year, 12, 31)),
+            Period(STRINGS.text_ii_kvartal, date(year + 1, 1, 1), date(year + 1, 3, 31)),
+            Period(STRINGS.text_iii_kvartal, date(year + 1, 4, 1), date(year + 1, 6, 30)),
+            Period(STRINGS.text_iv_kvartal, date(year + 1, 7, 1), date(year + 1, 9, 30)),
         ]
         halves = [
-            Period("I полугодие", quarters[0].start, quarters[1].end),
-            Period("II полугодие", quarters[2].start, quarters[3].end),
+            Period(STRINGS.half_year_1, quarters[0].start, quarters[1].end),
+            Period(STRINGS.half_year_2, quarters[2].start, quarters[3].end),
         ]
         return ReportingPeriod(
             f"Финансовый год {year}/{year + 1}",
@@ -236,8 +236,8 @@ def build_reporting_period(year: int, financial: bool = False) -> ReportingPerio
 
     quarters = [_calendar_quarter(year, quarter) for quarter in range(1, 5)]
     halves = [
-        Period("I полугодие", quarters[0].start, quarters[1].end),
-        Period("II полугодие", quarters[2].start, quarters[3].end),
+        Period(STRINGS.half_year_1, quarters[0].start, quarters[1].end),
+        Period(STRINGS.half_year_2, quarters[2].start, quarters[3].end),
     ]
     return ReportingPeriod(
         str(year),

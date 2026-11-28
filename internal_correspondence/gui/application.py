@@ -1434,7 +1434,7 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         )
         if not path:
             return
-        self._import_reference_file(Path(path), import_primary_data, "первичных данных")
+        self._import_reference_file(Path(path), import_primary_data, STRINGS.text_pervichnykh_dannykh)
 
     def _import_actual_data(self) -> None:
         """Импортирует актуальные справочные данные из XLSX."""
@@ -1443,7 +1443,7 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         )
         if not path:
             return
-        self._import_reference_file(Path(path), import_actual_data, "актуальных данных")
+        self._import_reference_file(Path(path), import_actual_data, STRINGS.text_aktualnykh_dannykh)
 
     def _import_reference_file(self, path: Path, importer, subject: str) -> None:
         """Импортирует справочный файл одной сессией с закрытием в любом случае."""
@@ -1715,10 +1715,13 @@ def run_application(argv: List[str]) -> int:
     install_dialog_title_bars(app, _window_control_labels)
 
     settings, initial_import = _load_or_create_settings(app_dir)
-    _ensure_storage_dirs(settings.storage_path_obj())
     apply_theme(app, settings.theme)
 
-    # Пакет предметной области: внешний файл из настроек или встроенный
+    # Пакет предметной области: внешний файл из настроек или встроенный.
+    # Загружается до создания каталогов хранилища: dir_name() берёт имена из
+    # активного пакета, а при пустом реестре лениво загрузила бы встроенный
+    # пакет — тогда пакет грузился бы дважды и каталоги получали бы имена из
+    # встроенного пакета даже при внешнем.
     try:
         init_domain_pack(Path(settings.domain_pack) if settings.domain_pack else None)
     except DomainPackError as exc:
@@ -1729,6 +1732,8 @@ def run_application(argv: List[str]) -> int:
             STRINGS.msg_pack_load_error.format(path=settings.domain_pack, error=exc),
         )
     reload_strings()
+
+    _ensure_storage_dirs(settings.storage_path_obj())
 
     if not _authorize_or_reset_settings(app_dir):
         return 0

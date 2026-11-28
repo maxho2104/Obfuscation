@@ -4217,3 +4217,134 @@ QStyleSheetStyle, который фон из модели (BackgroundRole) не 
 ### Проверка
 - Полный прогон `pytest tests -q` — **565 passed** (1 известное предупреждение DOCX);
   pyflakes — чисто.
+
+---
+
+## 2026-11-28 — Инструмент переноса русских строк в пакет предметной области
+
+### Запрос пользователя
+Проверять весь каталог `internal_correspondence`, находить слова на русском языке
+(кроме комментариев), переносить их в `domain_pack.default.json`, подставляя
+вместо них переменные из `STRINGS`; обратная подстановка — через
+`domain_pack.py`. Модуль вне основной программы, хранится в `scripts_dev`,
+`domain_pack.default.json` и `domain_pack.py` пропускает, при необходимости сам
+добавляет импорты в изменяемые файлы.
+
+### Сделано
+- `scripts_dev/extract_pack_strings.py` (новый, ~1200 строк, только стандартная
+  библиотека, разбор через `ast`):
+  - `Collector(ast.NodeVisitor)` собирает литералы с кириллицей и присваивает
+    категорию; комментарии не рассматриваются — их нет в синтаксическом дереве;
+  - `build_fstring_template` превращает f-строку в шаблон с позиционными
+    подстановками `name_1`, `name_2`; заменяется вся f-строка целиком на
+    `STRINGS.<ключ>.format(...)`, поэтому текст не теряется;
+  - `SourceFile` пересчитывает позиции AST в байтовые смещения, `Rewriter`
+    применяет правки справа налево и добавляет импорт `STRINGS` после последнего
+    импорта, если его нет;
+  - `KeyRegistry` строит английский ключ транслитерацией (`text_<латиница>`) и
+    переиспользует существующий ключ только при однозначном совпадении текста;
+  - `Extractor` собирает отчёт, пишет файлы и пакет, `--check` возвращает 1,
+    если вне пакета остались русские строки.
+- Пропуски (по умолчанию): `docstring`, `import_time`, `short`, `compare`,
+  `mapping_key`, `filename`, `sheet_name`, `path_part`, `log`, `exception`,
+  `orm_label`, `fstring`; группы включаются флагами `--include-*`. Причины
+  отказа от переноса зафиксированы в README (таблица).
+- Не изменяются никогда: `core/domain_pack.py`, пакет JSON,
+  `utils/string_resources.py`, `core/logging_config.py` (обратный импорт дал бы
+  цикл).
+- Прогон `--apply`: 14 файлов, 62 литерала, 52 новых ключа (4 переиспользовано),
+  пакет — 666 ключей; повторный прогон диффа не даёт, `--check` — код 0.
+- `tests/test_extract_pack_strings.py` (новый, 26 тестов): категории, f-строки
+  (спецификатор формата, `!r` и сложное выражение пропускаются), применение
+  правок на временном проекте, сохранение существующего импорта, пропуск пакета
+  и `string_resources.py`, режим `--check`, совпадение результата `format`.
+- `README.md`: раздел «Перенос русских строк в пакет предметной области».
+- `scripts_dev/extract_pack_strings.py`: добавлен флаг `--quiet`.
+
+### Проверка
+- `pytest tests/test_extract_pack_strings.py -q` — **26 passed**;
+  полный `pytest tests -q` — **574 passed** (1 известное предупреждение DOCX).
+- Вывод `ReportDataService._change_description` до и после переноса строк совпал
+  побайтово (проверено stash-прогоном на пяти ветках описания изменений).
+- `pyflakes scripts_dev/extract_pack_strings.py` — чисто.
+
+### Отложено
+- Строки, вычисляемые при импорте (`import_time`), не переносятся: `STRINGS`
+  перезаписывается `reload_strings()`, поэтому такие значения «застыли» бы при
+  смене пакета. Если понадобится, нужен ленивый доступ вместо констант.
+- `info={"label": ...}` из `orm/models.py` остаётся в коде: подписи полей ведутся
+  секцией `entities`, а не `strings`.
+
+---
+
+## 2026-11-28 — Дублирование сообщения о загрузке пакета при старте
+
+### Баг
+- При запуске в консоли появлялись две одинаковые строки
+  `Загружен пакет предметной области по умолчанию: scientific-network v1.0.0`.
+
+### Причина
+- Два независимых пути инициализации вызывали `default_domain_pack()`:
+  1. `run_application` вызывала `_ensure_storage_dirs()` (строка 1718 до правки)
+     до `init_domain_pack()`; `dir_name("files")` в `_ensure_storage_dirs` шёл
+     через `get_domain_pack()`, реестр был пуст и лениво грузил встроенный пакет
+     с записью `INFO`;
+  2. затем явный `init_domain_pack(None)` снова вызывал `default_domain_pack()`
+     и писал ту же строку.
+- Дополнительный дефект: каталоги хранилища создавались по именам из
+  встроенного пакета даже тогда, когда настроен внешний.
+
+### Изменено
+- `internal_correspondence/gui/application.py`: порядок в `run_application`
+  исправлен — `apply_theme` → `init_domain_pack(...)` → `reload_strings()` →
+  `_ensure_storage_dirs(...)`; добавлен комментарий о причине.
+- `internal_correspondence/core/domain_pack.py`: ленивая загрузка в
+  `get_domain_pack()` пишет `logger.debug("Пакет предметной области загружен
+  лениво: ...")` вместо `INFO` с формулировкой «по умолчанию»; докстринг
+  дополнен объяснением.
+- `README.md`: в «Правила совместимости» добавлен пункт «Порядок загрузки».
+- `tests/test_domain_pack.py`: новый тест
+  `test_lazy_load_does_not_duplicate_startup_message` — на уровне `INFO` после
+  ленивой загрузки сообщения нет, на `DEBUG` есть «лениво».
+
+### Проверка
+- Трассировка запуска (`run_application` с подменёнными диалогами): до правки
+  две строки `INFO`, после — одна.
+- `pytest tests/test_domain_pack.py -q` — **25 passed**;
+  `pytest tests/test_domain_pack_integration.py tests/test_enum_int_storage.py -q`
+  — 42 passed.
+
+---
+
+## 2026-11-28 — Мелькающее окно кнопки при старте приложения
+
+### Баг
+- При запуске после окна авторизации и до главного окна на экране на доли
+  секунды появлялось лишнее окно — маленькая кнопка «Выгрузить задачи по
+  регионам...» в отдельной рамке.
+
+### Причина
+- В `TaskDistributionWidget._build_ui` видимость кнопок нижнего ряда
+  выставлялась до того, как ряд `bottom` (QHBoxLayout) попадал в виджет.
+  У кнопки без родителя `setVisible(True)` создаёт окно верхнего уровня:
+  Qt показывает его на экране, пока кнопку не переприсоединит раскладка.
+- Трассировка `QEvent.Show` на реальной платформе подтвердила стек:
+  `run_application` → `MainWindow.__init__` → `_setup_ui` →
+  `TaskDistributionWidget.__init__` → `_build_ui` →
+  `self.export_button.setVisible(self.is_head_office)`.
+
+### Изменено
+- `internal_correspondence/gui/task_distribution_widget.py`: вызовы
+  `setVisible(...)` для `export_button` и `save_distribution_button`
+  перенесены после `distribution_layout.addLayout(bottom)`; добавлен
+  комментарий, почему порядок важен.
+- `tests/test_task_widget.py`: новый тест
+  `test_bottom_buttons_are_inside_widget_not_windows` — кнопки нижнего ряда
+  не являются окнами и имеют родителя.
+
+### Проверка
+- Повторная трассировка старта: окно `QToolButton` больше не появляется,
+  остаются только `MainWindow`.
+- `pytest tests/test_task_widget.py -q` — **15 passed**.
+
+

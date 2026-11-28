@@ -418,6 +418,34 @@ def test_branch_has_save_button_instead_of_export(
             office_widget.deleteLater()
 
 
+def test_bottom_buttons_are_inside_widget_not_windows(
+    qt_app, db_manager: DatabaseManager
+) -> None:
+    """Кнопки нижнего ряда не должны становиться отдельными окнами.
+
+    Если setVisible(True) вызвать у виджета без родителя, Qt создаёт окно
+    верхнего уровня — оно мелькает на экране при старте приложения.
+    """
+    from internal_correspondence.gui.task_distribution_widget import (
+        TaskDistributionWidget,
+    )
+
+    with db_manager.get_session() as session:
+        _setup_data(session)
+        widget = TaskDistributionWidget(session, Role.HEAD_OFFICE.value)
+        try:
+            for button in (
+                widget.export_button,
+                widget.save_distribution_button,
+                widget.create_button,
+                widget.import_button,
+            ):
+                assert not button.isWindow()
+                assert button.parent() is not None
+        finally:
+            widget.deleteLater()
+
+
 def _setup_management_data(session):
     """Задачи с назначениями по уровням и двумя документами."""
     from uuid import uuid4

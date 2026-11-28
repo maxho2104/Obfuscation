@@ -435,12 +435,18 @@ _current_pack: Optional[DomainPack] = None
 
 
 def get_domain_pack() -> DomainPack:
-    """Возвращает активный пакет, лениво инициализируя дефолтный."""
+    """Возвращает активный пакет, лениво инициализируя дефолтный.
+
+    Ленивая загрузка — резервный путь (например, обращение к пакету до
+    :func:`init_domain_pack` из скрипта). В приложении пакет инициализируется
+    явно, поэтому сообщение о загрузке пишется на уровне DEBUG: иначе одно и
+    то же событие попадало бы в журнал дважды.
+    """
     global _current_pack
     if _current_pack is None:
         _current_pack = default_domain_pack()
-        logger.info(
-            "Загружен пакет предметной области по умолчанию: %s v%s",
+        logger.debug(
+            "Пакет предметной области загружен лениво: %s v%s",
             _current_pack.id,
             _current_pack.version,
         )

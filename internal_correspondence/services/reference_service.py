@@ -20,6 +20,7 @@ from internal_correspondence.orm.models import (
     WorkingGroup,
 )
 from internal_correspondence.services.base_service import BaseService
+from internal_correspondence.utils.string_resources import STRINGS
 
 # Маркер «поле не передано» (отличие от явного None)
 _UNSET = object()
@@ -105,18 +106,18 @@ class ScientificTaskService(BaseService[ScientificTask]):
 
         task_type = self._as_task_type(data.get("type"))
 
-        start = self._as_date(data.get("start_date"), "начала")
+        start = self._as_date(data.get("start_date"), STRINGS.text_nachala)
         if start is None:
             raise ScientificTaskError("Не указана дата начала задачи.")
-        end = self._as_date(data.get("end_date"), "окончания")
+        end = self._as_date(data.get("end_date"), STRINGS.text_okonchaniya)
         if end is not None and end < start:
             raise ScientificTaskError(
                 "Дата окончания не может быть раньше даты начала."
             )
 
-        partial = self._as_number(data.get("partial_threshold"), "частичного решения")
-        full = self._as_number(data.get("full_threshold"), "полного решения")
-        for value, label in ((partial, "частичного"), (full, "полного")):
+        partial = self._as_number(data.get("partial_threshold"), STRINGS.text_chastichnogo_resheniya)
+        full = self._as_number(data.get("full_threshold"), STRINGS.text_polnogo_resheniya)
+        for value, label in ((partial, STRINGS.text_chastichnogo), (full, STRINGS.text_polnogo)):
             if value is not None and value < 0:
                 raise ScientificTaskError(
                     f"Порог {label} решения не может быть отрицательным."

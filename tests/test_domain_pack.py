@@ -183,6 +183,30 @@ class TestRegistry:
         set_domain_pack(None)
         assert get_domain_pack().id == "scientific-network"
 
+    def test_lazy_load_does_not_duplicate_startup_message(self, caplog):
+        """Ленивая загрузка пишется на DEBUG: старт не дублирует INFO-строку.
+
+        Пакет инициализируется явно в ``run_application``; ленивый путь —
+        резервный, поэтому на уровне INFO сообщения быть не должно.
+        """
+        import logging
+
+        from internal_correspondence.core import domain_pack as module
+
+        set_domain_pack(None)
+        with caplog.at_level(logging.INFO, logger="internal_correspondence.domain_pack"):
+            get_domain_pack()
+        messages = [record.getMessage() for record in caplog.records]
+        assert not any("Загружен пакет" in text for text in messages)
+
+        caplog.clear()
+        set_domain_pack(None)
+        with caplog.at_level(logging.DEBUG, logger="internal_correspondence.domain_pack"):
+            get_domain_pack()
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("лениво" in text for text in messages)
+        assert module._current_pack is not None
+
 
 class TestDeprecatedValues:
     """Устаревшие значения скрыты из выбора, но читаются."""

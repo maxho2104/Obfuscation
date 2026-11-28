@@ -876,10 +876,10 @@ class DashboardWidget(QWidget):
         legend_font = QFont()
         legend_font.setPointSize(max(8, round(10 * self._scale)))
         for code, kind, label in (
-            ("ОЗ", "assigned", f"ОЗ — {STRINGS.dashboard_assigned}"),
-            ("ДЗ", "assigned", f"ДЗ — {STRINGS.dashboard_assigned}"),
-            ("ОЗ", "completed", f"ОЗ — {STRINGS.dashboard_completed}"),
-            ("ДЗ", "completed", f"ДЗ — {STRINGS.dashboard_completed}"),
+            ("ОЗ", "assigned", STRINGS.text_oz.format(name_1=STRINGS.dashboard_assigned)),
+            ("ДЗ", "assigned", STRINGS.text_dz.format(name_1=STRINGS.dashboard_assigned)),
+            ("ОЗ", "completed", STRINGS.text_oz.format(name_1=STRINGS.dashboard_completed)),
+            ("ДЗ", "completed", STRINGS.text_dz.format(name_1=STRINGS.dashboard_completed)),
         ):
             legend_set = QBarSet(label)
             legend_set.append([0.0] * len(rows))

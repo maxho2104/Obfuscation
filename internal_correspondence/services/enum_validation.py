@@ -22,6 +22,7 @@ from internal_correspondence.orm.models import (
     Source,
     Telegram,
 )
+from internal_correspondence.utils.string_resources import STRINGS
 
 logger = get_logger("enum_validation")
 
@@ -50,8 +51,7 @@ def validate_enum_codes(session: Session) -> List[str]:
             enum_def = pack.enum(enum_name)
         except DomainPackError:
             warnings.append(
-                f"В пакете '{pack.id}' нет перечисления '{enum_name}' — "
-                f"значения колонки {model.__name__}.{column_name} не проверялись"
+                STRINGS.text_pakete_net_perechisleniya_znacheniya.format(name_1=pack.id, name_2=enum_name, name_3=model.__name__, name_4=column_name)
             )
             continue
         # Известны все ключи, включая устаревшие (deprecated)
@@ -68,8 +68,7 @@ def validate_enum_codes(session: Session) -> List[str]:
         )
         if unknown:
             warning = (
-                f"{model.__name__}.{column_name}: значения {unknown} "
-                f"отсутствуют в пакете '{pack.id}' v{pack.version}"
+                STRINGS.text_znacheniya_otsutstvuyut_pakete_v.format(name_1=model.__name__, name_2=column_name, name_3=unknown, name_4=pack.id, name_5=pack.version)
             )
             logger.warning(warning)
             warnings.append(warning)

@@ -275,7 +275,7 @@ class ReportDataService:
             return context
 
         half_label = ("I", "II")[request.period_number - 1]
-        context["period_label"] = f"{half_label} полугодие {request.year}"
+        context["period_label"] = STRINGS.text_polugodie.format(name_1=half_label, name_2=request.year)
         context["previous_period_label"] = (
             f"{half_label} полугодие {request.year - 1}"
         )
@@ -548,22 +548,22 @@ class ReportDataService:
     def _change_description(current: int, previous: int) -> str:
         """Возвращает словесное изменение в стиле исходных отчётов."""
         if current == previous:
-            return "сохранении на прежнем уровне"
+            return STRINGS.text_sokhranenii_prezhnem_urovne
         if previous == 0:
-            return f"увеличении с 0 до {current}"
+            return STRINGS.text_uvelichenii_0.format(name_1=current)
         if current == 0:
-            return "снижении до 0"
+            return STRINGS.text_snizhenii_0
         if current > previous:
             ratio = current / previous
             percent = (current - previous) / previous * 100
-            direction = "увеличении"
+            direction = STRINGS.text_uvelichenii
         else:
             ratio = previous / current
             percent = (previous - current) / previous * 100
-            direction = "снижении"
+            direction = STRINGS.text_snizhenii
         ratio_text = f"{ratio:.1f}".replace(".", ",")
         percent_text = f"{percent:.1f}".replace(".", ",")
-        return f"{direction} в {ratio_text} раза (или на {percent_text}%)"
+        return STRINGS.text_raza.format(name_1=direction, name_2=ratio_text, name_3=percent_text)
 
     def _evaluation_detail_rows(
         self,
@@ -641,9 +641,9 @@ class ReportDataService:
                 leaders = ", ".join(
                     sorted({address.leader_id for address in item.report_addresses})
                 )
-                detail = f"{number} от {date_text} г."
+                detail = STRINGS.text_g.format(name_1=number, name_2=date_text)
                 if leaders:
-                    detail += f" (доложено: {leaders})"
+                    detail += STRINGS.text_dolozheno.format(name_1=leaders)
                 details.append(detail)
             rows.append(
                 {

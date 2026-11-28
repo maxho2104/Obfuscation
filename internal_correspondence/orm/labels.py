@@ -171,11 +171,11 @@ def plural_records(count: int) -> str:
     remainder = count % 10
     hundred = count % 100
     if remainder == 1 and hundred != 11:
-        word = "запись"
+        word = STRINGS.text_zapis
     elif 2 <= remainder <= 4 and not 12 <= hundred <= 14:
-        word = "записи"
+        word = STRINGS.text_zapisi
     else:
-        word = "записей"
+        word = STRINGS.text_zapisey
     return f"{count} {word}"
 
 
